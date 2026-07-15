@@ -1,4 +1,4 @@
-# Cross_Wine_Custom — Arknights: Endfield on Apple Silicon macOS
+# Endfield_FineWine — Arknights: Endfield on Apple Silicon macOS
 
 Run **Arknights: Endfield** on an Apple Silicon Mac through a **custom-patched CrossOver Wine** — past the game's VMProtect/TenProtect armor, past the **ACE anti-cheat**, rendering through Apple's **D3DMetal**, all the way to the login screen and into gameplay.
 
@@ -64,8 +64,8 @@ There are two ways to get the patched Wine into CrossOver. **Both require you to
 ### 1. Build the patched Wine
 
 ```bash
-git clone <your-fork-url> Cross_Wine_Custom
-cd Cross_Wine_Custom
+git clone <your-fork-url> Endfield_FineWine
+cd Endfield_FineWine
 
 # One shot: deps -> fetch source -> apply patches -> configure -> build (~20-60 min)
 ./scripts/build-wine.sh all
