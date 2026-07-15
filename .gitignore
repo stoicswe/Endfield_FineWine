@@ -1,0 +1,17 @@
+# Tooling
+.idea
+.claude
+
+# Build artifacts (the Wine source tree + build output; users build these themselves)
+/build/
+
+# Logs
+*.log
+
+# macOS cruft
+.DS_Store
+**/.DS_Store
+
+# Scratch / debug captures
+/scratch/
+*.tmp

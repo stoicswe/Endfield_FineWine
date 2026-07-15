@@ -1,0 +1,58 @@
+diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
+index 91926a8..e6f434e 100644
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -1990,6 +1990,31 @@ static inline BOOL handle_cet_nop( ucontext_t *sigcontext, CONTEXT *context )
+             RIP_sig(sigcontext) += prefix_count + 3;
+             TRACE_(seh)( "skipped RDSSPD/RDSSPQ instruction\n" );
+             return TRUE;
++        case 0x1F:
++            /* Cross_Wine_Custom stage-1 fix: multi-byte NOP (0F 1F /0). Rosetta 2 wrongly raises
++               an illegal-instruction fault on some forms (observed: the register form 0F 1F C1
++               = "nop ecx", used by the Endfield/TenProtect VMProtect layer). It is a NOP with no
++               side effects, so decode its length and skip past it. */
++        {
++            unsigned int p = i + 2;                 /* index of the modrm byte */
++            BYTE modrm; unsigned int mod, rm;
++            if (p >= len) return FALSE;
++            modrm = instr[p++];
++            mod = modrm >> 6; rm = modrm & 7;
++            if (mod != 3 && rm == 4)                /* SIB byte */
++            {
++                BYTE sib;
++                if (p >= len) return FALSE;
++                sib = instr[p++];
++                if (mod == 0 && (sib & 7) == 5) p += 4;   /* SIB base=5, mod=0 -> disp32 */
++            }
++            if (mod == 1) p += 1;                   /* disp8 */
++            else if (mod == 2) p += 4;              /* disp32 */
++            else if (mod == 0 && rm == 5) p += 4;   /* rip-relative disp32 (no SIB) */
++            RIP_sig(sigcontext) += p;               /* p = full instruction length incl. prefixes */
++            TRACE_(seh)( "skipped multi-byte NOP (0F 1F)\n" );
++            return TRUE;
++        }
+         }
+         break;
+     default:
+@@ -2518,6 +2543,21 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+         if (handle_cet_nop( ucontext, &context.c )) return;
+         /* CW HACK 23427 */
+         if (emulate_xgetbv( ucontext, &context.c )) return;
++        /* Cross_Wine_Custom stage-2 fix: Rosetta reports privileged instructions (e.g. mov reg,cr3
++           in ACE-BASE.sys) as invalid-opcode faults instead of #GP, so Wine would hand the app an
++           EXCEPTION_ILLEGAL_INSTRUCTION where on Linux (#GP) it gets EXCEPTION_PRIV_INSTRUCTION.
++           Deliver the privileged-instruction exception here too, so the anti-cheat's own SEH handler
++           processes it the same way it does on Linux (fixes ACE "driver error 13"). */
++        rec.ExceptionCode = is_privileged_instr( &context.c );
++        if (rec.ExceptionCode) break;
++        {   /* instrumentation: log any remaining genuinely-unknown illegal instruction */
++            BYTE _ib[16];
++            unsigned int _il = virtual_uninterrupted_read_memory( (BYTE *)RIP_sig(ucontext), _ib, sizeof(_ib) );
++            ERR( "CWC-ILLEGAL-INSTR rip=%p len=%u bytes: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
++                 (void *)RIP_sig(ucontext), _il,
++                 _ib[0],_ib[1],_ib[2],_ib[3],_ib[4],_ib[5],_ib[6],_ib[7],
++                 _ib[8],_ib[9],_ib[10],_ib[11],_ib[12],_ib[13],_ib[14],_ib[15] );
++        }
+ #endif
+         rec.ExceptionCode = EXCEPTION_ILLEGAL_INSTRUCTION;
+         break;

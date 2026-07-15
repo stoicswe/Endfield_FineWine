@@ -1,0 +1,17 @@
+diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
+index 49eac27..cca7759 100644
+--- a/dlls/win32u/vulkan.c
++++ b/dlls/win32u/vulkan.c
+@@ -24,6 +24,12 @@
+ 
+ #include "config.h"
+ 
++/* Cross_Wine_Custom: minimal build disables vulkan, but this file uses SONAME_LIBVULKAN
++   unconditionally; provide a fallback so it compiles (dlopen fails gracefully at runtime). */
++#ifndef SONAME_LIBVULKAN
++#define SONAME_LIBVULKAN "libvulkan.1.dylib"
++#endif
++
+ #include <dlfcn.h>
+ #include <pthread.h>
+ #include <unistd.h>
