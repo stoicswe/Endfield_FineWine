@@ -50,6 +50,16 @@ The custom Wine is built minimal (no graphics libs), so we **surgically swap onl
 ## Reproduce from scratch
 `scripts/build-wine.sh` (deps→fetch→configure→build under `arch -x86_64`), apply all patches (`git apply`), rebuild, then `scripts/swap-into-crossover.sh`. Full build details: [04](04-building-crossover-wine.md).
 
+## Operational notes: graphics renderer & game updates (learned 2026-07-15)
+
+After the anti-cheat is solved, the remaining day-to-day gotcha is the **graphics renderer**, and game updates make it recur:
+
+- **Endfield must run in DirectX 11 mode.** It defaults to Vulkan/DX12, and under CrossOver 26.2 both fail → **white/blank screen**: DX12 → `vkd3d` errors `Cannot load DXIL conversion library` (its DXIL/SM6 shaders never compile); native Vulkan → MoltenVK also fails. **DX11** uses the mature D3DMetal/DXMT path and renders correctly. Set the renderer to **DirectX 11** in the launcher's / in-game graphics settings (persists in the game's prefs / `Software\Gryphline\Endfield`).
+- **A game update can reset the renderer back to Vulkan/DX12** → white screen returns. Re-select DirectX 11. (This is exactly what happened on 2026-07-15.)
+- **Setting the CrossOver backend to D3DMetal (`CX_ACTIVE_GRAPHICS_BACKEND=d3dmetal`) does NOT reroute the game's DX12 off `vkd3d`** — verified. It helps DX11 go to D3DMetal, but it will not save you from the game choosing DX12. The game-side DX11 setting is the fix.
+- **Do NOT "fix" the white screen by overwriting `lib/wine/x86_64-windows/{d3d11,d3d12,dxgi}.dll` with the `apple_gptk` (D3DMetal) copies.** Those are only meant to load through CrossOver's own D3DMetal backend path; dropping them in as the defaults makes `unityplayer.dll` fail to initialize (**Windows error 1114**, "missing or corrupt"). If you did this, restore the defaults from a stock `CrossOver.app` (`lib/wine/x86_64-windows/`).
+- **Launcher vs. direct launch:** the Gryphline launcher sets up the game's working directory (and session); launching `Endfield.exe` directly can hit the same 1114 on `unityplayer.dll`. Prefer the launcher.
+
 ## Follow-ups (polish, not blockers)
 - Add `PsGetProcessExitStatus` as an em-backport stub to silence the one residual ACE-thread abort.
 - Play-test past login (combat/rendering stability, the QPC-timing × D3DMetal interaction, DLSS fallback since it's NVIDIA-only).

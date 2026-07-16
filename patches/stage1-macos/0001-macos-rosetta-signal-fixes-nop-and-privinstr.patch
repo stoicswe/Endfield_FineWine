@@ -7,7 +7,7 @@ index 91926a8..e6f434e 100644
              TRACE_(seh)( "skipped RDSSPD/RDSSPQ instruction\n" );
              return TRUE;
 +        case 0x1F:
-+            /* Cross_Wine_Custom stage-1 fix: multi-byte NOP (0F 1F /0). Rosetta 2 wrongly raises
++            /* Endfield_FineWine stage-1 fix: multi-byte NOP (0F 1F /0). Rosetta 2 wrongly raises
 +               an illegal-instruction fault on some forms (observed: the register form 0F 1F C1
 +               = "nop ecx", used by the Endfield/TenProtect VMProtect layer). It is a NOP with no
 +               side effects, so decode its length and skip past it. */
@@ -38,7 +38,7 @@ index 91926a8..e6f434e 100644
          if (handle_cet_nop( ucontext, &context.c )) return;
          /* CW HACK 23427 */
          if (emulate_xgetbv( ucontext, &context.c )) return;
-+        /* Cross_Wine_Custom stage-2 fix: Rosetta reports privileged instructions (e.g. mov reg,cr3
++        /* Endfield_FineWine stage-2 fix: Rosetta reports privileged instructions (e.g. mov reg,cr3
 +           in ACE-BASE.sys) as invalid-opcode faults instead of #GP, so Wine would hand the app an
 +           EXCEPTION_ILLEGAL_INSTRUCTION where on Linux (#GP) it gets EXCEPTION_PRIV_INSTRUCTION.
 +           Deliver the privileged-instruction exception here too, so the anti-cheat's own SEH handler
