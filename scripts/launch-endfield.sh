@@ -10,7 +10,10 @@
 #   scripts/launch-endfield.sh              # launch and play
 #   DEBUG=1 scripts/launch-endfield.sh      # also capture a Wine log to ~/endfield-debug/
 #
-# Env overrides: APP (CrossOver app), BOTTLE, TARGET (windows exe path), WINEDEBUG
+# Env overrides: APP (CrossOver app), BOTTLE, TARGET (windows exe path), WINEDEBUG,
+#   GFXARGS (default "-force-d3d11" — a DIRECT launch bypasses the launcher, so the
+#   launcher's DirectX-11 setting does NOT apply; without this flag Unity defaults to
+#   Vulkan, which does not render correctly under CrossOver. Set GFXARGS="" to disable.)
 #
 # NOTE: the game still updates itself via the launcher. If a game patch ships, run the launcher
 # once when it's working again to update; this script is for launching an already-updated install.
@@ -34,6 +37,7 @@ CXR="$APP/Contents/SharedSupport/CrossOver"; CXBIN="$CXR/bin"
 BOTTLE="${BOTTLE:-Arknights Endfield}"
 BP="$HOME/Library/Application Support/CrossOver/Bottles/$BOTTLE"
 TARGET="${TARGET:-C:/Program Files/GRYPHLINK/games/Arknights Endfield/Endfield.exe}"
+GFXARGS="${GFXARGS--force-d3d11}"
 [ -d "$BP" ] || { echo "ERROR: bottle '$BOTTLE' not found at $BP" >&2; exit 1; }
 
 echo "App:    $APP"
@@ -50,9 +54,9 @@ if [ "${DEBUG:-0}" = "1" ]; then
   OUT="$HOME/endfield-debug/launch-$(date +%Y%m%d-%H%M%S)"; mkdir -p "$OUT"
   echo "Debug log -> $OUT/cxlog.txt"
   CX_LOG="$OUT/cxlog.txt" WINEDEBUG="${WINEDEBUG:-+seh}" \
-    "$CXBIN/wine" --bottle "$BOTTLE" --wait-children --cx-app "$TARGET"
+    "$CXBIN/wine" --bottle "$BOTTLE" --wait-children --cx-app "$TARGET" $GFXARGS
 else
   echo "Launching Endfield… (log in from the game's own screen; close the game or press Ctrl+C to stop)"
-  "$CXBIN/wine" --bottle "$BOTTLE" --wait-children --cx-app "$TARGET"
+  "$CXBIN/wine" --bottle "$BOTTLE" --wait-children --cx-app "$TARGET" $GFXARGS
 fi
 echo "Endfield exited."

@@ -12,9 +12,9 @@
 
 ## Endfield's engine and renderers
 
-- **Unreal Engine 5** (not Unity). `[confidence: high — CONFIRMED]`
-- Renderers: **Vulkan (default/native)**, **DirectX 12** (alternative; can crash on some systems), **DirectX 11** (compatibility fallback). `[confidence: high]`
-- ⚠️ Minor conflicting chatter exists (a few social posts claim "modified Unity"; one guide phrases the default as DX12) but the weight of reputable sources supports **UE5 / Vulkan-default / DX11-fallback**.
+- **Unity 2021.3.34f5, IL2CPP** — NOT Unreal Engine 5. `[confidence: high — CONFIRMED at runtime]` Verified directly: the game loads `unityplayer.dll` + `GameAssembly.dll` and its own `Player.log` reports `Initialize engine version: 2021.3.34f5`. (The earlier "UE5 CONFIRMED" claim here was wrong — it came from pre-runtime web sources.)
+- ⚠️ Hypergryph **heavily customized** Unity: base structure/editor/tools are stock, but they replaced the **graphics rendering system with their own multi-platform shading tech** (to carry 80k–100k-poly characters). So hair/foliage are **bespoke shaders** — no generic "Unity fix" from the Wine/Proton/DXVK ecosystem matches them.
+- Renderers offered: **Vulkan (default)**, **DirectX 12**, **DirectX 11**. Under CrossOver 26.2, **only DX11 works** (→ D3DMetal → Metal). Vulkan (→ MoltenVK) and DX12 (→ vkd3d, missing DXIL) both white-screen. `[confidence: high — observed on this machine]`
 
 **Consequence for the Metal stack:** Endfield defaults to **Vulkan**, but the mature macOS translation paths are DirectX→Metal. So the practical question (once ACE is satisfied) is whether to:
 - force **DirectX 11** and use **DXMT** or **DXVK**, or

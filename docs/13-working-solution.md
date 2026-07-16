@@ -60,6 +60,46 @@ After the anti-cheat is solved, the remaining day-to-day gotcha is the **graphic
 - **Do NOT "fix" the white screen by overwriting `lib/wine/x86_64-windows/{d3d11,d3d12,dxgi}.dll` with the `apple_gptk` (D3DMetal) copies.** Those are only meant to load through CrossOver's own D3DMetal backend path; dropping them in as the defaults makes `unityplayer.dll` fail to initialize (**Windows error 1114**, "missing or corrupt"). If you did this, restore the defaults from a stock `CrossOver.app` (`lib/wine/x86_64-windows/`).
 - **Launcher vs. direct launch:** the Gryphline launcher sets up the game's working directory (and session); launching `Endfield.exe` directly can hit the same 1114 on `unityplayer.dll`. Prefer the launcher.
 
+## The 2026-07-16 regression: ntdll.so rpath → cxcompatdb → no D3DMetal (SOLVED)
+
+After a clean rebuild of the patch app, the game (set to DX11) failed with `d3d11: failed to
+create device and context (80004005)` and fell back to Vulkan, which doesn't render — easily
+misread as "the Vulkan translation broke." The Vulkan fallback was the *symptom*; the DX11
+device-create failure was the disease. Diagnosis chain, for posterity:
+
+1. `WINEDEBUG=+process` showed `err:winediag:wined3d_adapter_create Using the Vulkan renderer
+   for d3d10/11 applications` in the game's process — **wined3d**, not D3DMetal, was serving
+   d3d11, and its experimental Vulkan renderer can't provide the feature levels Unity asks for
+   → `80004005`.
+2. CrossOver applies the bottle's `CX_GRAPHICS_BACKEND=d3dmetal` **per process** via
+   `lib/wine/x86_64-unix/cxcompatdb.so`, which stock `ntdll.so` dlopens at process start
+   (CW Hack 24067, `start_main_thread` in `dlls/ntdll/unix/loader.c`).
+3. The log's smoking gun: `warn:module:start_main_thread error loading cxcompatdb.so: …
+   Library not loaded: @rpath/libgnutls.30.dylib`. dyld resolves a dlopen'd library's
+   `@rpath` dependencies through the **calling image's** `LC_RPATH` — the caller is ntdll.so.
+   CodeWeavers' ntdll.so carries `@loader_path/../../../lib64` (where `libgnutls.30.dylib`
+   lives); **our minimal Wine build's ntdll.so only had `@loader_path/`**. So cxcompatdb
+   silently failed to load in every process, no backend was ever applied, and d3d11 fell
+   through to wined3d.
+4. Fix (one command, now automated in `swap-into-crossover.sh`):
+   `install_name_tool -add_rpath "@loader_path/../../../lib64" …/x86_64-unix/ntdll.so`
+   then ad-hoc re-`codesign`. Verified: every process logs
+   `set_graphics_backend using d3dmetal as the graphics backend`, DX11 device creation
+   succeeds, the game renders.
+
+Two adjacent findings from the same investigation:
+- **A direct `Endfield.exe` launch does not inherit the launcher's DirectX-11 setting** — the
+  launcher passes it at spawn. Without `-force-d3d11` Unity defaults to Vulkan.
+  `launch-endfield.sh` now appends `-force-d3d11` (override with `GFXARGS`).
+- The base `/Applications/CrossOver.app` had GPTK4 (D3DMetal **4.0b1**) manually installed
+  during the working period, and is now back to stock 3.0; the rebuilt patch app therefore had
+  3.0 until GPTK4 was reinstalled from `~/Downloads/GPTK_4/redist/lib/external`. The 80004005
+  was *not* a 3.0-vs-4.0b1 issue (it was the rpath), but the proven-good configuration is
+  4.0b1, which is what the patch app now carries. (D3DMetal reports an NVIDIA-spoofed adapter
+  — `vendorID=10de` — so the DLSS/streamline path can bind to MetalFX; this is expected.)
+- CodeWeavers' compat database (`~/Library/Application Support/CrossOver/compatdb-26.dat`,
+  auto-downloaded) was investigated and is **innocent** — no need to touch it.
+
 ## Follow-ups (polish, not blockers)
 - Add `PsGetProcessExitStatus` as an em-backport stub to silence the one residual ACE-thread abort.
 - Play-test past login (combat/rendering stability, the QPC-timing × D3DMetal interaction, DLSS fallback since it's NVIDIA-only).
