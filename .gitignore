@@ -4,6 +4,8 @@
 
 # Build artifacts (the Wine source tree + build output; users build these themselves)
 /build/
+/patcher-app/build/
+/patcher-app/.build/
 
 # Logs
 *.log
