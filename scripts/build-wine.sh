@@ -22,7 +22,7 @@
 #
 # Env: CX_VER (default 26.2.0), BUILD_DIR (default ./build), JOBS (default: all cores)
 
-set -uo pipefail
+set -euo pipefail
 CX_VER="${CX_VER:-26.2.0}"
 BUILD_DIR="${BUILD_DIR:-$(pwd)/build}"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"
@@ -84,6 +84,13 @@ cmd_configure() {
   arch -x86_64 /bin/bash -c '
     export PATH="'"$("$BREW" --prefix bison)"'/bin:$PATH"
     export MACOSX_DEPLOYMENT_TARGET=10.15
+    # On Apple Silicon, running Apple clang under Rosetta does not change its default
+    # target: it still emits arm64 code. Force the host objects to x86_64 explicitly,
+    # otherwise configure defines __x86_64__ alongside the clang __arm64__ default
+    # and the macOS SDK includes both architecture header families.
+    export CFLAGS="${CFLAGS:+$CFLAGS }-arch x86_64"
+    export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-arch x86_64"
+    export LDFLAGS="${LDFLAGS:+$LDFLAGS }-arch x86_64"
     echo "host arch: $(uname -m); bison: $(bison --version | head -1)"
     cd "'"$WINE_BUILD"'"
     CC=clang CXX=clang++ "'"$WINE_SRC"'/configure" --enable-archs=x86_64 --disable-tests --without-x \
@@ -104,6 +111,9 @@ cmd_build() {
   [ -d "$WINE_BUILD" ] || { echo "run 'configure' first"; exit 1; }
   arch -x86_64 /bin/bash -c '
     export PATH="'"$("$BREW" --prefix bison)"'/bin:$PATH"; export MACOSX_DEPLOYMENT_TARGET=10.15
+    export CFLAGS="${CFLAGS:+$CFLAGS }-arch x86_64"
+    export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-arch x86_64"
+    export LDFLAGS="${LDFLAGS:+$LDFLAGS }-arch x86_64"
     cd "'"$WINE_BUILD"'" && make -j'"$JOBS"'
   ' 2>&1 | tee "$BUILD_DIR/build.log"
   echo ""
