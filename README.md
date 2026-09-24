@@ -23,7 +23,7 @@ Use the latest available release patcher found on the [releases page](https://gi
 | **Mac** | Apple Silicon (M-series); **Intel not supported** |
 | **macOS** | 15 (Sequoia) or newer — tested on 27.0 / 26.5 |
 | **Rosetta 2** | required: `softwareupdate --install-rosetta --agree-to-license` |
-| **CrossOver** | **26.2**, licensed, from [codeweavers.com](https://www.codeweavers.com/crossover) |
+| **CrossOver** | **26.2 / 27**, licensed, from [codeweavers.com](https://www.codeweavers.com/crossover) |
 | **Xcode CLT / Homebrew** | `xcode-select --install` · [brew.sh](https://brew.sh) |
 | **Disk / time** | ~5 GB for the build tree; build ~20–60 min |
 
