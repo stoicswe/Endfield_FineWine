@@ -22,6 +22,9 @@ Original to this project. The two Rosetta fixes live in `dlls/ntdll/unix/signal_
 - `0004-ntdll-don-t-close-the-msync-alert-index-on-thread-exit.patch`, in `dlls/ntdll/unix/thread.c`:
   - Skips closing `alert_fd` on thread exit under MSync: it holds a shared-memory index owned by the server. Closing it can close another thread's wineserver pipe and cause Unity's "SuspendThread loop failed" error.
 
+- `0005-ntoskrnl-Implement-PsGetProcessExitStatus.patch`, in `dlls/ntoskrnl.exe/`:
+  - Implements `PsGetProcessExitStatus` (queried live, like upstream's `PsGetProcessSectionBaseAddress`), which ACE-BASE.sys calls. It removes the "unimplemented function ntoskrnl.exe.PsGetProcessExitStatus, aborting" residual; see *Known residual* below for what that thread does next.
+
 ## `stage2-dwproton/` — the ported dw-proton anti-cheat patches
 
 The Endfield-relevant subset of dw-proton's fix commit `b816be489`, from the `dawn-winery/dwproton-mirror` (fetched by [`../scripts/fetch-dwproton-patches.sh`](../scripts/fetch-dwproton-patches.sh)). Analysis: [../docs/02-dwproton-ace-patches.md](../docs/02-dwproton-ace-patches.md).
@@ -32,11 +35,11 @@ The Endfield-relevant subset of dw-proton's fix commit `b816be489`, from the `da
 - `misc/0008…` — wintrust winex11/winewayland bypass. **macOS-irrelevant** (targets `winex11.drv`); applies cleanly, does nothing on `winemac.drv`; kept for completeness.
 - `em-backports/0001-0017…` — the `ntoskrnl.exe` functions ACE calls (`KeAcquireGuardedMutex`, `PsGetProcessImageFileName`, `MmGetPhysicalMemoryRanges`, …). `0010` (`PsGetProcessImageFileName`) is the exact WineHQ-bug-59411 Linux blocker.
 
-Known residual: ACE also calls `ntoskrnl.exe.PsGetProcessExitStatus`, which is **not** in this set (dw-proton's maintainer found that abort "not really related"); one background ACE thread aborts on it, but the game reaches login regardless. A stub would silence it.
+Known residual: ACE also calls `ntoskrnl.exe.PsGetProcessExitStatus`, which is **not** in this set (dw-proton's maintainer found that abort "not really related"); without `stage1-macos/0005` one background ACE thread aborts on it, but the game reaches login regardless. With 0005 that abort is gone, but the same thread still ends shortly afterwards on an unhandled privileged instruction — so one background thread still exits, and the game is unaffected either way (2026-09 test on an M4, 150 s to the title screen, before/after).
 
 ## Applying
 
-All 24 patches are unified diffs and apply cleanly with `git apply` in this order: `em-backports/*` (numeric) → `misc/*` (numeric) → `stage1-macos/*` (numeric). This is automated by [`../scripts/build-wine.sh apply`](../scripts/build-wine.sh). Expect to rebase if CrossOver's Wine base changes (the dw-proton set targets the `b816be489` snapshot; the latest lives baked into `dawn.wine/dawn-winery/wine-dwproton` branch `base`).
+All 25 patches are unified diffs and apply cleanly with `git apply` in this order: `em-backports/*` (numeric) → `misc/*` (numeric) → `stage1-macos/*` (numeric). This is automated by [`../scripts/build-wine.sh apply`](../scripts/build-wine.sh). Expect to rebase if CrossOver's Wine base changes (the dw-proton set targets the `b816be489` snapshot; the latest lives baked into `dawn.wine/dawn-winery/wine-dwproton` branch `base`).
 
 ## License / provenance
 

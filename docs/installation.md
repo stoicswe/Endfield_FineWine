@@ -31,7 +31,7 @@ Or step by step (useful if something needs attention):
 ```bash
 ./scripts/build-wine.sh deps       # Homebrew: bison, mingw-w64, meson, pkg-config, ...
 ./scripts/build-wine.sh fetch      # download CrossOver 26.2 Wine source (~142 MB), git-init it
-./scripts/build-wine.sh apply      # git apply all 24 patches (verified to apply cleanly)
+./scripts/build-wine.sh apply      # git apply all 25 patches (verified to apply cleanly)
 ./scripts/build-wine.sh configure  # 64-bit-only, under `arch -x86_64` (Rosetta host)
 ./scripts/build-wine.sh build      # make -j
 ```

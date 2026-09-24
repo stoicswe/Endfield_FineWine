@@ -1,0 +1,74 @@
+From 1fa681d1950f1946ae36ce69791b8f2e0ce02c1b Mon Sep 17 00:00:00 2001
+From: Dustin Szabo <127912586+VagueDustin@users.noreply.github.com>
+Date: Wed, 23 Sep 2026 04:22:41 -0600
+Subject: [PATCH] ntoskrnl: Implement PsGetProcessExitStatus.
+
+ACE-BASE.sys (Arknights: Endfield's anti-cheat driver) calls it; as a stub,
+every call aborted a driver thread ("unimplemented function
+ntoskrnl.exe.PsGetProcessExitStatus, aborting", then "starting debugger").
+The status is queried live rather than read from the snapshot taken when
+the process object was created, since a process that has exited since then
+would still report STATUS_PENDING.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ dlls/ntoskrnl.exe/ntoskrnl.c        | 29 +++++++++++++++++++++++++++++
+ dlls/ntoskrnl.exe/ntoskrnl.exe.spec |  2 +-
+ 2 files changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.c b/dlls/ntoskrnl.exe/ntoskrnl.c
+index a6d728d..2d0db4b 100644
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -2592,6 +2592,35 @@ LONGLONG WINAPI PsGetProcessCreateTimeQuadPart( PEPROCESS process )
+     return process->times.CreateTime.QuadPart;
+ }
+ 
++/*********************************************************************
++ *           PsGetProcessExitStatus    (NTOSKRNL.@)
++ */
++NTSTATUS WINAPI PsGetProcessExitStatus( PEPROCESS process )
++{
++    PROCESS_BASIC_INFORMATION info;
++    NTSTATUS status;
++    HANDLE h;
++
++    TRACE("process %p.\n", process);
++
++    /* process->info is a snapshot taken when the object was created; query the live value. */
++    if ((status = ObOpenObjectByPointer( process, 0, NULL, PROCESS_QUERY_LIMITED_INFORMATION, NULL, KernelMode, &h )))
++    {
++        WARN("Error opening process object, status %#lx.\n", status);
++        return process->info.ExitStatus;
++    }
++    status = NtQueryInformationProcess( h, ProcessBasicInformation, &info, sizeof(info), NULL );
++    NtClose( h );
++    if (status)
++    {
++        WARN("Error querying process information, status %#lx.\n", status);
++        return process->info.ExitStatus;
++    }
++
++    TRACE("returning %#lx.\n", info.ExitStatus);
++    return info.ExitStatus;
++}
++
+ /*********************************************************************
+  *           PsGetProcessImageFileName    (NTOSKRNL.@)
+  */
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+index 955750b..587f18e 100644
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -924,7 +924,7 @@
+ @ stdcall PsGetProcessCreateTimeQuadPart(ptr)
+ @ stub PsGetProcessDebugPort
+ @ stub PsGetProcessExitProcessCalled
+-@ stub PsGetProcessExitStatus
++@ stdcall PsGetProcessExitStatus(ptr)
+ @ stub PsGetProcessExitTime
+ @ stdcall PsGetProcessId(ptr)
+ @ stdcall PsGetProcessImageFileName(ptr)
+-- 
+2.39.5 (Apple Git-154)
+

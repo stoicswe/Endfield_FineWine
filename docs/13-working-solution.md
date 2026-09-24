@@ -8,7 +8,7 @@
 - ✅ Unity engine (`unityplayer.dll`, `GameAssembly.dll`) loads and initializes
 - ✅ **Graphics via Apple D3DMetal** (`using d3dmetal as the graphics backend`)
 - ✅ **Login screen renders** — the game is playable to the point of account login
-- ⚠️ One non-fatal residual: an ACE thread aborts on `ntoskrnl.exe.PsGetProcessExitStatus` (dw-proton's maintainer noted this abort "isn't really related" to the blocker; it's not in the em-backports). The game reaches login regardless. Trivial stub = clean follow-up.
+- ⚠️ One non-fatal residual: an ACE thread aborts on `ntoskrnl.exe.PsGetProcessExitStatus` (dw-proton's maintainer noted this abort "isn't really related" to the blocker; it's not in the em-backports). The game reaches login regardless. *(2026-09: `stage1-macos/0005` implements it — that abort is gone, but the same thread then ends on an unhandled privileged instruction instead; still non-fatal.)*
 
 Engine correction: the runtime modules prove Endfield is **Unity IL2CPP**, not Unreal Engine 5 as the initial research ([06](06-graphics-and-gptk.md)) said.
 
@@ -101,7 +101,7 @@ Two adjacent findings from the same investigation:
   auto-downloaded) was investigated and is **innocent** — no need to touch it.
 
 ## Follow-ups (polish, not blockers)
-- Add `PsGetProcessExitStatus` as an em-backport stub to silence the one residual ACE-thread abort.
+- ~~Add `PsGetProcessExitStatus` as an em-backport stub to silence the one residual ACE-thread abort.~~ Done in `patches/stage1-macos/0005` (2026-09): the unimplemented-function abort is gone, but the thread still exits shortly afterwards on an unhandled privileged instruction, so one non-fatal residual remains.
 - Play-test past login (combat/rendering stability, the QPC-timing × D3DMetal interaction, DLSS fallback since it's NVIDIA-only).
 - **Upstream the two Rosetta signal fixes to CodeWeavers** (with Bug 45083 as reference) — they fix a whole class of protected games on Apple Silicon.
 - A distributable: bundle the patched modules as a CXPatcher-style overlay so others can apply it to their own CrossOver 26.2.
