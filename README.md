@@ -51,8 +51,8 @@ git clone <your-fork-url> Endfield_FineWine && cd Endfield_FineWine
 
 open /Applications/CrossOver_Endfield_Patch.app   # 4. run the game — NOT the stock CrossOver app
                                      #    in the launcher: dropdown next to Start -> "Launch with DirectX 11"
-                                     #    (the plain Start button uses the game's default Vulkan renderer, which
-                                     #    white-screens under CrossOver 26.3)
+                                     #    (the plain Start button uses the game's default Vulkan renderer:
+                                     #    experimental, see docs/graphics-performance.md)
 ```
 
 Full requirements, a manual (auditable) deployment, the bottle/Gryphline setup, and launch options: **[docs/installation.md](docs/installation.md)**.

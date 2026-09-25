@@ -103,5 +103,6 @@ Next:
        "$CXR/bin/wine" --bottle "$BOTTLE" --wait-children ~/Downloads/GRYPHLINK_<version>.exe
      Keep the default install location (C:\\Program Files\\GRYPHLINK).
   2. Log in to the launcher, download the game, and start it with the dropdown next to Start →
-     "Launch with DirectX 11" (Vulkan and DX12 render a white screen under CrossOver 26.3).
+     "Launch with DirectX 11" (DX12 renders a white screen; Vulkan is experimental,
+     see docs/graphics-performance.md).
 EOF

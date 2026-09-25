@@ -8,14 +8,28 @@ The anti-cheat fixes get Endfield past ACE; this page is about making it *render
 
 > **On "Vulkan":** GPTK/D3DMetal does **not** provide Vulkan — it translates DirectX **straight to Metal**. Vulkan on Apple GPUs comes from **MoltenVK** (Vulkan → Metal), which CrossOver bundles and CXPatcher/Procyon upgrade. So there are two graphics families: **DirectX → Metal directly** (D3DMetal / DXMT — where GPTK lives) vs **DirectX/Vulkan → Vulkan → Metal** (DXVK / vkd3d + MoltenVK). The direct D3DMetal path is the faster one.
 
-## ⚠️ The one rule: run Endfield in DirectX 11
+## ⚠️ Run Endfield in DirectX 11 (or, experimentally, Vulkan)
 
-**For Endfield specifically: set the game's own renderer to DirectX 11.** Endfield defaults to Vulkan/DX12, and under CrossOver 26.3 those fail (DX12 → `vkd3d` can't compile its DXIL shaders; native Vulkan → MoltenVK also fails) → white screen. Setting the CrossOver *backend* to D3DMetal is **not** enough to reroute the game's DX12 off vkd3d — the game itself must run in **DirectX 11**:
+**For Endfield specifically: set the game's own renderer to DirectX 11.** Endfield defaults to Vulkan/DX12. DX12 fails under CrossOver (`vkd3d` can't compile its DXIL shaders → white screen), and Vulkan needs a newer MoltenVK than CrossOver ships ([below](#experimental-the-vulkan-renderer)). Setting the CrossOver *backend* to D3DMetal is **not** enough to reroute the game's DX12 off vkd3d — the game itself must run in **DirectX 11**:
 
 - start it with the Gryphline launcher's **Launch with DirectX 11** (in the dropdown next to Start), which passes `-force-d3d11`, **or**
 - launch `Endfield.exe` with `-force-d3d11` yourself ([`scripts/launch-endfield.sh`](../scripts/launch-endfield.sh) does).
 
 The in-game graphics settings have no API option, and the plain Start button uses the default renderer. The backend guidance below applies once the game is on a DirectX path. A game update can reset the renderer back to Vulkan/DX12 — that's the usual cause when the white screen "comes back" ([troubleshooting.md](troubleshooting.md)).
+
+### Experimental: the Vulkan renderer
+
+The game's Vulkan renderer runs through MoltenVK (Vulkan → Metal), not the bottle's D3DMetal setting, so the MoltenVK in the patched app's `lib64/` decides how well it works:
+
+- **CrossOver's bundled MoltenVK (1.2.10)** renders, but once the game recreates its swapchain (changing FPS or V-Sync does) the window stays black and the game has to be force-closed ([KhronosGroup/MoltenVK#2722](https://github.com/KhronosGroup/MoltenVK/pull/2722)). `swap-into-crossover.sh` downloads 1.4.1 by default, which predates the fix.
+- **Stock MoltenVK 1.4.2** fixes the black screen. mary-ext reported three problems that remain ([#22](https://github.com/stoicswe/Endfield_FineWine/issues/22)): teleporting to Snowy Forest can hang the GPU (macOS then kills WindowServer, which logs you out), TAAU/FSR3 artifacts near Recycling Stations, and stutter until Metal's pipeline cache is built.
+- **This repo's patched MoltenVK** (`patches/moltenvk`, ported from [mary-ext's fork](https://github.com/mary-ext/crossover-wine-endfield)) is meant to fix those three. Build it with `scripts/build-moltenvk.sh` (needs full Xcode), then install it with `scripts/package.sh` and `scripts/apply-modules.sh`.
+
+Launch it with `GFXARGS=-force-vulkan scripts/launch-endfield.sh`.
+
+On a 16 GB M4 (CrossOver 26.2, stock MoltenVK 1.4.2): the first Vulkan launch compiled shaders for ~10 minutes (~3–4 the next time), frame pacing felt smoother than DX11, and it used about half the GPU memory. There's no DLSS under Vulkan; the game offers TAAU and AMD FSR3 instead (FSR3 *Native AA* looked best, and FSR Frame Generation made it slower). Numbers and settings: [14-performance-on-16gb-macs.md](14-performance-on-16gb-macs.md#vulkan-renderer-experimental).
+
+Upstream MoltenVK doesn't have two extensions CodeWeavers added to CrossOver's copy (`VK_EXT_transform_feedback`, `VK_NV_glsl_shader`). Endfield doesn't need them, but a DXVK game in the same CrossOver copy might.
 
 ## Pick the graphics backend
 

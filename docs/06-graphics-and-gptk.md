@@ -14,12 +14,12 @@
 
 - **Unity 2021.3.34f5, IL2CPP** — NOT Unreal Engine 5. `[confidence: high — CONFIRMED at runtime]` Verified directly: the game loads `unityplayer.dll` + `GameAssembly.dll` and its own `Player.log` reports `Initialize engine version: 2021.3.34f5`. (The earlier "UE5 CONFIRMED" claim here was wrong — it came from pre-runtime web sources.)
 - ⚠️ Hypergryph **heavily customized** Unity: base structure/editor/tools are stock, but they replaced the **graphics rendering system with their own multi-platform shading tech** (to carry 80k–100k-poly characters). So hair/foliage are **bespoke shaders** — no generic "Unity fix" from the Wine/Proton/DXVK ecosystem matches them.
-- Renderers offered: **Vulkan (default)**, **DirectX 12**, **DirectX 11**. Under CrossOver 26.3, **only DX11 works** (→ D3DMetal → Metal). Vulkan (→ MoltenVK) and DX12 (→ vkd3d, missing DXIL) both white-screen. `[confidence: high — observed on this machine]`
+- Renderers offered: **Vulkan (default)**, **DirectX 12**, **DirectX 11**. **DX11 works** (→ D3DMetal → Metal) and DX12 (→ vkd3d, missing DXIL) white-screens. `[confidence: high — observed on this machine]` **Vulkan** (→ MoltenVK) renders, but CrossOver's bundled MoltenVK goes black after a swapchain recreation; MoltenVK 1.4.2 fixes that, and `patches/moltenvk` targets the remaining issues. See [graphics-performance.md](graphics-performance.md#experimental-the-vulkan-renderer).
 
 **Consequence for the Metal stack:** Endfield defaults to **Vulkan**, but the mature macOS translation paths are DirectX→Metal. So the practical question (once ACE is satisfied) is whether to:
 - force **DirectX 11** and use **DXMT** or **DXVK**, or
 - force/allow **DirectX 12** and use **D3DMetal**, or
-- keep **Vulkan** and run it via **MoltenVK** (not the recommended path).
+- keep **Vulkan** and run it via **MoltenVK** (experimental; see [graphics-performance.md](graphics-performance.md#experimental-the-vulkan-renderer)).
 
 There is a community guide "disable Vulkan, force DirectX 11" for Endfield — likely the pragmatic macOS choice, but **unverified downstream of the anti-cheat fix**.
 
@@ -67,7 +67,7 @@ Wine 11.0 · Wine Mono 10.4.1 · vkd3d 1.18 (D3D12→Vulkan) · DXMT v0.72 · D3
 ## Open questions
 - Which CrossOver/Whisky version, if any, bundles **D3DMetal 4 / GPTK4** (only D3DMetal 3.0 confirmed bundled as of CrossOver 26). How to manually integrate GPTK4 into a custom bundle.
 - For Endfield's game process once ACE is bypassed: which backend (D3DMetal DX12 vs forced-DX11 via DXMT/DXVK vs Vulkan/MoltenVK) actually yields a playable result.
-- Whether Endfield's Vulkan default runs under CrossOver via MoltenVK, or whether forcing DX11/DX12 is mandatory.
+- ~~Whether Endfield's Vulkan default runs under CrossOver via MoltenVK, or whether forcing DX11/DX12 is mandatory.~~ **Answered (2026-09):** it runs with a newer MoltenVK than CrossOver ships; DX11 stays the recommended path.
 - ~~Exact `cxbottle.conf` backend-selection syntax.~~ **Answered (2026-09):** `CX_GRAPHICS_BACKEND` & co. — see [Selecting a backend](#selecting-a-backend-in-crossover-26).
 
 ## Primary sources

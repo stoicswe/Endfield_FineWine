@@ -183,6 +183,7 @@ Next:
   1. First time only: create the bottle with scripts/create-bottle.sh, then install the Gryphline
      launcher into it and let it download Endfield (README → "Before the first launch").
   2. Start the game from the launcher with the dropdown next to Start → "Launch with DirectX 11".
-     Vulkan and DX12 do NOT work under CrossOver 26.3 for this game (white screen).
+     DX12 does NOT work for this game (white screen); Vulkan is experimental, see
+     docs/graphics-performance.md.
   3. See docs/13-working-solution.md for troubleshooting.
 EOF

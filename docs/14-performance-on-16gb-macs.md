@@ -1,6 +1,6 @@
 # 14 — Performance on 16 GB Macs (measured)
 
-> **Measured on:** MacBook Pro 14", Apple **M4** (10-core CPU), **16 GB** unified memory, macOS 27.0, CrossOver 26.3.0 with this repo's modules, Endfield 1.5.3 in DirectX 11 mode, display at "More Space" (1800×1169). Two sessions, 2026-09-23: one on CrossOver's bundled **D3DMetal 3.0**, one on **GPTK 4.0b2**. The repo's original test machine was an M4 Pro with 24 GB. Tools: `top`, `vm_stat`, `sysctl vm.swapusage`, `memory_pressure`, `ps -M`, and the AGX GPU statistics in `ioreg`.
+> **Measured on:** MacBook Pro 14", Apple **M4** (10-core CPU), **16 GB** unified memory, macOS 27.0, CrossOver 26.2.0 with this repo's modules, Endfield 1.5.3 in DirectX 11 mode, display at "More Space" (1800×1169). Two sessions, 2026-09-23: one on CrossOver's bundled **D3DMetal 3.0**, one on **GPTK 4.0b2**. The repo's original test machine was an M4 Pro with 24 GB. Tools: `top`, `vm_stat`, `sysctl vm.swapusage`, `memory_pressure`, `ps -M`, and the AGX GPU statistics in `ioreg`.
 
 ## TL;DR
 
@@ -50,6 +50,22 @@ What each lever costs on a Mac:
 - The in-game **"Device Load: Hardware overloaded"** warning can be ignored: the game is judging the spoofed NVIDIA adapter and a Rosetta-bound main thread.
 
 Not measured, but worth trying for sharpness: macOS **Displays → Default** size (1512×982 on a 14"). With High Resolution Mode off, CrossOver renders at the "looks like" resolution; Default maps 2:1 onto the Retina panel, while "More Space" (1800×1169) is stretched 1.68×, which looks soft — and Default is ~30% fewer pixels. Keep **High Resolution Mode off** (white screen, [#2](https://github.com/stoicswe/Endfield_FineWine/issues/2); it would also quadruple the pixel count).
+
+## Vulkan renderer (experimental)
+
+Same Mac, 2026-09-24, CrossOver 26.2, launched with `GFXARGS=-force-vulkan scripts/launch-endfield.sh` ([what it needs](graphics-performance.md#experimental-the-vulkan-renderer)). Each column is a few minutes of sampling in the open world, and the settings differed between sessions, so treat it as a rough comparison. The patched MoltenVK from `patches/moltenvk` wasn't measured.
+
+| | Vulkan, CrossOver's MoltenVK 1.2.10 | Vulkan, stock MoltenVK 1.4.2 | DX11, GPTK 4.0b2 (session 2) |
+|---|---|---|---|
+| Endfield.exe memory (`top` MEM) | 7.9 → 8.4 GB | 8.7–9.0 GB | 7.7 → 11 GB |
+| GPU memory in use | 1.1–3.1 GB | 2.8–3.6 GB | 5.3 → 6.2 GB |
+| GPU busy | 26–94% | 39–98% | 54–66% |
+| Swap used | 5.6–5.8 GB, flat | 5.6 GB, flat | 2.4 → 4.9 GB |
+| Outcome | smooth until an FPS change turned it black | smooth; FPS, V-Sync and frame-generation changes were fine | "seriously very playable" |
+
+It felt smoother than DX11, with better frame pacing. The main thread is still at ~100% under Rosetta, but the GPU is busier and uses about half the memory.
+
+Settings that played best (stock 1.4.2): Graphics Quality *Custom*; Fullscreen 1800×1169; **FPS 60, V-Sync off**; Global and Teammate Skill Effects *Low*; Shadow Quality *Very Low*; **Texture Quality *High***; Volumetric Fog off, Volumetric Cloud *Very Low*; Anisotropic ×1; Ambient Occlusion *Very Low*; Scene / Ambient Details and Vegetation Density *Low*; Chromatic Aberration off; Screen Space Reflections off; Image Enhancement **AMD FSR3 → Native AA**, Sharpening 0; Frame Generation off; Contact Shadows on. There's no DLSS under Vulkan, and FSR Frame Generation made it slower.
 
 ## Checking your own machine
 

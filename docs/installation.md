@@ -103,7 +103,7 @@ Prefer the GUI for the bottle too? Create a *Windows 11 64-bit* bottle named `Ar
 
 ## 5. Run the game
 
-**From the Gryphline launcher (recommended):** open **`CrossOver_Endfield_Patch`** — not the stock `CrossOver`, whose unpatched Wine fails the anti-cheat — select the **Arknights Endfield** bottle, double-click **GRYPHLINK**, then use the **dropdown next to the Start button → "Launch with DirectX 11"**. That item starts the game with `-force-d3d11`; the plain **Start** button launches the game's default Vulkan renderer, which shows a white screen under CrossOver 26.3 (see [graphics-performance.md](graphics-performance.md)).
+**From the Gryphline launcher (recommended):** open **`CrossOver_Endfield_Patch`** — not the stock `CrossOver`, whose unpatched Wine fails the anti-cheat — select the **Arknights Endfield** bottle, double-click **GRYPHLINK**, then use the **dropdown next to the Start button → "Launch with DirectX 11"**. That item starts the game with `-force-d3d11`; the plain **Start** button launches the game's default Vulkan renderer, which is experimental and needs a newer MoltenVK than CrossOver ships (see [graphics-performance.md](graphics-performance.md#experimental-the-vulkan-renderer)).
 
 **Or start `Endfield.exe` directly** (the game has its own login screen; both commands add `-force-d3d11`):
 
