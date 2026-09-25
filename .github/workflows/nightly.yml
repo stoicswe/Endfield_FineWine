@@ -1,17 +1,19 @@
 # nightly.yml — nightly snapshot releases of the patched Wine builder, gated on change.
 #
 # Pipeline (runs on the default branch only — GitHub runs `schedule` there):
-#   1. `changes` — compare `main` HEAD against the commit the last `nightly` tag pointed at.
+#   1. `changes` — compare `main` HEAD against the commit the newest nightly snapshot tag points at.
 #      Build only if there are NEW commits touching build-affecting paths
 #      (patches/**, scripts/**, patcher-app/**, .github/workflows/**). Manual dispatches
 #      always build. Days without changes produce no build and no release.
 #   2. `build`   — call the build-wine reusable workflow (fresh build at HEAD). This is the
 #      "only if the default build is green" guarantee by construction: if the build fails,
 #      the release job is skipped and nothing is published. The next nightly automatically
-#      retries, because the `nightly` tag only moves after a successful release.
-#   3. `release` — download the `patcher-app` + `wine-modules` artifacts and publish them on
-#      the rolling `nightly` tag as a GitHub PRE-release (assets replaced in place, tag
-#      force-moved to the new HEAD). A stable URL for "latest nightly" is preserved.
+#      retries, because a snapshot tag is only created after a successful release.
+#   3. `release` — download the `patcher-app` + `wine-modules` artifacts and publish them as a
+#      NEW GitHub PRE-release on every run, tagged `nightly_<CrossOver version>.<UTC date>_<sha>`
+#      (e.g. `nightly_26.3.0.20260925_55ae553e…`). Each snapshot keeps its own assets and
+#      notes — nothing is replaced, moved, or deleted — and the newest prerelease sorts to
+#      the top of the Releases page.
 #
 # Notes:
 #   - cron timing is best-effort (GitHub may delay scheduled runs by minutes to hours).
@@ -27,7 +29,7 @@ on:
   workflow_dispatch: # manual override: always builds + releases
 
 permissions:
-  contents: write # needed to create/edit the release and move the nightly tag
+  contents: write # needed to create the release and its tag
 
 concurrency:
   group: nightly
@@ -45,7 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history + tags (baseline = last nightly tag)
+          fetch-depth: 0 # full history + tags (baseline = newest nightly-* tag)
 
       - name: Change gate
         id: gate
@@ -67,9 +69,19 @@ jobs:
             exit 0
           fi
 
-          if git rev-parse -q --verify refs/tags/nightly >/dev/null 2>&1; then
+          # Newest nightly snapshot tag. Tags are `nightly_<cxver>.<UTC YYYYMMDD>_<sha>` (the
+          # date part is fixed width, so lexical order == chronological order); also match
+          # the transitional `nightly-YYYYMMDD-HHMM` format in case it ever shipped.
+          LATEST="$(git for-each-ref 'refs/tags/nightly_*' 'refs/tags/nightly-*' --sort=-refname --count=1 --format='%(refname:short)')"
+          if [ -n "$LATEST" ]; then
+            BASE="$(git rev-parse "${LATEST}^{}")"
+            echo "baseline ($LATEST): $BASE"
+          elif git rev-parse -q --verify refs/tags/nightly >/dev/null 2>&1; then
+            # Legacy rolling `nightly` tag from before per-run releases: use it once as
+            # the baseline so the first run after the switch doesn't re-release the
+            # whole history.
             BASE="$(git rev-parse 'nightly^{}')"
-            echo "baseline (last nightly): $BASE"
+            echo "baseline (legacy rolling nightly tag): $BASE"
           else
             BASE="$(git rev-list --max-parents=0 HEAD)"
             echo "no previous nightly tag -> first nightly, building"
@@ -99,7 +111,7 @@ jobs:
           if [ "${{ steps.gate.outputs.should_build }}" = "true" ]; then
             echo "✅ New build-affecting commits since the last nightly — building a snapshot." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "🌙 No build-affecting changes since the last \`nightly\` tag — skipping build & release." >> "$GITHUB_STEP_SUMMARY"
+            echo "🌙 No build-affecting changes since the last nightly snapshot — skipping build & release." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   build:
@@ -119,12 +131,7 @@ jobs:
     timeout-minutes: 15
     env:
       CX_VER: "26.3.0"
-      TAG: nightly
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1 # only needed to move the nightly tag with git
-
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -202,32 +209,42 @@ jobs:
           print(out)
           PY
 
-      - name: Publish / refresh the nightly pre-release
+      - name: Publish a new nightly pre-release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Versioned release title: "Endfield FW <CrossOver version>.<UTC build date>_<full commit>".
-          # e.g. Endfield FW 26.3.0.20260924_3ee19e7110467bdc5655c16634621e7f557d280a
-          TITLE="Endfield FW ${CX_VER}.$(date -u +%Y%m%d)_${{ github.sha }}"
+          # Tag and title share one stamp: <CrossOver version>.<UTC build date>_<full commit>.
+          # e.g. tag     nightly_26.3.0.20260925_55ae553e8eb4f14645c8479bdd044b3f9751b2f7
+          #      title   Endfield FW 26.3.0.20260925_55ae553e8eb4f14645c8479bdd044b3f9751b2f7
+          # The date part is fixed width, so tags sort lexically in chronological order
+          # (the change gate's baseline lookup relies on this).
+          STAMP="${CX_VER}.$(date -u +%Y%m%d)_${{ github.sha }}"
+          TAG="nightly_${STAMP}"
+          TITLE="Endfield FW ${STAMP}"
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
           echo "RELEASE_TITLE=$TITLE" >> "$GITHUB_ENV"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "existing nightly release -> refreshing in place"
+            # Same version+date+commit: a re-run of this exact snapshot (failed-job re-run,
+            # double dispatch). Refresh it in place rather than colliding with the tag.
+            echo "release $TAG already exists (re-run of the same snapshot) -> refreshing assets"
+            gh release upload "$TAG" assets/*.zip assets/SHA256SUMS.txt --clobber
+            gh release edit "$TAG" --prerelease --title "$TITLE" --notes-file notes.md
           else
-            echo "creating the nightly release"
-            gh release create "$TAG" --prerelease --target "$GITHUB_SHA" --title "$TITLE" --notes-file notes.md
+            echo "creating release $TAG at $GITHUB_SHA"
+            # gh creates the tag at --target when it doesn't exist yet
+            gh release create "$TAG" \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --title "$TITLE" \
+              --notes-file notes.md \
+              assets/*.zip assets/SHA256SUMS.txt
           fi
 
-          # move the tag to the current HEAD (the change gate diffs against it)
-          git tag -f "$TAG" "$GITHUB_SHA"
-          git push -f origin "refs/tags/$TAG"
-
-          gh release upload "$TAG" assets/*.zip assets/SHA256SUMS.txt --clobber
-          gh release edit "$TAG" --prerelease --title "$TITLE" --notes-file notes.md
-          gh release view "$TAG" --json name,isPrerelease,assets --jq '{name, isPrerelease, assets: [.assets[].name]}'
+          gh release view "$TAG" --json name,tagName,isPrerelease,assets --jq '{name, tagName, isPrerelease, assets: [.assets[].name]}'
 
       - name: Summary
         shell: bash
@@ -238,14 +255,15 @@ jobs:
           | | |
           |---|---|
           | Title | %TITLE% |
-          | Tag | `nightly` (pre-release) |
+          | Tag | %TAG% (pre-release) |
           | Commit | `%SHA%` |
           | Assets | Patcher.app zip · modules zip · SHA256SUMS.txt |
           | URL | %RELEASE_URL% |
           EOT
           sed -i \
             -e "s|%TITLE%|$RELEASE_TITLE|g" \
+            -e "s|%TAG%|$RELEASE_TAG|g" \
             -e "s|%SHA%|${{ github.sha }}|g" \
-            -e "s|%RELEASE_URL%|${{ github.server_url }}/${{ github.repository }}/releases/tag/nightly|g" \
+            -e "s|%RELEASE_URL%|${{ github.server_url }}/${{ github.repository }}/releases/tag/$RELEASE_TAG|g" \
             summary.md
           cat summary.md >> "$GITHUB_STEP_SUMMARY"

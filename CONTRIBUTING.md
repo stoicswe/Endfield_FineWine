@@ -130,5 +130,7 @@ Notes:
 -   Re-pushing to the same `release/<version>` branch refreshes the existing release in place.
 -   To publish an explicit version without a branch, use **Actions → release → Run workflow** with
     the `version` input.
--   The rolling `nightly` prerelease is separate; see
+-   Nightly snapshots are separate: every nightly run publishes a new prerelease whose tag
+    mirrors its title, `nightly_<CrossOver version>.<UTC date>_<commit>`, so each snapshot
+    keeps its own assets; see
     [`.github/workflows/nightly.yml`](.github/workflows/nightly.yml).
