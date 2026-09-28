@@ -45,6 +45,8 @@ Also enable **DLSS (MetalFX)** and **MSync** — or let [`scripts/create-bottle.
 
 > **Apple's GPTK is evaluation-only software — download it yourself; you may not redistribute it**, so this repo cannot bundle it. These steps target **macOS 27 (beta)** for GPTK4. On **macOS 26**, CrossOver's bundled **D3DMetal 3.0** is the matched version — no action needed.
 
+> **[FineWine Patcher.app](../patcher-app/README.md) can do this for you:** mount the *"Evaluation environment for Windows games …"* DMG and the patcher's optional **GPTK4 / D3DMetal** step installs it into the copy it creates (only `lib64/apple_gptk/external/` is replaced). It is never bundled or redistributed — the app reads the DMG you supplied. The manual steps below are the equivalent if you prefer the shell script or a CXPatcher/Procyon workflow.
+
 ### 1. Download from Apple
 
 [developer.apple.com/games/game-porting-toolkit](https://developer.apple.com/games/game-porting-toolkit/) → the Downloads list ([search "Game Porting Toolkit"](https://developer.apple.com/download/all/?q=game%20porting%20toolkit)). Sign in with an Apple ID (a free Apple Developer account has historically been enough). The file you want is **"Evaluation environment for Windows games 4.x"** (listed next to "Game Porting Toolkit 4.x") — its DMG holds the D3DMetal redistributable in `redist/lib/external/`. Mount the `.dmg` (it appears under `/Volumes/…`; run `ls /Volumes/` to get its exact name).

@@ -10,16 +10,23 @@ A minimal macOS app that turns a copy of **CrossOver 26.3** into the patched bui
    * `lib64/libMoltenVK.dylib` (built by [`scripts/build-moltenvk.sh`](../scripts/build-moltenvk.sh))
 
    keeping `.cxorig` backups.
-3. Re-seals the whole bundle with an ad-hoc signature and removes quarantine. (Just stripping
+3. *(Optional)* Installs **GPTK4 / D3DMetal** from a copy **you** supply — a mounted
+   *"Evaluation environment for Windows games …"* DMG (or a folder you pick). Only
+   `lib64/apple_gptk/external/` is replaced (every D3DMetal glue module symlinks into it), so
+   the whole D3D11/D3D12/DXGI/DLSS stack upgrades and no `lib/wine/...` DLL is touched. Keeps
+   CrossOver's copy as `external.cxorig`.
+4. Re-seals the whole bundle with an ad-hoc signature and removes quarantine. (Just stripping
    the seal gets the copy reported as *damaged* and its binaries killed, because a copy made by
    a downloaded app carries `com.apple.provenance` — see
    [docs/05](../docs/05-swapping-into-crossover.md#code-signing-after-modification-apple-silicon-specifics).)
-4. Verifies the swap (sizes, `ntdll.so` signature, the `lib64` rpath D3DMetal needs, and the
-   bundle signature).
-5. Moves the patched app into place; an existing copy macOS won't let it delete goes to the Trash.
+5. Verifies the swap (sizes, `ntdll.so` signature, the `lib64` rpath D3DMetal needs, the
+   installed GPTK4 files if selected, and the bundle signature).
+6. Moves the patched app into place; an existing copy macOS won't let it delete goes to the Trash.
 
-Out of scope by design: the optional GPTK4 / D3DMetal upgrade (Apple's GPTK may not be
-redistributed) — see [docs/graphics-performance.md](../docs/graphics-performance.md) for that.
+**Apple's Game Porting Toolkit is never bundled or redistributed** (it is evaluation-only
+software). The optional GPTK4 step reads the DMG *you* mounted, under Apple's own license; if
+you skip it, the patched app keeps CrossOver's bundled D3DMetal 3.0. See
+[docs/graphics-performance.md](../docs/graphics-performance.md) for the GPTK4 background.
 MoltenVK **is** bundled (it is Apache-2.0), since the game's Vulkan/DXVK/vkd3d paths use it.
 
 **End users need no developer tools** — the `lib64` rpath is baked into the payload at app-build
