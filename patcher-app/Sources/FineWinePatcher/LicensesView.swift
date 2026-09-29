@@ -91,9 +91,10 @@ struct LicensesView: View {
             }
             Divider()
             HStack {
-                Text("The bundled Wine modules are LGPL-2.1-or-later and MoltenVK is Apache-2.0 — you may rebuild or replace them; sources are linked above.")
+                Text("The bundled Wine modules are LGPL-2.1-or-later and MoltenVK is Apache-2.0 — you may rebuild or replace them; sources are linked above. Apple's Game Porting Toolkit / D3DMetal is not bundled or redistributed: the optional GPTK4 upgrade installs only the copy you mount yourself, under Apple's own license.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
