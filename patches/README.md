@@ -46,6 +46,9 @@ Applied by `scripts/build-moltenvk.sh` to MoltenVK v1.4.2 and its pinned SPIRV-C
   - `MVK_CONFIG_PIPELINE_CACHE_BACKGROUND_WORKERS` sets the worker count (default 4; 0 disables background work).
   - Retrieves and specializes Metal functions without the device-wide lock.
 - `0005-make-vertex-positions-invariant.patch`: makes vertex and tessellation evaluation shader positions invariant so depth prepasses and subsequent EQUAL depth tests agree. Fixes TAA smearing.
+- `0007-don-t-hang-vkWaitForPresentKHR-on-a-stalled-present-completion.patch`: *(original to this project, not from mary-ext — hence the gap at `0006`)* keeps `vkWaitForPresentKHR` (`VK_KHR_present_wait`) from freezing the picture forever.
+  - Advances the completed-present ID whenever a newer present is queued: present IDs are monotonic, so a newer present means all older ones are done or superseded — this lets the wait make progress even when Metal fails to fire an older present's completion callback (the same regression `forceUnpresentedImageCompletion()` works around).
+  - Waits in bounded 100 ms slices and, after a 1 s grace with presents still in flight, treats a never-signalled present as complete. A `UINT64_MAX` timeout previously overflowed the absolute deadline in `condition_variable::wait_for` and degenerated into a busy spin; on Endfield (which uses `VK_KHR_present_wait2`) that hung the game on the last presented frame indefinitely.
 
 Known residual: ACE also calls `ntoskrnl.exe.PsGetProcessExitStatus`, which is **not** in this set (dw-proton's maintainer found that abort "not really related"); one background ACE thread aborts on it, but the game reaches login regardless. A stub would silence it.
 
