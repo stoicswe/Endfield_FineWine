@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 struct PatchError: LocalizedError {
     let message: String
@@ -55,6 +56,63 @@ enum Payload {
     }
 }
 
+/// A GPTK install the user supplied — the `…/redist/lib/external` folder inside Apple's
+/// mounted "Evaluation environment for Windows games …" DMG (or a folder picked by hand).
+///
+/// Apple's Game Porting Toolkit is evaluation-only software and is **never bundled or
+/// redistributed** by this app; the app only reads the copy the user mounted themselves.
+struct GPTKSource: Identifiable, Hashable, Sendable {
+    /// The `…/redist/lib/external` directory.
+    let url: URL
+    /// CFBundleShortVersionString of the bundled D3DMetal.framework (e.g. "4.0b2"), if readable.
+    let version: String?
+    /// The mounted volume's name (e.g. "Evaluation environment for Windows games 4.0b2").
+    let volumeName: String
+
+    var id: String { url.path }
+
+    var displayName: String {
+        if let version, !version.isEmpty { return "\(volumeName) — D3DMetal \(version)" }
+        return volumeName
+    }
+
+    /// D3DMetal 4.x is the GPTK4 release that adds the Metal 4 / MetalFX features.
+    var isVersion4: Bool { version?.hasPrefix("4") == true }
+
+    init?(url: URL) {
+        let fm = FileManager.default
+        let lib = url.appendingPathComponent("libd3dshared.dylib")
+        let plist = url.appendingPathComponent("D3DMetal.framework/Resources/Info.plist")
+        guard fm.fileExists(atPath: lib.path),
+              fm.fileExists(atPath: url.appendingPathComponent("D3DMetal.framework").path) else { return nil }
+        self.url = url
+        self.version = Self.frameworkVersion(plist)
+        let parts = url.standardizedFileURL.pathComponents   // ["/", "Volumes", "<label>", "redist", "lib", "external"]
+        if parts.count >= 6, parts[1] == "Volumes" {
+            volumeName = parts[2]
+        } else {
+            volumeName = url.deletingLastPathComponent().lastPathComponent
+        }
+    }
+
+    private static func frameworkVersion(_ plist: URL) -> String? {
+        guard let data = try? Data(contentsOf: plist),
+              let parsed = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        else { return nil }
+        return parsed["CFBundleShortVersionString"] as? String
+    }
+
+    /// Every GPTK redist currently mounted under /Volumes (`<volume>/redist/lib/external`).
+    static func detectMounted() -> [GPTKSource] {
+        let fm = FileManager.default
+        guard let volumes = try? fm.contentsOfDirectory(at: URL(fileURLWithPath: "/Volumes"),
+                                                        includingPropertiesForKeys: nil) else { return [] }
+        return volumes
+            .compactMap { GPTKSource(url: $0.appendingPathComponent("redist/lib/external", isDirectory: true)) }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+}
+
 /// What we know about a selected CrossOver.app.
 struct CrossOverInfo {
     static let expectedVersion = "26.3"
@@ -83,9 +141,9 @@ struct CrossOverInfo {
     }
 }
 
-/// Performs the patch. Mirrors scripts/swap-into-crossover.sh steps 1, 2 and 5:
-/// the patched Wine-module swap plus the bundled patched MoltenVK. Apple's GPTK
-/// / D3DMetal is intentionally out of scope — it may not be redistributed.
+/// Performs the patch. Mirrors scripts/swap-into-crossover.sh steps 1, 2, 3 and 5:
+/// the patched Wine-module swap plus the bundled patched MoltenVK, and (optionally) Apple's
+/// GPTK4 / D3DMetal, installed from a copy the user supplied — it is never bundled here.
 @MainActor
 final class PatcherEngine: ObservableObject {
     struct Step: Identifiable {
@@ -100,13 +158,19 @@ final class PatcherEngine: ObservableObject {
     @Published private(set) var patchedApp: URL?
     @Published var errorMessage: String?
 
-    private static let stepLabels = [
-        "Copying CrossOver",
-        "Installing the patched modules",
-        "Re-sealing the bundle",
-        "Verifying",
-        "Moving the patched app into place",
-    ]
+    private static func stepLabels(includingGPTK: Bool) -> [String] {
+        var labels = [
+            "Copying CrossOver",
+            "Installing the patched modules",
+        ]
+        if includingGPTK { labels.append("Installing GPTK4 / D3DMetal") }
+        labels += [
+            "Re-sealing the bundle",
+            "Verifying",
+            "Moving the patched app into place",
+        ]
+        return labels
+    }
 
     func reset() {
         steps = []
@@ -114,7 +178,7 @@ final class PatcherEngine: ObservableObject {
         errorMessage = nil
     }
 
-    func patch(source: URL, destination: URL) {
+    func patch(source: URL, destination: URL, gptk: GPTKSource? = nil) {
         guard !isRunning else { return }
         guard let payloadDir = Payload.directory, Payload.isComplete else {
             errorMessage = "This build of the patcher does not include the module payload (Wine + MoltenVK). Rebuild it with patcher-app/scripts/build-app.sh after scripts/build-wine.sh all and scripts/build-moltenvk.sh all."
@@ -122,7 +186,7 @@ final class PatcherEngine: ObservableObject {
         }
         reset()
         isRunning = true
-        steps = Self.stepLabels.enumerated().map { Step(id: $0.offset, label: $0.element) }
+        steps = Self.stepLabels(includingGPTK: gptk != nil).enumerated().map { Step(id: $0.offset, label: $0.element) }
 
         Task.detached(priority: .userInitiated) {
             var current = 0
@@ -138,26 +202,34 @@ final class PatcherEngine: ObservableObject {
                 if let staged { try? FileManager.default.removeItem(at: staged.deletingLastPathComponent()) }
             }
             do {
-                await begin(0)
+                var index = 0
+
+                await begin(index)
                 let app = try Self.copyBundle(from: source, to: destination)
                 staged = app
-                await finish(0)
+                await finish(index); index += 1
 
-                await begin(1)
+                await begin(index)
                 try Self.installModules(into: app, from: payloadDir)
-                await finish(1)
+                await finish(index); index += 1
 
-                await begin(2)
+                if let gptk {
+                    await begin(index)
+                    try Self.installGPTK(into: app, from: gptk.url)
+                    await finish(index); index += 1
+                }
+
+                await begin(index)
                 try Self.resealBundle(app)
-                await finish(2)
+                await finish(index); index += 1
 
-                await begin(3)
-                try Self.verify(app, payloadDir: payloadDir)
-                await finish(3)
+                await begin(index)
+                try Self.verify(app, payloadDir: payloadDir, gptk: gptk)
+                await finish(index); index += 1
 
-                await begin(4)
+                await begin(index)
                 try Self.moveIntoPlace(app, destination: destination)
-                await finish(4)
+                await finish(index); index += 1
 
                 await MainActor.run {
                     self.patchedApp = destination
@@ -166,7 +238,7 @@ final class PatcherEngine: ObservableObject {
             } catch {
                 let failed = current
                 await MainActor.run {
-                    self.steps[failed].status = .failed
+                    if failed < self.steps.count { self.steps[failed].status = .failed }
                     self.errorMessage = error.localizedDescription
                     self.isRunning = false
                 }
@@ -241,6 +313,78 @@ final class PatcherEngine: ObservableObject {
         }
     }
 
+    /// Installs Apple's GPTK4 / D3DMetal (the user's own mounted DMG) over CrossOver's bundled
+    /// D3DMetal. Only `lib64/apple_gptk/external/` is replaced: every D3DMetal glue module in
+    /// `lib64/apple_gptk/wine/` symlinks into it, so the whole D3D11/D3D12/DXGI/DLSS (NVNGX)
+    /// stack upgrades at once — and no `lib/wine/.../{d3d11,d3d12,dxgi}.dll` is touched (dropping
+    /// Apple's DLLs there breaks `unityplayer.dll`, Windows error 1114). Mirrors
+    /// scripts/swap-into-crossover.sh step 3.
+    private nonisolated static func installGPTK(into app: URL, from gptkExternal: URL) throws {
+        let fm = FileManager.default
+        let cxr = cxRoot(app)
+        let dest = cxr.appendingPathComponent("lib64/apple_gptk/external", isDirectory: true)
+        guard fm.fileExists(atPath: dest.path) else {
+            throw PatchError("lib64/apple_gptk/external not found in the copied app — is this really CrossOver \(CrossOverInfo.expectedVersion)?")
+        }
+        let lib = gptkExternal.appendingPathComponent("libd3dshared.dylib")
+        let framework = gptkExternal.appendingPathComponent("D3DMetal.framework", isDirectory: true)
+        guard fm.fileExists(atPath: lib.path), fm.fileExists(atPath: framework.path) else {
+            throw PatchError("That folder is not a GPTK redist — expected D3DMetal.framework and libd3dshared.dylib inside it (…/redist/lib/external).")
+        }
+        // Re-running the patcher with the same GPTK already installed is a no-op.
+        if externalMatches(source: gptkExternal, destination: dest) { return }
+
+        let backup = cxr.appendingPathComponent("lib64/apple_gptk/external.cxorig", isDirectory: true)
+        if fm.fileExists(atPath: backup.path) { try? fm.removeItem(at: backup) }
+        try fm.moveItem(at: dest, to: backup)
+        do {
+            // ditto (not copyItem) preserves the framework's symlinks and permissions; the two
+            // flags drop the DMG's quarantine/FinderInfo xattrs, which would break the seal.
+            try run("/usr/bin/ditto", ["--noextattr", "--noqtn", gptkExternal.path + "/", dest.path])
+        } catch {
+            // A failed copy must not leave a half-installed GPTK: restore CrossOver's original.
+            try? fm.removeItem(at: dest)
+            try? fm.moveItem(at: backup, to: dest)
+            throw error
+        }
+        // Apple's signatures normally survive ditto; only re-sign the halves that don't verify.
+        let dstLib = dest.appendingPathComponent("libd3dshared.dylib")
+        if !codesignVerifies(dstLib.path, deep: false) {
+            try run("/usr/bin/codesign", ["--force", "--sign", "-", dstLib.path])
+        }
+        let dstFramework = dest.appendingPathComponent("D3DMetal.framework", isDirectory: true)
+        if !codesignVerifies(dstFramework.path, deep: true) {
+            try run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", dstFramework.path])
+        }
+    }
+
+    /// True when the installed D3DMetal.framework binary and libd3dshared.dylib already match
+    /// the source, so a re-patch doesn't needlessly replace (and re-sign) them.
+    private nonisolated static func externalMatches(source: URL, destination: URL) -> Bool {
+        let lib = "libd3dshared.dylib"
+        let fw = "D3DMetal.framework/Versions/A/D3DMetal"
+        guard let srcLib = hash(source.appendingPathComponent(lib)),
+              let dstLib = hash(destination.appendingPathComponent(lib)),
+              srcLib == dstLib,
+              let srcFw = hash(source.appendingPathComponent(fw)),
+              let dstFw = hash(destination.appendingPathComponent(fw)),
+              srcFw == dstFw
+        else { return false }
+        return true
+    }
+
+    private nonisolated static func hash(_ url: URL) -> Data? {
+        guard let data = try? Data(contentsOf: url, options: .alwaysMapped) else { return nil }
+        return Data(SHA256.hash(data: data))
+    }
+
+    private nonisolated static func codesignVerifies(_ path: String, deep: Bool) -> Bool {
+        var args = ["--verify"]
+        if deep { args += ["--deep", "--strict"] }
+        args.append(path)
+        return (try? run("/usr/bin/codesign", args)) != nil
+    }
+
     /// Re-seals the bundle with an ad-hoc signature. Deleting the seal is not enough: a copy
     /// made by a downloaded app (like this one) carries com.apple.provenance, so macOS checks
     /// the bundle's signature at first launch and kills every binary in a bundle whose seal is
@@ -277,13 +421,27 @@ final class PatcherEngine: ObservableObject {
         try fm.moveItem(at: staged, to: destination)
     }
 
-    private nonisolated static func verify(_ app: URL, payloadDir: URL) throws {
+    private nonisolated static func verify(_ app: URL, payloadDir: URL, gptk: GPTKSource?) throws {
         let cxr = cxRoot(app)
         for module in Payload.modules {
             let src = payloadDir.appendingPathComponent(module.payloadSubpath)
             let dst = cxr.appendingPathComponent(module.crossoverSubpath)
             guard let a = fileSize(src), let b = fileSize(dst), a == b else {
                 throw PatchError("\(module.crossoverSubpath) does not match the bundled payload after the swap.")
+            }
+        }
+        // If the user supplied GPTK, confirm the D3DMetal external half really came across (the
+        // installed libd3dshared.dylib must be byte-identical to the source they selected).
+        if let gptk {
+            let external = cxr.appendingPathComponent("lib64/apple_gptk/external", isDirectory: true)
+            let installed = external.appendingPathComponent("libd3dshared.dylib")
+            guard FileManager.default.fileExists(atPath: installed.path),
+                  FileManager.default.fileExists(atPath: external.appendingPathComponent("D3DMetal.framework/Versions/A/D3DMetal").path) else {
+                throw PatchError("GPTK4 was not installed correctly — D3DMetal.framework or libd3dshared.dylib is missing from the patched app.")
+            }
+            guard let src = hash(gptk.url.appendingPathComponent("libd3dshared.dylib")),
+                  let dst = hash(installed), src == dst else {
+                throw PatchError("The installed GPTK4 libd3dshared.dylib does not match the source you selected.")
             }
         }
         // ntdll.so is the module the kernel actually checks; make sure its ad-hoc

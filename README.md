@@ -27,6 +27,8 @@ Tested on an Apple **M4 Pro** (MacBook Pro 12-core, 24 GB), macOS 27.0, CrossOve
 ### Using the Patcher.app
 Use the latest available release patcher found on the [releases page](https://github.com/stoicswe/Endfield_FineWine/releases).
 
+The patcher can also install **Apple's GPTK4 / D3DMetal** if you mount the *"Evaluation environment for Windows games …"* DMG first — it is never bundled or redistributed, only read from the copy you supply.
+
 ### Manual Build and Installation
 
 #### Dependancies
