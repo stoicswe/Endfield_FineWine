@@ -2,6 +2,8 @@
 
 # Endfield_FineWine — Arknights: Endfield on Apple Silicon
 
+[![Watch on YouTube](./docs/screenshot_2026.09.28.png)](https://www.youtube.com/watch?v=baokvOArBKc)
+
 Run **Arknights: Endfield** on an Apple Silicon Mac through a **custom-patched CrossOver Wine**. This project aims to provide the necessary compatibility edits needed to bring Arknights: Endfiled to a near-native macOS gaming experience. Patches by the `DW-Proton` project have been used as the basis for getting the game's VMProtect/TenProtect armor, the **ACE anti-cheat**, and rendering commands to run properly on macOS. This project does **NOT** bypass anticheat, but rather adjusts the crossover env to allow for Endfield's anticheat services to run uninterupted. Additiionally, we aim optimize the translated calls from DX11/Vulkan to Apple's **D3DMetal**.
 
 CodeWeavers rated Endfield *"Installs, Will Not Run"* and the community consensus was that CrossOver + Endfield was impossible; this repository is the first known working setup, plus the full engineering write-up of how it was found.
