@@ -1,0 +1,124 @@
+name: Generate Wiki Documentation
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'README.md'
+      - 'docs/**'
+      - 'scripts/**'
+      - 'patches/**'
+      - 'patcher-app/**'
+      - '.git-wiki-builder.yml'
+      - '.github/scripts/generate-wiki.py'
+      - '*.md'
+  workflow_dispatch:
+
+permissions:
+  # The publisher pushes the generated pages to <repo>.wiki.git, so the default
+  # GITHUB_TOKEN needs write. (pages/id-token are for GitHub Pages and unused here.)
+  contents: write
+
+jobs:
+  generate-wiki:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          # No `cache: 'pip'` here: this repo has no requirements.txt / pyproject.toml
+          # (it's shell scripts + Swift + Wine patches), and setup-python's pip cache
+          # fails hard when it can't find a dependency file to hash. There's nothing
+          # worth caching — the tool is a single `pip install` below.
+
+      - name: Install Git Wiki Builder
+        run: pip install git-wiki-builder==0.1.4   # pinned for reproducible wiki output
+
+      # Free OpenRouter free-tier models answer with HTTP 200 + {"error": ...}
+      # when an upstream is saturated or rate-limited. One cheap request up front
+      # shows the raw API response in the log — and is retried a few times,
+      # because "temporarily rate-limited upstream" errors are transient. With
+      # the `openrouter/free` model the API routers around loaded upstreams, so
+      # this mostly passes on the first try.
+      - name: Preflight — check the AI model answers
+        run: |
+          MODEL=$(python -c "import yaml; print(yaml.safe_load(open('.git-wiki-builder.yml'))['ai']['model'])")
+          echo "Model: $MODEL"
+          OK=0
+          for i in 1 2 3 4 5; do
+            echo "preflight attempt $i/5"
+            curl -sS https://openrouter.ai/api/v1/chat/completions \
+              -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"model\": \"$MODEL\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"Reply with exactly: OK\"}]}" \
+              -o /tmp/preflight.json
+            if python3 - "$i" <<'EOF'
+          import json, sys
+          body = json.load(open("/tmp/preflight.json"))
+          if body.get("choices"):
+              print("AI preflight OK")
+              raise SystemExit(0)
+          err = body.get("error", {})
+          print(f"attempt {sys.argv[1]}: API error {err.get('code')}: {(err.get('message') or '')[:300]}")
+          meta = err.get("metadata") or {}
+          if meta:
+              print("  metadata:", json.dumps(meta, indent=2)[:400])
+          raise SystemExit(1)
+          EOF
+            then
+              OK=1
+              break
+            fi
+            sleep 15
+          done
+          if [ "$OK" != 1 ]; then
+            echo "::error::AI preflight failed after 5 attempts — last response:"
+            python3 -c "import json; print(json.dumps(json.load(open('/tmp/preflight.json')), indent=2)[:2000])"
+            echo "::error::Retry the job, or swap ai.model in .git-wiki-builder.yml (openrouter/free usually side-steps upstream rate limits)."
+            exit 1
+          fi
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+      - name: Generate and publish wiki
+        run: python .github/scripts/generate-wiki.py
+        env:
+          # Publishing (clone/push <repo>.wiki.git). The Actions GITHUB_TOKEN
+          # CANNOT push to the wiki repo (GitHub platform rule) — set a
+          # WIKI_TOKEN repo secret with a classic PAT (scope `repo`) or
+          # fine-grained PAT (Contents: read and write); the wrapper prefers it
+          # and falls back to GITHUB_TOKEN otherwise. Wiki must also be enabled
+          # (Settings -> General -> Features -> Wikis) and initialized with one
+          # stub page before the first push.
+          WIKI_TOKEN: ${{ secrets.WIKI_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # AI generation: GitHub Models was retired 2026-07-30, so the "openai"
+          # provider is pointed at OpenRouter's free tier instead. OPENAI_BASE_URL
+          # is honored because the tool builds its OpenAI client without an
+          # explicit base_url. The wrapper script also applies our custom wiki
+          # structure (ignored by the tool) and retries flaky free-model calls.
+          OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENAI_BASE_URL: https://openrouter.ai/api/v1
+
+      - name: Generate wiki preview (for debugging)
+        if: failure()
+        run: python .github/scripts/generate-wiki.py --dry-run --output-dir ./wiki-debug --verbose
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      - name: Upload debug artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wiki-debug
+          path: wiki-debug/
+          retention-days: 7

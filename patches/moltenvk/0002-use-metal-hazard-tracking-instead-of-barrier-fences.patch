@@ -1,0 +1,166 @@
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCmdPipeline.mm b/MoltenVK/MoltenVK/Commands/MVKCmdPipeline.mm
+index 9092954..04c7b42 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCmdPipeline.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCmdPipeline.mm
+@@ -157,7 +157,7 @@ void MVKCmdPipelineBarrier<N>::encode(MVKCommandEncoder* cmdEncoder) {
+ 	}
+ #endif
+ 
+-	if (!cmdEncoder->_mtlRenderEncoder && cmdEncoder->isUsingMetalArgumentBuffers() && cmdEncoder->getDevice()->hasResidencySet()) {
++	if (!cmdEncoder->_mtlRenderEncoder && cmdEncoder->isUsingMetalArgumentBuffers() && cmdEncoder->getDevice()->usesBarrierFences()) {
+ 		cmdEncoder->endCurrentMetalEncoding();
+ 
+ 		for (auto& b : _barriers) {
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
+index 8c24deb..2b57cee 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
+@@ -52,7 +52,7 @@ void MVKCommandEncodingContext::setRenderingContext(MVKRenderPass* renderPass, M
+ }
+ 
+ void MVKCommandEncodingContext::syncFences(MVKDevice *device, id<MTLCommandBuffer> mtlCommandBuffer) {
+-	if (!device->hasResidencySet()) return;
++	if (!device->usesBarrierFences()) return;
+ 
+ 	// Synchronize all stages to their fences at index 0, which will be waited on in the next command buffer.
+ 	for (int i = 0; i < kMVKBarrierStageCount; ++i) {
+@@ -649,7 +649,7 @@ static MVKBarrierStage commandUseToBarrierStage(MVKCommandUse use) {
+ 
+ 
+ void MVKCommandEncoder::barrierWait(MVKBarrierStage stage, id<MTLRenderCommandEncoder> mtlEncoder, MTLRenderStages beforeStages) {
+-	if (!isUsingMetalArgumentBuffers() || !getDevice()->hasResidencySet()) return;
++	if (!isUsingMetalArgumentBuffers() || !getDevice()->usesBarrierFences()) return;
+ 	for (int i = 0; i < kMVKBarrierStageCount; ++i) {
+ 		auto fenceIndex = _pEncodingContext->fenceSlots.wait[stage][i];
+ 		auto fence = _device->getFence((MVKBarrierStage)i, fenceIndex);
+@@ -658,7 +658,7 @@ void MVKCommandEncoder::barrierWait(MVKBarrierStage stage, id<MTLRenderCommandEn
+ }
+ 
+ void MVKCommandEncoder::barrierWait(MVKBarrierStage stage, id<MTLBlitCommandEncoder> mtlEncoder) {
+-	if (!isUsingMetalArgumentBuffers() || !getDevice()->hasResidencySet()) return;
++	if (!isUsingMetalArgumentBuffers() || !getDevice()->usesBarrierFences()) return;
+ 	for (int i = 0; i < kMVKBarrierStageCount; ++i) {
+ 		auto fenceIndex = _pEncodingContext->fenceSlots.wait[stage][i];
+ 		auto fence = _device->getFence((MVKBarrierStage)i, fenceIndex);
+@@ -667,7 +667,7 @@ void MVKCommandEncoder::barrierWait(MVKBarrierStage stage, id<MTLBlitCommandEnco
+ }
+ 
+ void MVKCommandEncoder::barrierWait(MVKBarrierStage stage, id<MTLComputeCommandEncoder> mtlEncoder) {
+-	if (!isUsingMetalArgumentBuffers() || !getDevice()->hasResidencySet()) return;
++	if (!isUsingMetalArgumentBuffers() || !getDevice()->usesBarrierFences()) return;
+ 	for (int i = 0; i < kMVKBarrierStageCount; ++i) {
+ 		auto fenceIndex = _pEncodingContext->fenceSlots.wait[stage][i];
+ 		auto fence = _device->getFence((MVKBarrierStage)i, fenceIndex);
+@@ -676,19 +676,19 @@ void MVKCommandEncoder::barrierWait(MVKBarrierStage stage, id<MTLComputeCommandE
+ }
+ 
+ void MVKCommandEncoder::barrierUpdate(MVKBarrierStage stage, id<MTLRenderCommandEncoder> mtlEncoder, MTLRenderStages afterStages) {
+-	if (!isUsingMetalArgumentBuffers() || !getDevice()->hasResidencySet()) return;
++	if (!isUsingMetalArgumentBuffers() || !getDevice()->usesBarrierFences()) return;
+ 	auto fence = getBarrierStageFence(stage);
+ 	[mtlEncoder updateFence:fence afterStages:afterStages];
+ }
+ 
+ void MVKCommandEncoder::barrierUpdate(MVKBarrierStage stage, id<MTLBlitCommandEncoder> mtlEncoder) {
+-	if (!isUsingMetalArgumentBuffers() || !getDevice()->hasResidencySet()) return;
++	if (!isUsingMetalArgumentBuffers() || !getDevice()->usesBarrierFences()) return;
+ 	auto fence = getBarrierStageFence(stage);
+ 	[mtlEncoder updateFence:fence];
+ }
+ 
+ void MVKCommandEncoder::barrierUpdate(MVKBarrierStage stage, id<MTLComputeCommandEncoder> mtlEncoder) {
+-	if (!isUsingMetalArgumentBuffers() || !getDevice()->hasResidencySet()) return;
++	if (!isUsingMetalArgumentBuffers() || !getDevice()->usesBarrierFences()) return;
+ 	auto fence = getBarrierStageFence(stage);
+ 	[mtlEncoder updateFence:fence];
+ }
+@@ -706,6 +706,7 @@ id<MTLFence> MVKCommandEncoder::getBarrierStageFence(MVKBarrierStage stage) {
+ }
+ 
+ void MVKCommandEncoder::setBarrier(uint64_t sourceStageMask, uint64_t destStageMask) {
++	if (!getDevice()->usesBarrierFences()) return;
+ 	auto &fenceSlots = _pEncodingContext->fenceSlots;
+ 	for (int i = 0; i < kMVKBarrierStageCount; ++i) {
+ 	   if (!mvkIsAnyFlagEnabled(sourceStageMask, 1ull << i)) continue;
+@@ -723,6 +724,7 @@ void MVKCommandEncoder::setBarrier(uint64_t sourceStageMask, uint64_t destStageM
+ 
+ 
+ void MVKCommandEncoder::encodeBarrierWaits(MVKCommandUse use) {
++	if (!getDevice()->usesBarrierFences()) return;
+ 	if (_mtlRenderEncoder) {
+ 		[_mtlRenderEncoder insertDebugSignpost:@"Encoding waits"];
+ 		barrierWait(kMVKBarrierStageVertex, _mtlRenderEncoder, MTLRenderStageVertex);
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h
+index 534a414..649a346 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h
+@@ -1019,6 +1019,12 @@ public:
+ #endif
+ 	}
+ 
++	/**
++	 * Disabled because per-stage fences serialize unrelated passes. Declare argument-buffer resources
++	 * with useResource instead so Metal tracks hazards per resource.
++	 */
++	bool usesBarrierFences() { return false; }
++
+ #pragma mark Construction
+ 
+ 	/** Constructs an instance on the specified physical device. */
+@@ -1091,7 +1097,7 @@ protected:
+ 	VkPhysicalDevice##structName##Features##extnSfx _enabled##structName##Features;
+ #include "MVKDeviceFeatureStructs.def"
+ 
+-	id<MTLFence> _barrierFences[kMVKBarrierStageCount][kMVKBarrierFenceCount];
++	id<MTLFence> _barrierFences[kMVKBarrierStageCount][kMVKBarrierFenceCount] = {};
+ 
+ 	MVKPerformanceStatistics _performanceStats;
+     MVKCommandResourceFactory* _commandResourceFactory = nullptr;
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+index d0e0afe..d64244f 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+@@ -5155,7 +5155,7 @@ MVKDevice::MVKDevice(MVKPhysicalDevice* physicalDevice, const VkDeviceCreateInfo
+ 	}
+ 
+ 	// Initialize fences for execution barriers
+-	@autoreleasepool {
++	if (usesBarrierFences()) @autoreleasepool {
+ 		for (int stage = 0; stage < kMVKBarrierStageCount; ++stage) {
+ 			for (int index = 0; index < kMVKBarrierFenceCount; ++index) {
+ 				auto &fence = _barrierFences[stage][index];
+@@ -5224,7 +5224,7 @@ void MVKDevice::initPerformanceTracking() {
+ 
+ void MVKDevice::initConfiguration() {
+ 	bool needsLiveTrackingForCopy = _physicalDevice->_isUsingMetalArgumentBuffers && _physicalDevice->_metalFeatures.needsArgumentBufferEncoders;
+-	bool needsLiveTrackingForEncode = !hasResidencySet() && (getMVKConfig().liveCheckAllResources || _enabledDescriptorIndexingFeatures.descriptorBindingPartiallyBound);
++	bool needsLiveTrackingForEncode = !usesBarrierFences() && (getMVKConfig().liveCheckAllResources || _enabledDescriptorIndexingFeatures.descriptorBindingPartiallyBound);
+ 	_liveResources.enabled = needsLiveTrackingForCopy || needsLiveTrackingForEncode;
+ }
+ 
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+index 7eae64c..232f74b 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+@@ -321,7 +321,7 @@ void MVKPipelineLayout::populateBindOperations(MVKPipelineBindScript& script, co
+ 						script.ops.push_back({ bindSamp, set, mslBinding.resourceBinding.msl_sampler, descIdx, nonTexOffset });
+ 				}
+ 			}
+-		} else if (!_device->hasResidencySet()) {
++		} else if (!_device->usesBarrierFences()) {
+ 			MVKDescriptorBindOperationCode useTex = partiallyBound ? MVKDescriptorBindOperationCode::UseTextureWithLiveCheck : MVKDescriptorBindOperationCode::UseResource;
+ 			MVKDescriptorBindOperationCode useBuf = partiallyBound ? MVKDescriptorBindOperationCode::UseBufferWithLiveCheck  : MVKDescriptorBindOperationCode::UseResource;
+ 			MVKDescriptorGPULayout gpuLayout = desc.gpuLayout;
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm b/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm
+index dec4b45..0fe5986 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm
+@@ -486,7 +486,7 @@ VkResult MVKQueueCommandBufferSubmission::execute() {
+ id<MTLCommandBuffer> MVKQueueCommandBufferSubmission::getActiveMTLCommandBuffer() {
+ 	if ( !_activeMTLCommandBuffer ) {
+ 		bool needsRetain = false;
+-		if (!_device->hasResidencySet() && (getEnabledDescriptorIndexingFeatures().descriptorBindingPartiallyBound || getMVKConfig().liveCheckAllResources)) {
++		if (!_device->usesBarrierFences() && (getEnabledDescriptorIndexingFeatures().descriptorBindingPartiallyBound || getMVKConfig().liveCheckAllResources)) {
+ 			// Partially bound descriptors will get bound by us even if they're not used at runtime by the shader.
+ 			// The application is free to destroy them even if they're not used at runtime even if we bound them.
+ 			// Metal will be very unhappy if we destroy something we bound, even if it isn't used at runtime.

@@ -1,0 +1,37 @@
+# Configuration for git-wiki-builder (https://github.com/MakerCorn/git-wiki-builder)
+#
+# AI backend — GitHub Models is gone. This tool's "github" provider hardcodes the
+# retired https://models.inference.ai.azure.com endpoint, and GitHub Models itself
+# was fully retired on 2026-07-30, so there is no free GitHub-provided model.
+# Instead we use the tool's "openai" provider against OpenRouter's free tier:
+# the workflow (update-wiki.yml) sets OPENAI_BASE_URL=https://openrouter.ai/api/v1
+# and OPENAI_API_KEY from the OPENROUTER_API_KEY repo secret. `model` can be
+# swapped for any other OpenRouter free model (IDs ending in ":free") — pick one
+# with >=64k context: each request ships the README + all docs (~30k tokens).
+ai:
+  provider: openai
+  model: openrouter/free
+  # "openrouter/free" is OpenRouter's free-models router: it picks a free model
+  # with available capacity, routing around upstreams that are temporarily
+  # rate-limited (a pinned `:free` model such as qwen/qwen3.8-27b:free can be
+  # "temporarily rate-limited upstream"). Swap `model` for any specific ID if
+  # you want a fixed model — the docs payload is ~30k tokens, so a 64k+ context
+  # model is required. A full wiki run generates ~31 pages, one request each,
+  # against the free-tier daily cap (~50/day without credits).
+
+# Overrides the default wiki structure (Home / Getting Started / User Guide /
+# API Reference / Development / Deployment / FAQ / Changelog) with one that fits
+# this project. The generator reads README.md and every docs/**/*.md file as its
+# source material; the entries below define the wiki sections and page names.
+# This workflow runs on every push that touches README.md, docs/** or *.md
+# (see .github/workflows/update-wiki.yml).
+wiki_structure:
+  "Home": ["overview", "quick_start"]
+  "Getting Started": ["requirements", "installation", "bottle_and_game_install", "running_the_game"]
+  "User Guide": ["graphics_and_performance", "gptk4_upgrade", "performance_on_16gb_macs"]
+  "How It Works": ["the_working_solution", "rosetta_signal_fixes", "dwproton_ace_patches", "patch_and_script_reference"]
+  "Engineering Reference": ["crossover_wine_architecture", "building_crossover_wine", "swapping_into_crossover", "graphics_backends", "spoofing_and_detection"]
+  "Troubleshooting": ["troubleshooting", "known_issues"]
+  "Development": ["contributing", "development_setup"]
+  "Project History": ["executive_summary", "milestone_1_results", "linux_vs_macos_comparison", "stage1_protector_fault", "risks_and_roadmap"]
+  "References": ["source_references"]

@@ -1,0 +1,219 @@
+# release.yml — full releases cut from a `release/<version>` branch.
+#
+# Pushing to a branch such as `release/1.0.1` builds the complete artifact set
+# (patched Wine + MoltenVK + FineWine Patcher.app) and publishes a GitHub Release:
+#
+#   * tag/name:  1.0.1  /  "Endfield FineWine 1.0.1"
+#   * assets:    FineWine.Patcher.app.zip, endfield-wine-modules.tar.gz, SHA256SUMS.txt
+#   * notes:     a human-readable summary (LLM via OpenRouter — the same backend the
+#                wiki generator uses) of the commits since the previous release tag,
+#                with a raw commit list as a collapsible fallback.
+#
+# Re-pushing to the same branch refreshes the existing release in place. A manual
+# dispatch can publish an explicit version without a branch.
+#
+# The app's CFBundleShortVersionString is set to the release version, so the .app
+# reports the version it was released as.
+
+name: release
+
+on:
+  push:
+    branches:
+      - 'release/**'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version to build and publish (e.g. 1.0.1)
+        required: true
+        type: string
+
+permissions:
+  contents: write # create/edit the release and its tag
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false # never kill a release mid-publish
+
+jobs:
+  version:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      title: ${{ steps.resolve.outputs.title }}
+      previous: ${{ steps.resolve.outputs.previous }}
+      has_previous: ${{ steps.resolve.outputs.has_previous }}
+      commits: ${{ steps.resolve.outputs.commits }}
+      changed: ${{ steps.resolve.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history + tags (baseline = previous release tag)
+
+      - name: Resolve version, previous tag and changes
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            V="${{ inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#release/}"
+          fi
+          V="${V#v}" # tolerate a leading "v" in the branch/input
+
+          if ! printf '%s' "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid release version '$V' — expected x.y.z (from release/x.y.z or the dispatch input)"
+            exit 1
+          fi
+
+          # The previous release is the greatest numeric tag strictly below V.
+          PREV="$( { git tag --list '[0-9]*'; echo "$V"; } | sort -V \
+                   | awk -v v="$V" '$0==v{print p; exit} {p=$0}' )"
+          if [ -n "$PREV" ]; then
+            BASE="$(git rev-parse "$PREV^{}")"
+            HAS_PREV=true
+          else
+            BASE="$(git rev-list --max-parents=0 HEAD)"
+            HAS_PREV=false
+          fi
+
+          {
+            echo "version=$V"
+            echo "tag=$V"
+            echo "title=Endfield FineWine $V"
+            echo "previous=$PREV"
+            echo "has_previous=$HAS_PREV"
+            echo "commits<<EOF"
+            git log --oneline --no-decorate "$BASE"..HEAD
+            echo "EOF"
+            echo "changed<<EOF"
+            git diff --stat "$BASE"..HEAD | tail -n 60
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Resolved version=$V tag=$V previous=${PREV:-<none>}"
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "## Release ${{ steps.resolve.outputs.title }}"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Version | \`${{ steps.resolve.outputs.version }}\` |"
+            echo "| Previous | \`${{ steps.resolve.outputs.previous || '(none — initial release)' }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build release artifacts
+    needs: version
+    uses: ./.github/workflows/build-wine.yml
+    with:
+      cx_version: "26.3.0"
+      runner: "xcode-27"
+      build_patcher_app: true
+      app_version: ${{ needs.version.outputs.version }}
+
+  release:
+    name: Publish full release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CX_VER: "26.3.0"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download Patcher.app
+        uses: actions/download-artifact@v4
+        with:
+          name: patcher-app
+          path: dl/app
+
+      - name: Download modules bundle
+        uses: actions/download-artifact@v4
+        with:
+          pattern: 'endfield-wine-modules-cx*'
+          path: dl/modules
+          merge-multiple: true
+
+      - name: Assemble release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          APP="$(find dl/app -name '*.zip' | head -n1)"
+          [ -n "$APP" ] || { echo "::error::no Patcher.app zip in the patcher-app artifact"; exit 1; }
+          cp "$APP" "release/FineWine.Patcher.app.zip"
+          MOD="$(find dl/modules -name '*.tar.gz' | head -n1)"
+          [ -n "$MOD" ] || { echo "::error::no modules tarball in the endfield-wine-modules artifact"; exit 1; }
+          cp "$MOD" "release/endfield-wine-modules.tar.gz"
+          ( cd release && sha256sum ./* > SHA256SUMS.txt && cat SHA256SUMS.txt )
+          ls -lh release
+
+      - name: Generate release notes
+        shell: bash
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          NOTES_VERSION: ${{ needs.version.outputs.version }}
+          NOTES_PREVIOUS: ${{ needs.version.outputs.previous }}
+          NOTES_COMMITS: ${{ needs.version.outputs.commits }}
+          NOTES_CHANGED: ${{ needs.version.outputs.changed }}
+          NOTES_CX_VER: ${{ env.CX_VER }}
+          NOTES_SHA: ${{ github.sha }}
+          NOTES_REPO: ${{ github.repository }}
+          NOTES_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NOTES_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          # Reuse the wiki generator's configured OpenRouter model.
+          MODEL="$(grep -E '^[[:space:]]+model:' .git-wiki-builder.yml | head -n1 | awk '{print $2}')"
+          export NOTES_MODEL="${MODEL:-openrouter/free}"
+          python3 .github/scripts/generate-release-notes.py notes.md
+
+      - name: Publish / refresh the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.version.outputs.tag }}
+          TITLE: ${{ needs.version.outputs.title }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "existing release $TAG -> refreshing in place"
+          else
+            echo "creating release $TAG"
+            gh release create "$TAG" --title "$TITLE" --target "$GITHUB_SHA" --latest --notes-file notes.md
+          fi
+          gh release upload "$TAG" \
+            release/FineWine.Patcher.app.zip \
+            release/endfield-wine-modules.tar.gz \
+            release/SHA256SUMS.txt --clobber
+          gh release edit "$TAG" --title "$TITLE" --latest --notes-file notes.md
+          gh release view "$TAG" --json name,tagName,isPrerelease,assets \
+            --jq '{name, tagName, isPrerelease, assets: [.assets[].name]}'
+
+      - name: Summary
+        shell: bash
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+          TITLE: ${{ needs.version.outputs.title }}
+        run: |
+          {
+            echo "## Published $TITLE"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Tag | \`$TAG\` |"
+            echo "| Version | \`${{ needs.version.outputs.version }}\` |"
+            echo "| Assets | Patcher.app zip · modules tarball · SHA256SUMS.txt |"
+            echo "| URL | ${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG |"
+          } >> "$GITHUB_STEP_SUMMARY"

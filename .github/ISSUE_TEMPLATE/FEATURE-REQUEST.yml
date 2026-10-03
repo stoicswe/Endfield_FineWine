@@ -1,0 +1,36 @@
+name: Feature Request
+description: File a feature request.
+title: "[Feature]: "
+labels: ["feature", "request"]
+projects: ["stoicswe/Endfield_FineWine"]
+assignees: []
+type: feature
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this feature request!
+  - type: textarea
+    id: feature-details
+    attributes:
+      label: Write your feature here.
+      description: Please be detailed and explain why you think this is important.
+      placeholder: Tell us what feature would be useful here.
+      value: "A feature please, please!"
+    validations:
+      required: true
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our [Code of Conduct](https://github.com/stoicswe/Endfield_FineWine/blob/main/CODE_OF_CONDUCT.md).
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true
+  - type: upload
+    id: screenshots
+    attributes:
+      label: Upload screenshots
+      description: If applicable, add screenshots to help explain your problem.
+    validations:
+      required: false

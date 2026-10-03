@@ -1,0 +1,72 @@
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.h
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.h
+@@ -146,9 +146,39 @@
+ 		MVKResourceUsageStages stages;
+ 		bool write;
+ 		bool deferred;
++		uint32_t generation = 0;
+ 	};
+ 	MVKOnePerEnumEntry<Entry, MVKResourceUsageStages> entries;
+-	std::unordered_map<id<MTLResource>, ResourceInfo> used;
++	struct ResourceHash {
++		size_t operator()(id<MTLResource> resource) const noexcept {
++			// Mix aligned pointer bits without libc++'s general-purpose pointer hash.
++			uint64_t hash = reinterpret_cast<uintptr_t>(resource) * 0x9e3779b97f4a7c15ULL;
++			return static_cast<size_t>(hash ^ (hash >> 32));
++		}
++	};
++	using ResourceMap = std::unordered_map<id<MTLResource>, ResourceInfo, ResourceHash>;
++	// libc++ preserves power-of-two bucket counts, avoiding division on lookups.
++	ResourceMap used{8};
++	uint32_t generation = 1;
++
++	/** Invalidate usage while retaining nodes for resources shared by successive passes. */
++	void reset() {
++		// Bound retained nodes between passes; an individual pass may still need more.
++		if (++generation == 0 || used.size() > 4096) {
++			used.clear();
++			generation = 1;
++		}
++	}
++
++	std::pair<ResourceMap::iterator, bool> use(id<MTLResource> resource, ResourceInfo info) {
++		info.generation = generation;
++		auto result = used.emplace(resource, info);
++		if (!result.second && result.first->second.generation != generation) {
++			result.first->second = info;
++			result.second = true;
++		}
++		return result;
++	}
+ 	/** Add a resource to the list of resources to use. */
+ 	void add(id<MTLResource> resource, MVKResourceUsageStages stage, bool write);
+ 	/**
+@@ -239,7 +269,7 @@
+ 
+ 	void reset() {
+ 		_gpuAddressableResourceStages = MVKResourceUsageStages::None;
+-		_useResource.used.clear();
++		_useResource.reset();
+ 	}
+ };
+ 
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.mm
+@@ -868,7 +868,7 @@
+ 
+ void MVKUseResourceHelper::add(id<MTLResource> resource, MVKResourceUsageStages stage, bool write) {
+ 	ResourceInfo info { stage, write, true };
+-	auto res = used.emplace(resource, info);
++	auto res = use(resource, info);
+ 	if (res.second || !isCompatible(res.first->second, info)) {
+ 		ResourceInfo& stored = res.first->second;
+ 		if (!res.second) {
+@@ -882,7 +882,7 @@
+ 
+ void MVKUseResourceHelper::addImmediate(id<MTLResource> resource, id<MTLCommandEncoder> enc, MVKResourceBinder::UseResource func, MVKResourceUsageStages stage, bool write) {
+ 	ResourceInfo info { stage, write, false };
+-	auto res = used.emplace(resource, info);
++	auto res = use(resource, info);
+ 	if (res.second || !isCompatible(res.first->second, info)) {
+ 		ResourceInfo& stored = res.first->second;
+ 		if (!res.second) {

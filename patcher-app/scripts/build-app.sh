@@ -2,14 +2,19 @@
 # build-app.sh — build "FineWine Patcher.app" (SwiftPM + manual bundle assembly; no Xcode needed,
 # only the Command Line Tools).
 #
-# The app bundles the three pre-built patched Wine modules as its payload, so a completed
-# Wine build must exist first:  scripts/build-wine.sh all   (from the repo root)
+# The app bundles the pre-built patched Wine modules + MoltenVK as its payload, so completed
+# builds must exist first:  scripts/build-wine.sh all && scripts/build-moltenvk.sh all
+# (from the repo root)
 #
 # Usage:  patcher-app/scripts/build-app.sh
 # Env:
-#   PAYLOAD_DIR             where to find the built modules
+#   PAYLOAD_DIR             where to find the built Wine modules
 #                           (default: <repo>/build/wine-build64, the build-wine.sh output tree;
 #                            a flat directory holding ntdll.so/kernel32.dll/ntoskrnl.exe also works)
+#   MOLTENVK_DIR            where to find the built libMoltenVK.dylib
+#                           (default: <repo>/build/moltenvk-out; a copy inside PAYLOAD_DIR also works)
+#   VERSION                 CFBundleShortVersionString baked into Info.plist (default: 1.1.0;
+#                           the release workflow sets this to the release branch version)
 #   CODESIGN_ID             signing identity (default "-" = ad-hoc; set your "Developer ID
 #                           Application: …" identity for notarizable builds)
 #   ALLOW_MISSING_PAYLOAD=1 build without payload (smoke-test builds only — the app will
@@ -21,8 +26,9 @@ REPO="$(cd "$HERE/.." && pwd)"
 APP_NAME="FineWine Patcher"
 EXE="FineWinePatcher"
 BUNDLE_ID="io.github.stoicswe.FineWinePatcher"
-VERSION="1.0.0"
+VERSION="${VERSION:-1.1.0}"
 PAYLOAD_DIR="${PAYLOAD_DIR:-$REPO/build/wine-build64}"
+MOLTENVK_DIR="${MOLTENVK_DIR:-$REPO/build/moltenvk-out}"
 CODESIGN_ID="${CODESIGN_ID:--}"
 OUT="$HERE/build"
 APP="$OUT/$APP_NAME.app"
@@ -43,7 +49,8 @@ log "Assembling $APP_NAME.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/licenses" \
          "$APP/Contents/Resources/payload/x86_64-unix" \
-         "$APP/Contents/Resources/payload/x86_64-windows"
+         "$APP/Contents/Resources/payload/x86_64-windows" \
+         "$APP/Contents/Resources/payload/lib64"
 cp "$BIN" "$APP/Contents/MacOS/$EXE"
 cp "$HERE/Resources/licenses/"*.txt "$APP/Contents/Resources/licenses/"
 
@@ -95,7 +102,7 @@ plutil -lint -s "$APP/Contents/Info.plist"
 ok "bundle skeleton + Info.plist"
 
 # ---------------------------------------------------------------- 3. payload
-log "Staging the pre-built Wine modules (payload) from $PAYLOAD_DIR"
+log "Staging the pre-built Wine modules (payload) from $PAYLOAD_DIR and MoltenVK from $MOLTENVK_DIR"
 find_module(){ # flat-name  tree-relative-path
   if   [ -f "$PAYLOAD_DIR/$2" ]; then echo "$PAYLOAD_DIR/$2"
   elif [ -f "$PAYLOAD_DIR/$1" ]; then echo "$PAYLOAD_DIR/$1"
@@ -104,13 +111,18 @@ find_module(){ # flat-name  tree-relative-path
 NTDLL="$(find_module ntdll.so dlls/ntdll/ntdll.so)"
 KERNEL32="$(find_module kernel32.dll dlls/kernel32/x86_64-windows/kernel32.dll)"
 NTOSKRNL="$(find_module ntoskrnl.exe dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe)"
+# MoltenVK is built by build-moltenvk.sh into its own tree; also accept a copy beside the modules.
+if   [ -f "$PAYLOAD_DIR/libMoltenVK.dylib" ]; then MVK="$PAYLOAD_DIR/libMoltenVK.dylib"
+elif [ -f "$MOLTENVK_DIR/libMoltenVK.dylib" ]; then MVK="$MOLTENVK_DIR/libMoltenVK.dylib"
+else MVK=""; fi
 
-if [ -z "$NTDLL" ] || [ -z "$KERNEL32" ] || [ -z "$NTOSKRNL" ]; then
+if [ -z "$NTDLL" ] || [ -z "$KERNEL32" ] || [ -z "$NTOSKRNL" ] || [ -z "$MVK" ]; then
   if [ "${ALLOW_MISSING_PAYLOAD:-0}" = "1" ]; then
     warn "payload modules not found — building WITHOUT payload (smoke test only)"
   else
-    echo "ERROR: payload modules not found under $PAYLOAD_DIR"
-    echo "       Run scripts/build-wine.sh all first (or set PAYLOAD_DIR)."
+    echo "ERROR: payload modules not found under $PAYLOAD_DIR (Wine) / $MOLTENVK_DIR (MoltenVK)"
+    echo "       Run scripts/build-wine.sh all and scripts/build-moltenvk.sh all"
+    echo "       first (or set PAYLOAD_DIR / MOLTENVK_DIR)."
     exit 1
   fi
 else
@@ -118,6 +130,7 @@ else
   cp "$NTDLL"    "$P/x86_64-unix/ntdll.so"
   cp "$KERNEL32" "$P/x86_64-windows/kernel32.dll"
   cp "$NTOSKRNL" "$P/x86_64-windows/ntoskrnl.exe"
+  cp "$MVK"      "$P/lib64/libMoltenVK.dylib"
 
   # Pre-add the lib64 rpath to ntdll.so HERE, at app-build time, so end users of the
   # patcher never need Xcode tools installed. CrossOver's ntdll dlopens cxcompatdb.so,
@@ -137,10 +150,15 @@ else
     echo "ERROR: $NTDLL is not a Mach-O binary"; exit 1
   fi
 
-  for f in "$P/x86_64-unix/ntdll.so" "$P/x86_64-windows/kernel32.dll" "$P/x86_64-windows/ntoskrnl.exe"; do
+  # CrossOver's bundled copy is loaded via @rpath/libMoltenVK.dylib; give ours the same install
+  # name so win32u's dlopen resolves it exactly as before.
+  install_name_tool -id "@rpath/libMoltenVK.dylib" "$P/lib64/libMoltenVK.dylib"
+
+  for f in "$P/x86_64-unix/ntdll.so" "$P/x86_64-windows/kernel32.dll" \
+           "$P/x86_64-windows/ntoskrnl.exe" "$P/lib64/libMoltenVK.dylib"; do
     codesign --force --sign "$CODESIGN_ID" "$f" 2>/dev/null || true
   done
-  ok "payload staged: ntdll.so, kernel32.dll, ntoskrnl.exe"
+  ok "payload staged: ntdll.so, kernel32.dll, ntoskrnl.exe, libMoltenVK.dylib"
 fi
 
 # ---------------------------------------------------------------- 4. sign
@@ -164,6 +182,7 @@ Notes:
   - Ad-hoc-signed builds are for your own machine. To distribute, re-run with
     CODESIGN_ID="Developer ID Application: …" and notarize, or tell users to
     right-click -> Open on first launch.
-  - If you distribute the built app, the bundled Wine modules are LGPL-2.1:
-    publish the patches + exact CrossOver source used (see patcher-app/README.md).
+  - If you distribute the built app, the bundled Wine modules are LGPL-2.1-or-later and
+    libMoltenVK.dylib is Apache-2.0: publish the patches + exact CrossOver source used
+    (see patcher-app/README.md).
 EOF

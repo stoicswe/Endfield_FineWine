@@ -1,0 +1,101 @@
+# build.yml — the default build for pull requests and the default branch.
+#
+# What it runs:
+#   1. `build-wine`  — the patched CrossOver Wine modules, via the shared
+#      build-wine.yml reusable workflow. The Patcher.app is NOT assembled here
+#      by default, and nothing is tagged or published — releases are the
+#      nightly workflow's job (nightly.yml). This workflow keeps the "default
+#      build is green" promise the nightly depends on: both reuse the same
+#      build-wine.yml pipeline.
+#   2. `lint-swift`  — type-checks FineWine Patcher's Swift sources without
+#      building them (catches obvious errors early; cheap, runs in parallel).
+#
+# Build-affecting paths only (patches/scripts/patcher-app/workflows): a docs
+# or README-only change does not waste a ~2h Wine build.
+
+name: build
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'patches/**'
+      - 'scripts/**'
+      - 'patcher-app/**'
+      - '.github/workflows/**'
+  push:
+    branches: [main]
+    paths:
+      - 'patches/**'
+      - 'scripts/**'
+      - 'patcher-app/**'
+      - '.github/workflows/**'
+  workflow_dispatch: # manual run of the same pipeline
+    inputs:
+      cx_version:
+        description: CrossOver source version to build (must match your CrossOver.app)
+        required: false
+        default: "26.3.0"
+        type: string
+      runner:
+        description: macOS runner image (xcode-27 = macOS 27 + Xcode 27 preview; macos-26 = GA)
+        required: false
+        default: "xcode-27"
+        type: choice
+        options:
+          - "xcode-27"
+          - "macos-26"
+      build_patcher_app:
+        description: Also assemble FineWine Patcher.app around the built modules
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  # One build per ref; a superseded PR push cancels the in-flight one (its
+  # ccache upload is forfeited — acceptable, same tradeoff as build-wine.yml).
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-wine:
+    name: Wine modules (macOS ${{ inputs.runner || 'xcode-27' }})
+    uses: ./.github/workflows/build-wine.yml
+    with:
+      cx_version: ${{ inputs.cx_version || '26.3.0' }}
+      runner: ${{ inputs.runner || 'xcode-27' }}
+      build_patcher_app: ${{ inputs.build_patcher_app || false }}
+
+  lint-swift:
+    name: Lint Swift (FineWine Patcher · typecheck only)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Swift version
+        run: swift --version
+
+      # "Lint, not build": swiftc -typecheck parses + type-checks the package's
+      # sources against the package's minimum deployment target (macOS 13 /
+      # Package.swift) without emitting a binary. Availability errors show up
+      # here exactly as they would in a real build.
+      - name: Type-check FineWinePatcher sources (no build)
+        run: |
+          set -euo pipefail
+          swiftc -typecheck \
+            -sdk "$(xcrun --show-sdk-path)" \
+            -target "$(uname -m)-apple-macos13.0" \
+            patcher-app/Sources/FineWinePatcher/*.swift
+
+      - name: Write job summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Swift typecheck
+
+          Type-checked `patcher-app/Sources/FineWinePatcher/*.swift` against
+          the package minimum (macOS 13) — no build produced.
+          EOF

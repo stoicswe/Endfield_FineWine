@@ -1,0 +1,269 @@
+# nightly.yml — nightly snapshot releases of the patched Wine builder, gated on change.
+#
+# Pipeline (runs on the default branch only — GitHub runs `schedule` there):
+#   1. `changes` — compare `main` HEAD against the commit the newest nightly snapshot tag points at.
+#      Build only if there are NEW commits touching build-affecting paths
+#      (patches/**, scripts/**, patcher-app/**, .github/workflows/**). Manual dispatches
+#      always build. Days without changes produce no build and no release.
+#   2. `build`   — call the build-wine reusable workflow (fresh build at HEAD). This is the
+#      "only if the default build is green" guarantee by construction: if the build fails,
+#      the release job is skipped and nothing is published. The next nightly automatically
+#      retries, because a snapshot tag is only created after a successful release.
+#   3. `release` — download the `patcher-app` + `wine-modules` artifacts and publish them as a
+#      NEW GitHub PRE-release on every run, tagged `nightly_<CrossOver version>.<UTC date>_<sha>`
+#      (e.g. `nightly_26.3.0.20260925_55ae553e…`). Each snapshot keeps its own assets and
+#      notes — nothing is replaced, moved, or deleted — and the newest prerelease sorts to
+#      the top of the Releases page.
+#
+# Notes:
+#   - cron timing is best-effort (GitHub may delay scheduled runs by minutes to hours).
+#   - The published .app is ad-hoc signed: right-click → Open on first launch.
+#   - LGPL-2.1-or-later: the release notes point at the exact CrossOver source tarball
+#     (the "complete corresponding source" = this repo's patches + that tarball).
+
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 5 * * *" # daily 05:00 UTC (01:00 ET)
+  workflow_dispatch: # manual override: always builds + releases
+
+permissions:
+  contents: write # needed to create the release and its tag
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false # never kill a nightly mid-build
+
+jobs:
+  changes:
+    name: Detect changes since last nightly
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      should_build: ${{ steps.gate.outputs.should_build }}
+      base_sha: ${{ steps.gate.outputs.base_sha }}
+      commits: ${{ steps.gate.outputs.commits }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags (baseline = newest nightly-* tag)
+
+      - name: Change gate
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "event: $GITHUB_EVENT_NAME / head: $(git rev-parse --short HEAD)"
+
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "manual dispatch -> forced build"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            BASE="$(git rev-list --max-parents=0 HEAD)"
+            {
+              echo "base_sha=$BASE"
+              echo "commits<<EOT"
+              git log --oneline --no-decorate -30 HEAD
+              echo "EOT"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Newest nightly snapshot tag. Tags are `nightly_<cxver>.<UTC YYYYMMDD>_<sha>` (the
+          # date part is fixed width, so lexical order == chronological order); also match
+          # the transitional `nightly-YYYYMMDD-HHMM` format in case it ever shipped.
+          LATEST="$(git for-each-ref 'refs/tags/nightly_*' 'refs/tags/nightly-*' --sort=-refname --count=1 --format='%(refname:short)')"
+          if [ -n "$LATEST" ]; then
+            BASE="$(git rev-parse "${LATEST}^{}")"
+            echo "baseline ($LATEST): $BASE"
+          elif git rev-parse -q --verify refs/tags/nightly >/dev/null 2>&1; then
+            # Legacy rolling `nightly` tag from before per-run releases: use it once as
+            # the baseline so the first run after the switch doesn't re-release the
+            # whole history.
+            BASE="$(git rev-parse 'nightly^{}')"
+            echo "baseline (legacy rolling nightly tag): $BASE"
+          else
+            BASE="$(git rev-list --max-parents=0 HEAD)"
+            echo "no previous nightly tag -> first nightly, building"
+          fi
+
+          CHANGED="$(git diff --name-only "$BASE"..HEAD -- patches scripts patcher-app .github/workflows || true)"
+          if [ -n "$CHANGED" ]; then
+            echo "build-affecting changes:"
+            echo "$CHANGED"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no build-affecting changes since the last nightly -> skipping"
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          {
+            echo "base_sha=$BASE"
+            echo "commits<<EOT"
+            git log --oneline --no-decorate -30 "$BASE"..HEAD
+            echo "EOT"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.gate.outputs.should_build }}" = "true" ]; then
+            echo "✅ New build-affecting commits since the last nightly — building a snapshot." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "🌙 No build-affecting changes since the last nightly snapshot — skipping build & release." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  build:
+    name: Nightly Wine build
+    needs: changes
+    if: needs.changes.outputs.should_build == 'true'
+    uses: ./.github/workflows/build-wine.yml
+    with:
+      cx_version: "26.3.0"
+      runner: "xcode-27" # macOS 27.0 + Xcode 27.0 RC; change to macos-26 for the GA image
+      build_patcher_app: true
+
+  release:
+    name: Snapshot pre-release
+    needs: [changes, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CX_VER: "26.3.0"
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          pattern: "*"
+          merge-multiple: true
+
+      - name: Checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -l assets
+          ( cd assets && sha256sum ./*.zip > SHA256SUMS.txt )
+
+      - name: Write release notes
+        shell: bash
+        env:
+          NOTES_SHA: ${{ github.sha }}
+          NOTES_RUN_NUMBER: ${{ github.run_number }}
+          NOTES_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NOTES_CX_VER: ${{ env.CX_VER }}
+          # multiline-capable: passed through the process environment, never inlined
+          # into the shell script, so commit subjects can't break quoting
+          NOTES_COMMITS: ${{ needs.changes.outputs.commits }}
+        run: |
+          set -euo pipefail
+          TODAY="$(date -u +%F)"
+          export NOTES_TODAY="$TODAY"
+          python3 - <<'PY'
+          import os
+
+          template = """## Nightly snapshot — @@TODAY@@ (`@@SHA@@`)
+
+          > ⚠️ **Automated, untested snapshot** built from `main` by
+          > [run #@@RUN_NUMBER@@](@@RUN_URL@@).
+          > Gameplay is only verified on the maintainer's Mac — treat this as a test build.
+
+          **Requires:** CrossOver **@@CX_VER@@** (the Wine ABI must match) · Apple Silicon · macOS 15+ · Rosetta 2.
+
+          ### What's inside
+
+          | Asset | What it is |
+          |---|---|
+          | `finewine-patcher-…zip` | **FineWine Patcher.app** — patches a copy of your CrossOver @@CX_VER@@ with the anti-cheat Wine modules and a patched MoltenVK (open it and follow the UI) |
+          | `finewine-wine-modules-…zip` | The three patched Wine modules alone — for `scripts/swap-into-crossover.sh` users |
+          | `SHA256SUMS.txt` | SHA-256 checksums of the assets |
+
+          ### Commits since the previous nightly
+
+          ```text
+          @@COMMITS@@
+          ```
+
+          ### Provenance & license
+
+          - Built on the `xcode-27` GitHub runner image (macOS 27.0 / Xcode 27.0; x86_64 Wine output under Rosetta).
+          - CrossOver Wine source: [crossover-sources-@@CX_VER@@.tar.gz](https://media.codeweavers.com/pub/crossover/source/crossover-sources-@@CX_VER@@.tar.gz) + this repo's `patches/` at `@@SHA@@`.
+          - The patched Wine modules are **LGPL-2.1-or-later**; the bundled MoltenVK is **Apache-2.0**. The complete corresponding source is the CrossOver tarball above, the pinned MoltenVK revision, and this repo's `patches/` (see `patcher-app/README.md`).
+          """
+          # The template lives inside the workflow's literal block scalar, so strip the
+          # common leading indentation before writing it out.
+          lines = template.splitlines()
+          indent = min((len(l) - len(l.lstrip()) for l in lines if l.strip()), default=0)
+          template = "\n".join(l[indent:] if l.strip() else "" for l in lines) + "\n"
+
+          out = template
+          for key in ("TODAY", "SHA", "RUN_NUMBER", "RUN_URL", "CX_VER", "COMMITS"):
+              out = out.replace("@@" + key + "@@", os.environ.get("NOTES_" + key, ""))
+          if not os.environ.get("NOTES_COMMITS", "").strip():
+              out = out.replace(
+                  "### Commits since the previous nightly\n\n```text\n\n```\n\n", ""
+              )
+          with open("notes.md", "w") as f:
+              f.write(out)
+          print(out)
+          PY
+
+      - name: Publish a new nightly pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Tag and title share one stamp: <CrossOver version>.<UTC build date>_<full commit>.
+          # e.g. tag     nightly_26.3.0.20260925_55ae553e8eb4f14645c8479bdd044b3f9751b2f7
+          #      title   Endfield FW 26.3.0.20260925_55ae553e8eb4f14645c8479bdd044b3f9751b2f7
+          # The date part is fixed width, so tags sort lexically in chronological order
+          # (the change gate's baseline lookup relies on this).
+          STAMP="${CX_VER}.$(date -u +%Y%m%d)_${{ github.sha }}"
+          TAG="nightly_${STAMP}"
+          TITLE="Endfield FW ${STAMP}"
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "RELEASE_TITLE=$TITLE" >> "$GITHUB_ENV"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # Same version+date+commit: a re-run of this exact snapshot (failed-job re-run,
+            # double dispatch). Refresh it in place rather than colliding with the tag.
+            echo "release $TAG already exists (re-run of the same snapshot) -> refreshing assets"
+            gh release upload "$TAG" assets/*.zip assets/SHA256SUMS.txt --clobber
+            gh release edit "$TAG" --prerelease --title "$TITLE" --notes-file notes.md
+          else
+            echo "creating release $TAG at $GITHUB_SHA"
+            # gh creates the tag at --target when it doesn't exist yet
+            gh release create "$TAG" \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --title "$TITLE" \
+              --notes-file notes.md \
+              assets/*.zip assets/SHA256SUMS.txt
+          fi
+
+          gh release view "$TAG" --json name,tagName,isPrerelease,assets --jq '{name, tagName, isPrerelease, assets: [.assets[].name]}'
+
+      - name: Summary
+        shell: bash
+        run: |
+          cat > summary.md <<'EOT'
+          ## Nightly snapshot published
+
+          | | |
+          |---|---|
+          | Title | %TITLE% |
+          | Tag | %TAG% (pre-release) |
+          | Commit | `%SHA%` |
+          | Assets | Patcher.app zip · modules zip · SHA256SUMS.txt |
+          | URL | %RELEASE_URL% |
+          EOT
+          sed -i \
+            -e "s|%TITLE%|$RELEASE_TITLE|g" \
+            -e "s|%TAG%|$RELEASE_TAG|g" \
+            -e "s|%SHA%|${{ github.sha }}|g" \
+            -e "s|%RELEASE_URL%|${{ github.server_url }}/${{ github.repository }}/releases/tag/$RELEASE_TAG|g" \
+            summary.md
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"

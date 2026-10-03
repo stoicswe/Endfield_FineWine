@@ -23,7 +23,7 @@ Both are **Rosetta 2 bugs** in how it delivers CPU faults for x86 instructions, 
 
 ## The complete patch set (8 files, ~394 lines)
 
-Applied to CrossOver 26.2's Wine 11.0 (`build/wine-src`):
+Applied to CrossOver 26.3's Wine 11.0 (`build/wine-src`):
 
 | File | Origin | Purpose |
 |---|---|---|
@@ -39,7 +39,7 @@ Patches: [patches/stage1-macos/](../patches/stage1-macos/) (our Rosetta fixes) +
 
 The custom Wine is built minimal (no graphics libs), so we **surgically swap only the patched modules** into a copy of `CrossOver.app` and let CrossOver provide D3DMetal/Metal + fonts/TLS. This is automated in [scripts/swap-into-crossover.sh](../scripts/swap-into-crossover.sh):
 
-1. `cp -a /Applications/CrossOver.app build/CrossOver_patched.app` (must be **26.2**, matching the build).
+1. `cp -a /Applications/CrossOver.app build/CrossOver_patched.app` (must be **26.3**, matching the build).
 2. Copy 3 patched modules into `Contents/SharedSupport/CrossOver/lib/wine/`:
    - `x86_64-unix/ntdll.so` (both Rosetta fixes + NtDelayExecution)
    - `x86_64-windows/kernel32.dll` (int3 hack)
@@ -54,7 +54,7 @@ The custom Wine is built minimal (no graphics libs), so we **surgically swap onl
 
 After the anti-cheat is solved, the remaining day-to-day gotcha is the **graphics renderer**, and game updates make it recur:
 
-- **Endfield must run in DirectX 11 mode.** It defaults to Vulkan/DX12, and under CrossOver 26.2 both fail → **white/blank screen**: DX12 → `vkd3d` errors `Cannot load DXIL conversion library` (its DXIL/SM6 shaders never compile); native Vulkan → MoltenVK also fails. **DX11** uses the mature D3DMetal/DXMT path and renders correctly. Set the renderer to **DirectX 11** in the launcher's / in-game graphics settings (persists in the game's prefs / `Software\Gryphline\Endfield`).
+- **Endfield must run in DirectX 11 mode.** It defaults to Vulkan/DX12, and under CrossOver 26.3 both fail → **white/blank screen**: DX12 → `vkd3d` errors `Cannot load DXIL conversion library` (its DXIL/SM6 shaders never compile); native Vulkan → MoltenVK also fails. *(Update 2026-09: Vulkan does render with a newer MoltenVK — see [graphics-performance.md](graphics-performance.md#experimental-the-vulkan-renderer).)* **DX11** uses the mature D3DMetal/DXMT path and renders correctly. Set the renderer to **DirectX 11** in the launcher's / in-game graphics settings (persists in the game's prefs / `Software\Gryphline\Endfield`).
 - **A game update can reset the renderer back to Vulkan/DX12** → white screen returns. Re-select DirectX 11. (This is exactly what happened on 2026-07-15.)
 - **Setting the CrossOver backend to D3DMetal (`CX_ACTIVE_GRAPHICS_BACKEND=d3dmetal`) does NOT reroute the game's DX12 off `vkd3d`** — verified. It helps DX11 go to D3DMetal, but it will not save you from the game choosing DX12. The game-side DX11 setting is the fix.
 - **Do NOT "fix" the white screen by overwriting `lib/wine/x86_64-windows/{d3d11,d3d12,dxgi}.dll` with the `apple_gptk` (D3DMetal) copies.** Those are only meant to load through CrossOver's own D3DMetal backend path; dropping them in as the defaults makes `unityplayer.dll` fail to initialize (**Windows error 1114**, "missing or corrupt"). If you did this, restore the defaults from a stock `CrossOver.app` (`lib/wine/x86_64-windows/`).
@@ -104,4 +104,4 @@ Two adjacent findings from the same investigation:
 - Add `PsGetProcessExitStatus` as an em-backport stub to silence the one residual ACE-thread abort.
 - Play-test past login (combat/rendering stability, the QPC-timing × D3DMetal interaction, DLSS fallback since it's NVIDIA-only).
 - **Upstream the two Rosetta signal fixes to CodeWeavers** (with Bug 45083 as reference) — they fix a whole class of protected games on Apple Silicon.
-- A distributable: bundle the patched modules as a CXPatcher-style overlay so others can apply it to their own CrossOver 26.2.
+- A distributable: bundle the patched modules as a CXPatcher-style overlay so others can apply it to their own CrossOver 26.3.

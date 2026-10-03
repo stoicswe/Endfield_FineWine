@@ -7,12 +7,12 @@
 These resolve the doc's earlier open questions and **change the recommended build path**:
 
 1. **`cx-llvm` (the prebuilt patched CrossOver clang bottle) is GONE.** `brew tap gcenx/wine` now provides **only casks**, no `cx-llvm` formula. (Confirms GabLeRoux issue #51.)
-2. **The CrossOver 26.2.0 source tarball does NOT bundle `clang`/`llvm`.** It's ~142 MB at `https://media.codeweavers.com/pub/crossover/source/crossover-sources-26.2.0.tar.gz` and its `sources/` contains `android, cabextract, freetype, glib, gnutls, makedep, moltenvk, po4a, vkd3d, wine` — **no `clang`, no `llvm`**. So you cannot build the patched `win32on64` compiler from this tarball either. (27.0.0 source is not published at that URL — HTTP 404.)
+2. **The CrossOver 26.3.0 source tarball does NOT bundle `clang`/`llvm`.** It's ~142 MB at `https://media.codeweavers.com/pub/crossover/source/crossover-sources-26.3.0.tar.gz` and its `sources/` contains `android, cabextract, freetype, glib, gnutls, makedep, moltenvk, po4a, vkd3d, wine` — **no `clang`, no `llvm`**. So you cannot build the patched `win32on64` compiler from this tarball either. (27.0.0 source is not published at that URL — HTTP 404.)
 3. **✅ We almost certainly don't need `win32on64` at all.** Arknights: Endfield is **64-bit only** — `Endfield.exe` loads at `0x140000000`, `EndfieldBase.dll` and all game DLLs at 64-bit addresses ([docs/10](10-milestone-1-results.md)). `win32on64`/`cx-llvm` exist only to run **32-bit** guest code. A **64-bit-only Wine** builds with the **standard toolchain** (Apple/Homebrew clang + `mingw-w64`), no custom compiler. **This is the recommended path** and it sidesteps the `cx-llvm` blocker.
 4. **Toolchain gaps on this machine:** system `bison` is 2.3 (need ≥3.0 → `brew install bison` and put it first on PATH); `mingw-w64` and `meson` are missing (`brew install mingw-w64 meson`). `pkg-config`, `git`, `make`, `flex` present.
-5. Build target = **CrossOver 26.2 source** (the release whose `CrossOver.app` is installed; source is available). The game fails identically on 26.2 and 27-Preview, so 26.2 is a fine build/swap target.
+5. Build target = **CrossOver 26.3 source** (the release whose `CrossOver.app` is installed; source is available). The game fails identically on 26.3 and 27-Preview, so 26.3 is a fine build/swap target.
 
-> ⚠️ Still to verify before the first build: that CrossOver 26.2's `sources/wine` configures and builds **64-bit-only with stock clang** (i.e. CrossOver has moved to new-WoW64 / no longer needs the custom compiler for a 64-bit build). This is the first thing the build script must prove ([09](09-implementation-roadmap.md) milestone 4).
+> ⚠️ Still to verify before the first build: that CrossOver 26.3's `sources/wine` configures and builds **64-bit-only with stock clang** (i.e. CrossOver has moved to new-WoW64 / no longer needs the custom compiler for a 64-bit build). This is the first thing the build script must prove ([09](09-implementation-roadmap.md) milestone 4).
 
 ## The single most important fact for this project
 

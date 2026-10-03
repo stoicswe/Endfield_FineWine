@@ -1,0 +1,44 @@
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+index d64244f..5a8f356 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+@@ -3278,6 +3278,8 @@ void MVKPhysicalDevice::initPipelineCacheUUID() {
+ 	mtlFeatures |= _isUsingMetalArgumentBuffers << 0;
+ 	// Reject cached MSL generated without device-scope control barrier fences.
+ 	mtlFeatures |= 1u << 31;
++	// Reject cached MSL generated without invariant vertex positions.
++	mtlFeatures |= 1u << 30;
+ 	*(uint32_t*)&_properties.pipelineCacheUUID[uuidComponentOffset] = NSSwapHostIntToBig(mtlFeatures);
+ 	uuidComponentOffset += sizeof(mtlFeatures);
+ }
+diff --git a/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVToMSLConverter.cpp b/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVToMSLConverter.cpp
+index 406f4f8..1154e2e 100644
+--- a/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVToMSLConverter.cpp
++++ b/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVToMSLConverter.cpp
+@@ -302,6 +302,26 @@ MVK_PUBLIC_SYMBOL bool SPIRVToMSLConverter::convert(SPIRVToMSLConversionConfigur
+ 		scOpts.vertex.fixup_clipspace = shaderConfig.options.shouldFixupClipSpace;
+ 		pMSLCompiler->set_common_options(scOpts);
+ 
++		// Metal's fast math can round positions differently across shaders, causing EQUAL
++		// depth tests to fail after a depth prepass. Invariant positions prevent this.
++		auto execModel = pMSLCompiler->get_execution_model();
++		if (execModel == ExecutionModelVertex || execModel == ExecutionModelTessellationEvaluation) {
++			for (auto& bo : pMSLCompiler->get_shader_resources().builtin_outputs) {
++				if (bo.builtin != BuiltInPosition) { continue; }
++				auto& type = pMSLCompiler->get_type(bo.resource.base_type_id);
++				if (type.basetype != SPIRType::Struct) {
++					pMSLCompiler->set_decoration(bo.resource.id, DecorationInvariant);
++					continue;
++				}
++				for (uint32_t i = 0; i < type.member_types.size(); i++) {
++					if (pMSLCompiler->has_member_decoration(type.self, i, DecorationBuiltIn) &&
++						pMSLCompiler->get_member_decoration(type.self, i, DecorationBuiltIn) == BuiltInPosition) {
++						pMSLCompiler->set_member_decoration(type.self, i, DecorationInvariant);
++					}
++				}
++			}
++		}
++
+ 		// Add shader inputs and outputs
+ 		for (auto& si : shaderConfig.shaderInputs) {
+ 			pMSLCompiler->add_msl_shader_input(si.shaderVar);

@@ -31,7 +31,7 @@ struct LicenseComponent: Identifiable, Hashable {
             id: "crossover-wine-modules",
             name: "CrossOver Wine — patched modules",
             license: "LGPL-2.1-or-later",
-            summary: "The pre-built Wine modules bundled inside this app and installed into your CrossOver copy: ntdll.so, kernel32.dll and ntoskrnl.exe. They are built from CodeWeavers' freely published CrossOver 26.2 Wine source with this project's patches applied.",
+            summary: "The pre-built Wine modules bundled inside this app and installed into your CrossOver copy: ntdll.so, kernel32.dll and ntoskrnl.exe. They are built from CodeWeavers' freely published CrossOver 26.3 Wine source with this project's patches applied.",
             notice: "Wine — Copyright © the Wine project authors. CrossOver Wine modifications — Copyright © CodeWeavers, Inc. Endfield patches — Copyright © Endfield_FineWine contributors and the dw-proton authors. The complete corresponding source is available at the links below.",
             textFile: "lgpl-2.1.txt",
             links: [
@@ -39,6 +39,18 @@ struct LicenseComponent: Identifiable, Hashable {
                 LicenseLink(label: "CodeWeavers FOSS source for CrossOver", url: "https://www.codeweavers.com/crossover/source"),
                 LicenseLink(label: "CrossOver source archive", url: "https://media.codeweavers.com/pub/crossover/source/"),
                 LicenseLink(label: "Wine project", url: "https://www.winehq.org/"),
+            ]
+        ),
+        LicenseComponent(
+            id: "moltenvk",
+            name: "MoltenVK — patched",
+            license: "Apache-2.0",
+            summary: "A patched build of MoltenVK, bundled inside this app and installed into your CrossOver copy as lib64/libMoltenVK.dylib (used by the Vulkan/DXVK/vkd3d paths).",
+            notice: "MoltenVK — Copyright © 2015-2026 The Brenwill Workshop Ltd. Licensed under the Apache License, Version 2.0. The complete corresponding source is available at the links below.",
+            textFile: "apache-2.0.txt",
+            links: [
+                LicenseLink(label: "MoltenVK project", url: "https://github.com/KhronosGroup/MoltenVK"),
+                LicenseLink(label: "MoltenVK source (patched by this project)", url: "https://github.com/stoicswe/Endfield_FineWine"),
             ]
         ),
         LicenseComponent(
@@ -79,9 +91,10 @@ struct LicensesView: View {
             }
             Divider()
             HStack {
-                Text("The bundled Wine modules are LGPL — you may rebuild or replace them; sources are linked above.")
+                Text("The bundled Wine modules are LGPL-2.1-or-later and MoltenVK is Apache-2.0 — you may rebuild or replace them; sources are linked above. Apple's Game Porting Toolkit / D3DMetal is not bundled or redistributed: the optional GPTK4 upgrade installs only the copy you mount yourself, under Apple's own license.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)

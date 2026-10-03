@@ -61,6 +61,26 @@ xattr -drs com.apple.quarantine CrossOver_patched.app  # remove quarantine (or: 
 ```
 ⚠️ No single authoritative primary doc gives an end-to-end re-sign recipe for a *custom-Wine-swapped* CrossOver; the commands above are community-aggregated macOS standard practice. Prove them on a trivial app first ([09](09-implementation-roadmap.md) milestone 4).
 
+### Verified recipe (2026-09, CrossOver 26.3.0 / macOS 27.0 / M4)
+
+(A) **fails** once the copy carries a `com.apple.provenance` xattr. macOS attaches it to files created by apps that were Gatekeeper-checked after download — observed here with a shell spawned by an AI coding agent; terminals such as iTerm2 or VS Code's should behave the same, while Terminal.app (an Apple app) isn't provenance-tracked, which is likely why (A) worked originally — and a provenance-tagged bundle has its signature checked at first exec. With the seal stripped, **every binary inside is SIGKILLed** (`wineserver --version` exits 137, even unmodified ones) and a *"CrossOver_Endfield_Patch" is damaged and can't be opened* dialog appears on every attempt. After that first failure macOS also tags the bundle with `com.apple.macl` and blocks further edits inside it (moving the whole bundle to the Trash still works).
+
+(B) with `--deep` (untested here) would re-sign **every** nested binary ad-hoc, throwing away CodeWeavers' signatures (and, without `--preserve-metadata`, their entitlements). What works cleanly — and what [`scripts/swap-into-crossover.sh`](../scripts/swap-into-crossover.sh) now does — is re-sealing **only the outer bundle**:
+
+```bash
+# on a fresh copy that has never been launched (the script stages it in $TMPDIR, then mv's it into place)
+xattr -drs com.apple.quarantine CrossOver_Endfield_Patch.app
+xattr -rd  com.apple.FinderInfo  CrossOver_Endfield_Patch.app   # else: "resource fork, Finder information, or similar detritus not allowed"
+codesign --force --sign - --preserve-metadata=entitlements CrossOver_Endfield_Patch.app
+codesign --verify --deep --strict CrossOver_Endfield_Patch.app  # must pass before first launch
+```
+
+- Nested binaries keep CodeWeavers' Developer ID signatures. `bin/wineloader` and `bin/wineserver` carry `com.apple.security.cs.disable-library-validation`, so they load the ad-hoc-signed `ntdll.so`.
+- The swapped PE modules (`kernel32.dll`, `ntoskrnl.exe`) need no signature of their own — stock CrossOver's PE files have none; the bundle seal covers them.
+- The main executable keeps its entitlements (`apple-events`, `allow-unsigned-executable-memory`, camera/mic) but loses the hardened runtime: with runtime + an ad-hoc signature, library validation would reject the CodeWeavers-signed `Python.framework`/`Sparkle.framework`. No restricted entitlements are involved, so an ad-hoc signature is allowed to carry them.
+- GPTK's `D3DMetal.framework` / `libd3dshared.dylib` keep Apple's signature ("Software Signing") when copied with `ditto --noextattr`.
+- Replace swapped files with `mv`+`cp` rather than overwriting in place, and don't launch the bundle before it verifies — a failed first launch leaves it tagged and read-only (see above).
+
 ## Bottle structure (for reference)
 
 - Default: `~/Library/Application Support/CrossOver/Bottles/<name>/`
@@ -69,7 +89,7 @@ xattr -drs com.apple.quarantine CrossOver_patched.app  # remove quarantine (or: 
 - The user-space spoofs in [07](07-rosetta-and-windows-spoofing.md) (winecfg version, `HideWineExports` registry value) are applied **per-bottle** in the `*.reg` files — you can try them with **no rebuild** (roadmap milestone 2).
 
 ## Open questions
-- Whether current CrossOver (25/26) requires ad-hoc re-sign after a binary swap, or whether signature-stripping still suffices on Sequoia/Tahoe Apple Silicon (not tested on a live install).
+- ~~Whether current CrossOver (25/26) requires ad-hoc re-sign after a binary swap, or whether signature-stripping still suffices on Sequoia/Tahoe Apple Silicon.~~ **Answered (2026-09):** stripping only works while the copy has no `com.apple.provenance` xattr; re-sealing the outer bundle ad-hoc works either way — see [Verified recipe](#verified-recipe-2026-09-crossover-2620--macos-270--m4).
 - The definitive `lib/wine` swap manifest for a full custom-Wine swap.
 - Whether a full Wine-tree swap preserves the `/lib64/apple_gpt` D3DMetal integration.
 - Whether CrossOver ships hardened runtime + library validation on current versions (affects whether unsigned swapped libs load).

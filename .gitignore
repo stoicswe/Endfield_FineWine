@@ -1,19 +1,12 @@
-# Tooling
-.idea
-.claude
-
-# Build artifacts (the Wine source tree + build output; users build these themselves)
-/build/
-/patcher-app/build/
-/patcher-app/.build/
-
-# Logs
-*.log
-
-# macOS cruft
+# macOS
 .DS_Store
-**/.DS_Store
 
-# Scratch / debug captures
-/scratch/
+# Build artifacts
+build/
+*.log
 *.tmp
+
+# SwiftPM / Xcode
+patcher-app/.build/
+patcher-app/build/
+patcher-app/.swiftpm/

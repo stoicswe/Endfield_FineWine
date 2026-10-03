@@ -1,0 +1,844 @@
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.h b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.h
+index 41bc67a..d3f981a 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.h
+@@ -498,6 +498,10 @@ public:
+ 	/** Merges the contents of the specified number of pipeline caches into this cache. */
+ 	VkResult mergePipelineCaches(uint32_t srcCacheCount, const VkPipelineCache* pSrcCaches);
+ 
++	/** Records a pipeline for background replay on subsequent cache loads. */
++	void recordPipeline(MTLRenderPipelineDescriptor* plDesc);
++	void recordPipeline(MTLComputePipelineDescriptor* plDesc);
++
+ #pragma mark Construction
+ 
+ 	/** Constructs an instance for the specified device. */
+@@ -513,10 +517,21 @@ protected:
+ 	VkResult writeDataImpl(size_t* pDataSize, void* pData);
+ 	VkResult mergePipelineCachesImpl(uint32_t srcCacheCount, const VkPipelineCache* pSrcCaches);
+ 	void markDirty();
++	void startBackgroundWork(std::vector<MVKShaderLibrary*> shLibs);
++	void replayPipeline(const std::string& recipe);
++	bool areAttachmentFormatsSupported(MTLRenderPipelineDescriptor* plDesc);
++	id<MTLFunction> newReplayFunction(const char* pRecipe, uint32_t size);
++	template <class D> void addPipelineRecipe(D* plDesc);
++	std::unique_lock<std::mutex> lockCache();
+ 
+ 	std::unordered_map<MVKShaderModuleKey, MVKShaderLibraryCache*> _shaderCache;
++	std::unordered_map<uint64_t, MVKShaderLibrary*> _librariesByContentKey;	// Immutable after readData()
++	std::vector<std::string> _pipelineRecipes;
++	std::unordered_set<size_t> _pipelineRecipeHashes;
+ 	size_t _dataSize = 0;
+ 	std::mutex _shaderCacheLock;
++	dispatch_group_t _backgroundWork = nullptr;
++	std::atomic<bool> _stopBackgroundWork = false;
+ 	bool _isExternallySynchronized = false;
+ 	bool _isMergeInternallySynchronized = false;
+ };
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+index 637d454..844b906 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+@@ -1002,6 +1002,7 @@ id<MTLRenderPipelineState> MVKGraphicsPipeline::getOrCompilePipeline(MTLRenderPi
+ 		plState = plc->newMTLRenderPipelineState(plDesc);	// retained
+ 		plc->destroy();
+ 		if ( !plState ) { _hasValidMTLPipelineStates = false; }
++		else if (_pipelineCache) { _pipelineCache->recordPipeline(plDesc); }
+ 	}
+ 	return plState;
+ }
+@@ -1015,6 +1016,7 @@ id<MTLComputePipelineState> MVKGraphicsPipeline::getOrCompilePipeline(MTLCompute
+ 		plState = plc->newMTLComputePipelineState(plDesc);	// retained
+ 		plc->destroy();
+ 		if ( !plState ) { _hasValidMTLPipelineStates = false; }
++		else if (_pipelineCache) { _pipelineCache->recordPipeline(plDesc); }
+ 	}
+ 	return plState;
+ }
+@@ -2467,6 +2469,7 @@ MVKComputePipeline::MVKComputePipeline(MVKDevice* device,
+ 		MVKComputePipelineCompiler* plc = new MVKComputePipelineCompiler(this);
+ 		_mtlPipelineState = plc->newMTLComputePipelineState(plDesc);	// retained
+ 		plc->destroy();
++		if (_mtlPipelineState && _pipelineCache) { _pipelineCache->recordPipeline(plDesc); }
+ 		[plDesc release];															// temp release
+ 
+ 		if ( !_mtlPipelineState ) { _hasValidMTLPipelineStates = false; }
+@@ -2574,12 +2577,11 @@ MVKShaderLibrary* MVKPipelineCache::getShaderLibrary(SPIRVToMSLConversionConfigu
+ 													 uint64_t startTime) {
+ 	// Convert and compile outside the cache lock so different modules can compile in parallel.
+ 	// The per-module lock prevents duplicate compilation on concurrent cache misses.
+-	auto lockCache = [this]() {
+-		return _isExternallySynchronized ? unique_lock<mutex>() : unique_lock<mutex>(_shaderCacheLock);
+-	};
+ 	MVKShaderLibraryCache* slCache = nullptr;
+ 	auto findCached = [&]() {
+ 		MVKShaderLibrary* shLib = slCache->findShaderLibrary(pContext, pShaderFeedback, startTime);
++		// Deferred libraries do not satisfy FAIL_ON_PIPELINE_COMPILE_REQUIRED.
++		if (shLib && !shLib->isCompiled() && pipeline->shouldFailOnPipelineCompileRequired()) { return (MVKShaderLibrary*)nullptr; }
+ 		if (shLib && pShaderFeedback) { mvkEnableFlags(pShaderFeedback->flags, VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT); }
+ 		return shLib;
+ 	};
+@@ -2611,6 +2613,10 @@ MVKShaderLibrary* MVKPipelineCache::getShaderLibrary(SPIRVToMSLConversionConfigu
+ 	return newLib;
+ }
+ 
++unique_lock<mutex> MVKPipelineCache::lockCache() {
++	return _isExternallySynchronized ? unique_lock<mutex>() : unique_lock<mutex>(_shaderCacheLock);
++}
++
+ // Returns a shader library cache for the specified shader module key, creating it if necessary.
+ MVKShaderLibraryCache* MVKPipelineCache::getShaderLibraryCache(MVKShaderModuleKey smKey) {
+ 	MVKShaderLibraryCache* slCache = _shaderCache[smKey];
+@@ -2632,6 +2638,7 @@ static uint32_t kDataHeaderSize = (sizeof(uint32_t) * 4) + VK_UUID_SIZE;
+ typedef enum {
+ 	MVKPipelineCacheEntryTypeEOF = 0,
+ 	MVKPipelineCacheEntryTypeShaderLibrary = 1,
++	MVKPipelineCacheEntryTypePipelineRecipe = 2,	// Follows all shader libraries; older readers stop here
+ } MVKPipelineCacheEntryType;
+ 
+ // Helper class to iterate through the shader libraries in a shader library cache in order to serialize them.
+@@ -2674,6 +2681,14 @@ VkResult MVKPipelineCache::writeDataImpl(size_t* pDataSize, void* pData) {
+ 
+ 		if ( !pDataSize ) { return VK_SUCCESS; }
+ 
++		// The cache may have changed since the app queried its size.
++		if (_dataSize == 0) {
++			mvk::countbuf cb;
++			ostream outStream(&cb);
++			writeData(outStream, true);
++			_dataSize = cb.buffSize;
++		}
++
+ 		if (pData) {
+ 			if (*pDataSize >= _dataSize) {
+ 				mvk::membuf mb((char*)pData, _dataSize);
+@@ -2686,12 +2701,6 @@ VkResult MVKPipelineCache::writeDataImpl(size_t* pDataSize, void* pData) {
+ 				return VK_INCOMPLETE;
+ 			}
+ 		} else {
+-			if (_dataSize == 0) {
+-				mvk::countbuf cb;
+-				ostream outStream(&cb);
+-				writeData(outStream, true);
+-				_dataSize = cb.buffSize;
+-			}
+ 			*pDataSize = _dataSize;
+ 			return VK_SUCCESS;
+ 		}
+@@ -2741,6 +2750,13 @@ void MVKPipelineCache::writeData(ostream& outstream, bool isCounting) {
+ 		}
+ 	}
+ 
++	// Pipeline recipes, which refer to the shader libraries above
++	cacheEntryType = MVKPipelineCacheEntryTypePipelineRecipe;
++	for (auto& recipe : _pipelineRecipes) {
++		writer(cacheEntryType);
++		writer(recipe);
++	}
++
+ 	// Mark the end of the archive
+ 	cacheEntryType = MVKPipelineCacheEntryTypeEOF;
+ 	writer(cacheEntryType);
+@@ -2812,6 +2828,15 @@ void MVKPipelineCache::readData(const VkPipelineCacheCreateInfo* pCreateInfo) {
+ 					break;
+ 				}
+ 
++				case MVKPipelineCacheEntryTypePipelineRecipe: {
++					std::string recipe;
++					reader(recipe);
++					if (_pipelineRecipeHashes.insert(std::hash<std::string>{}(recipe)).second) {
++						_pipelineRecipes.push_back(std::move(recipe));
++					}
++					break;
++				}
++
+ 				default: {
+ 					done = true;
+ 					break;
+@@ -2823,23 +2848,410 @@ void MVKPipelineCache::readData(const VkPipelineCacheCreateInfo* pCreateInfo) {
+ 		setConfigurationResult(reportError(VK_ERROR_INITIALIZATION_FAILED, "Error reading pipeline cache data: %s", ex.what()));
+ 	}
+ 
+-	// Compile in parallel, then insert in cache order. Each compile mostly waits on Metal.
+-	// Capture a pointer to avoid copying the vector into the block as const.
+-	CachedShaderLibrary* pCachedLibs = cachedLibs.data();
+-	dispatch_apply(cachedLibs.size(), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^(size_t idx) {
+-		@autoreleasepool {
+-			auto& cl = pCachedLibs[idx];
+-			cl.shLib = new MVKShaderLibrary(this, cl.resultInfo, std::move(cl.compressedMSL));
++	// Defer compilation to first use or background workers to avoid blocking cache loads.
++	// Different conversion configurations may share identical MSL and compile options.
++	std::vector<uint64_t> contentKeys(cachedLibs.size());
++	for (size_t idx = 0; idx < cachedLibs.size(); idx++) {
++		contentKeys[idx] = MVKShaderLibrary::getContentKey(cachedLibs[idx].compressedMSL, cachedLibs[idx].resultInfo);
++	}
++
++	// Compare contents to rule out hash collisions. The source MSL has moved into its library.
++	auto isSameCompile = [&](size_t src, size_t idx) {
++		return MVKShaderLibrary::isSameCompile(cachedLibs[src].shLib->_compressedMSL, cachedLibs[src].resultInfo,
++											   cachedLibs[idx].compressedMSL, cachedLibs[idx].resultInfo);
++	};
++	std::unordered_map<uint64_t, size_t> compileSources;	// Content key -> index of the library that compiles it
++	std::vector<MVKShaderLibrary*> backgroundLibs;
++	for (size_t idx = 0; idx < cachedLibs.size(); idx++) {
++		auto& cl = cachedLibs[idx];
++		auto srcIter = compileSources.find(contentKeys[idx]);
++		if (srcIter != compileSources.end() && isSameCompile(srcIter->second, idx)) {
++			cl.shLib = new MVKShaderLibrary(cachedLibs[srcIter->second].shLib, cl.resultInfo, std::move(cl.compressedMSL));
++		} else {
++			cl.shLib = new MVKShaderLibrary(this, cl.resultInfo, std::move(cl.compressedMSL), contentKeys[idx]);
++			if (srcIter == compileSources.end()) {
++				compileSources.emplace(contentKeys[idx], idx);
++				_librariesByContentKey.emplace(contentKeys[idx], cl.shLib);
++			}
++			backgroundLibs.push_back(cl.shLib);
+ 		}
+-	});
++	}
++
+ 	for (auto& cl : cachedLibs) {
+ 		getShaderLibraryCache(cl.smKey)->addShaderLibrary(std::move(cl.shaderConversionConfig), cl.shLib);
+ 	}
++	startBackgroundWork(std::move(backgroundLibs));
+ #else
+ 	setConfigurationResult(reportError(VK_ERROR_INITIALIZATION_FAILED, "Pipeline cache serialization is unavailable. To enable pipeline cache serialization, build MoltenVK with MVK_USE_CEREAL=1 build setting."));
+ #endif
+ }
+ 
++// Queue recorded pipelines in creation order, then remaining libraries. Limit workers
++// to leave compile capacity for the app; zero disables background work.
++void MVKPipelineCache::startBackgroundWork(std::vector<MVKShaderLibrary*> shLibs) {
++	static const uint32_t workerCount = (uint32_t)mvkGetEnvVarNumber("MVK_CONFIG_PIPELINE_CACHE_BACKGROUND_WORKERS", 4);
++	if ((shLibs.empty() && _pipelineRecipes.empty()) || workerCount == 0) { return; }
++
++	// Recording may append to the live recipe list while the workers run.
++	auto pRecipes = std::make_shared<std::vector<std::string>>(_pipelineRecipes);
++	auto pLibs = std::make_shared<std::vector<MVKShaderLibrary*>>(std::move(shLibs));
++	auto pNext = std::make_shared<std::atomic<size_t>>(0);
++	_backgroundWork = dispatch_group_create();
++	dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_UTILITY, 0);
++	for (uint32_t worker = 0; worker < workerCount; worker++) {
++		dispatch_group_async(_backgroundWork, queue, ^{
++			size_t recipeCnt = pRecipes->size();
++			while ( !_stopBackgroundWork.load(std::memory_order_relaxed) ) {
++				size_t idx = pNext->fetch_add(1, std::memory_order_relaxed);
++				if (idx < recipeCnt) {
++					replayPipeline((*pRecipes)[idx]);
++				} else if (idx - recipeCnt < pLibs->size()) {
++					@autoreleasepool { (*pLibs)[idx - recipeCnt]->compileIfNeeded(); }
++				} else {
++					break;
++				}
++			}
++		});
++	}
++}
++
++#pragma mark Pipeline recipes
++
++// Recipes store descriptor properties and reference functions by library content key and
++// specialization constants. New recipes must reconstruct an equal descriptor to be recorded.
++
++namespace {
++
++enum : uint32_t {
++	kMVKRecipeRender = 1,
++	kMVKRecipeCompute = 2,
++};
++
++struct MVKRecipeWriter {
++	std::string out;
++	void u32(uint32_t v) { out.append((const char*)&v, sizeof(v)); }
++	void blob(const void* p, uint32_t n) { u32(n); out.append((const char*)p, n); }
++	bool function(id<MTLFunction> mtlFunc) {
++		if ( !mtlFunc ) { u32(0); return true; }
++		NSData* fnRecipe = MVKShaderLibrary::getFunctionRecipe(mtlFunc);
++		if ( !fnRecipe ) { return false; }
++		blob(fnRecipe.bytes, (uint32_t)fnRecipe.length);
++		return true;
++	}
++};
++
++struct MVKRecipeReader {
++	const char* p;
++	const char* end;
++	bool ok = true;
++	uint32_t u32() {
++		uint32_t v = 0;
++		if (end - p < (ptrdiff_t)sizeof(v)) { ok = false; return 0; }
++		memcpy(&v, p, sizeof(v));
++		p += sizeof(v);
++		return v;
++	}
++	const char* blob(uint32_t& n) {
++		n = u32();
++		if ( !ok || end - p < (ptrdiff_t)n) { ok = false; return nullptr; }
++		const char* b = p;
++		p += n;
++		return b;
++	}
++};
++
++// Returns a retained function. A nil result for a non-empty reference fails decoding.
++typedef id<MTLFunction> (^MVKRecipeFunctionResolver)(const char* fnRecipe, uint32_t size);
++
++void encodeVertexDescriptor(MVKRecipeWriter& w, MTLVertexDescriptor* vd) {
++	for (uint32_t i = 0; i < kMVKMaxBufferCount; i++) {
++		auto* l = vd.layouts[i];
++		if (l.stride || l.stepFunction != MTLVertexStepFunctionPerVertex || l.stepRate != 1) {
++			w.u32(i); w.u32((uint32_t)l.stride); w.u32((uint32_t)l.stepFunction); w.u32((uint32_t)l.stepRate);
++		}
++	}
++	w.u32(UINT32_MAX);
++	for (uint32_t i = 0; i < kMVKMaxBufferCount; i++) {
++		auto* a = vd.attributes[i];
++		if (a.format != MTLVertexFormatInvalid || a.offset || a.bufferIndex) {
++			w.u32(i); w.u32((uint32_t)a.format); w.u32((uint32_t)a.offset); w.u32((uint32_t)a.bufferIndex);
++		}
++	}
++	w.u32(UINT32_MAX);
++}
++
++void decodeVertexDescriptor(MVKRecipeReader& r, MTLVertexDescriptor* vd) {
++	for (uint32_t i = r.u32(); r.ok && i < kMVKMaxBufferCount; i = r.u32()) {
++		auto* l = vd.layouts[i];
++		l.stride = r.u32(); l.stepFunction = (MTLVertexStepFunction)r.u32(); l.stepRate = r.u32();
++	}
++	for (uint32_t i = r.u32(); r.ok && i < kMVKMaxBufferCount; i = r.u32()) {
++		auto* a = vd.attributes[i];
++		a.format = (MTLVertexFormat)r.u32(); a.offset = r.u32(); a.bufferIndex = r.u32();
++	}
++}
++
++void encodeStageInput(MVKRecipeWriter& w, MTLStageInputOutputDescriptor* sd) {
++	w.u32(sd ? 1 : 0);
++	if ( !sd ) { return; }
++	for (uint32_t i = 0; i < kMVKMaxBufferCount; i++) {
++		auto* l = sd.layouts[i];
++		w.u32((uint32_t)l.stride); w.u32((uint32_t)l.stepFunction); w.u32((uint32_t)l.stepRate);
++		auto* a = sd.attributes[i];
++		w.u32((uint32_t)a.format); w.u32((uint32_t)a.offset); w.u32((uint32_t)a.bufferIndex);
++	}
++	w.u32((uint32_t)sd.indexType); w.u32((uint32_t)sd.indexBufferIndex);
++}
++
++void decodeStageInput(MVKRecipeReader& r, MTLComputePipelineDescriptor* plDesc) {
++	if ( !r.u32() ) { return; }
++	MTLStageInputOutputDescriptor* sd = [MTLStageInputOutputDescriptor stageInputOutputDescriptor];
++	for (uint32_t i = 0; i < kMVKMaxBufferCount; i++) {
++		auto* l = sd.layouts[i];
++		l.stride = r.u32(); l.stepFunction = (MTLStepFunction)r.u32(); l.stepRate = r.u32();
++		auto* a = sd.attributes[i];
++		a.format = (MTLAttributeFormat)r.u32(); a.offset = r.u32(); a.bufferIndex = r.u32();
++	}
++	sd.indexType = (MTLIndexType)r.u32(); sd.indexBufferIndex = r.u32();
++	plDesc.stageInputDescriptor = sd;
++}
++
++bool encodeRecipe(MVKRecipeWriter& w, MTLRenderPipelineDescriptor* d) {
++	w.u32(kMVKRecipeRender);
++	if ( !(w.function(d.vertexFunction) && w.function(d.fragmentFunction)) ) { return false; }
++	encodeVertexDescriptor(w, d.vertexDescriptor);
++	for (uint32_t i = 0; i < kMVKMaxColorAttachmentCount; i++) {
++		auto* ca = d.colorAttachments[i];
++		w.u32((uint32_t)ca.pixelFormat); w.u32((uint32_t)ca.writeMask); w.u32(ca.isBlendingEnabled);
++		w.u32((uint32_t)ca.sourceRGBBlendFactor); w.u32((uint32_t)ca.destinationRGBBlendFactor); w.u32((uint32_t)ca.rgbBlendOperation);
++		w.u32((uint32_t)ca.sourceAlphaBlendFactor); w.u32((uint32_t)ca.destinationAlphaBlendFactor); w.u32((uint32_t)ca.alphaBlendOperation);
++	}
++	w.u32((uint32_t)d.depthAttachmentPixelFormat);
++	w.u32((uint32_t)d.stencilAttachmentPixelFormat);
++	w.u32((uint32_t)d.rasterSampleCount);
++	w.u32(d.isAlphaToCoverageEnabled);
++	w.u32(d.isAlphaToOneEnabled);
++	w.u32(d.isRasterizationEnabled);
++	w.u32((uint32_t)d.inputPrimitiveTopology);
++	w.u32((uint32_t)d.maxVertexAmplificationCount);
++	w.u32(d.supportIndirectCommandBuffers);
++	w.u32((uint32_t)d.tessellationPartitionMode);
++	w.u32((uint32_t)d.maxTessellationFactor);
++	w.u32(d.isTessellationFactorScaleEnabled);
++	w.u32((uint32_t)d.tessellationFactorFormat);
++	w.u32((uint32_t)d.tessellationControlPointIndexType);
++	w.u32((uint32_t)d.tessellationFactorStepFunction);
++	w.u32((uint32_t)d.tessellationOutputWindingOrder);
++
++	// Omit default private-API properties to preserve compatibility with older recipes.
++	static MTLRenderPipelineDescriptor* defaults = [MTLRenderPipelineDescriptor new];
++	if (d.sampleMaskMVK != defaults.sampleMaskMVK ||
++		d.isLogicOperationEnabledMVK != defaults.isLogicOperationEnabledMVK ||
++		d.logicOperationMVK != defaults.logicOperationMVK) {
++		w.u32((uint32_t)d.sampleMaskMVK);
++		w.u32(d.isLogicOperationEnabledMVK);
++		w.u32((uint32_t)d.logicOperationMVK);
++	}
++	return true;
++}
++
++bool encodeRecipe(MVKRecipeWriter& w, MTLComputePipelineDescriptor* d) {
++	w.u32(kMVKRecipeCompute);
++	if ( !d.computeFunction || !w.function(d.computeFunction) ) { return false; }
++	w.u32((uint32_t)d.maxTotalThreadsPerThreadgroup);
++	w.u32(d.threadGroupSizeIsMultipleOfThreadExecutionWidth);
++	w.u32(d.supportIndirectCommandBuffers);
++	encodeStageInput(w, d.stageInputDescriptor);
++	return true;
++}
++
++// Returns a function decoded from the reader, or nil if the reference is empty or invalid.
++id<MTLFunction> decodeFunction(MVKRecipeReader& r, MVKRecipeFunctionResolver resolve) {
++	uint32_t size;
++	const char* fnRecipe = r.blob(size);
++	if ( !r.ok || !size ) { return nil; }
++	id<MTLFunction> mtlFunc = resolve(fnRecipe, size);
++	if ( !mtlFunc ) { r.ok = false; }
++	return mtlFunc;
++}
++
++// Returns a retained descriptor, or nil for an invalid recipe or unavailable function.
++id newDescriptor(const std::string& recipe, MVKRecipeFunctionResolver resolve) {
++	MVKRecipeReader r = { recipe.data(), recipe.data() + recipe.size() };
++	switch (r.u32()) {
++		case kMVKRecipeRender: {
++			MTLRenderPipelineDescriptor* d = [MTLRenderPipelineDescriptor new];
++			id<MTLFunction> vtxFunc = decodeFunction(r, resolve);
++			id<MTLFunction> fragFunc = r.ok ? decodeFunction(r, resolve) : nil;
++			d.vertexFunction = vtxFunc;
++			d.fragmentFunction = fragFunc;
++			[vtxFunc release];
++			[fragFunc release];
++			decodeVertexDescriptor(r, d.vertexDescriptor);
++			for (uint32_t i = 0; r.ok && i < kMVKMaxColorAttachmentCount; i++) {
++				auto* ca = d.colorAttachments[i];
++				ca.pixelFormat = (MTLPixelFormat)r.u32(); ca.writeMask = r.u32(); ca.blendingEnabled = r.u32();
++				ca.sourceRGBBlendFactor = (MTLBlendFactor)r.u32(); ca.destinationRGBBlendFactor = (MTLBlendFactor)r.u32(); ca.rgbBlendOperation = (MTLBlendOperation)r.u32();
++				ca.sourceAlphaBlendFactor = (MTLBlendFactor)r.u32(); ca.destinationAlphaBlendFactor = (MTLBlendFactor)r.u32(); ca.alphaBlendOperation = (MTLBlendOperation)r.u32();
++			}
++			d.depthAttachmentPixelFormat = (MTLPixelFormat)r.u32();
++			d.stencilAttachmentPixelFormat = (MTLPixelFormat)r.u32();
++			d.rasterSampleCount = r.u32();
++			d.alphaToCoverageEnabled = r.u32();
++			d.alphaToOneEnabled = r.u32();
++			d.rasterizationEnabled = r.u32();
++			d.inputPrimitiveTopology = (MTLPrimitiveTopologyClass)r.u32();
++			d.maxVertexAmplificationCount = r.u32();
++			d.supportIndirectCommandBuffers = r.u32();
++			d.tessellationPartitionMode = (MTLTessellationPartitionMode)r.u32();
++			d.maxTessellationFactor = r.u32();
++			d.tessellationFactorScaleEnabled = r.u32();
++			d.tessellationFactorFormat = (MTLTessellationFactorFormat)r.u32();
++			d.tessellationControlPointIndexType = (MTLTessellationControlPointIndexType)r.u32();
++			d.tessellationFactorStepFunction = (MTLTessellationFactorStepFunction)r.u32();
++			d.tessellationOutputWindingOrder = (MTLWinding)r.u32();
++			if (r.p < r.end) {		// Optional private-API properties
++				d.sampleMaskMVK = r.u32();
++				d.logicOperationEnabledMVK = r.u32();
++				d.logicOperationMVK = r.u32();
++			}
++			if (r.ok && r.p == r.end && vtxFunc) { return d; }
++			[d release];
++			return nil;
++		}
++		case kMVKRecipeCompute: {
++			MTLComputePipelineDescriptor* d = [MTLComputePipelineDescriptor new];
++			id<MTLFunction> compFunc = decodeFunction(r, resolve);
++			d.computeFunction = compFunc;
++			[compFunc release];
++			d.maxTotalThreadsPerThreadgroup = r.u32();
++			d.threadGroupSizeIsMultipleOfThreadExecutionWidth = r.u32();
++			d.supportIndirectCommandBuffers = r.u32();
++			if (r.ok) { decodeStageInput(r, d); }
++			if (r.ok && r.p == r.end && compFunc) { return d; }
++			[d release];
++			return nil;
++		}
++		default:
++			return nil;
++	}
++}
++
++template <class D>
++bool isRecipeFaithful(const std::string& recipe, D* plDesc) {
++	// Reuse the original functions to compare descriptor properties without recompiling.
++	NSMutableArray<id<MTLFunction>>* funcs = [NSMutableArray array];
++	if constexpr (std::is_same_v<D, MTLRenderPipelineDescriptor>) {
++		[funcs addObject: plDesc.vertexFunction];
++		if (plDesc.fragmentFunction) { [funcs addObject: plDesc.fragmentFunction]; }
++	} else {
++		[funcs addObject: plDesc.computeFunction];
++	}
++	__block NSUInteger funcIdx = 0;
++	D* rebuilt = newDescriptor(recipe, ^id<MTLFunction>(const char*, uint32_t) {
++		return funcIdx < funcs.count ? [funcs[funcIdx++] retain] : nil;
++	});
++	if (plDesc.label) { rebuilt.label = plDesc.label; }
++	bool isEqual = [rebuilt isEqual: plDesc];
++	[rebuilt release];
++	return isEqual;
++}
++
++}
++
++template <class D>
++void MVKPipelineCache::addPipelineRecipe(D* plDesc) {
++	@autoreleasepool {
++		MVKRecipeWriter w;
++		if ( !encodeRecipe(w, plDesc) ) { return; }
++		size_t recipeHash = std::hash<std::string>{}(w.out);
++		{
++			auto lock = lockCache();
++			if (_pipelineRecipeHashes.count(recipeHash)) { return; }
++		}
++		if ( !isRecipeFaithful(w.out, plDesc) ) { return; }
++
++		auto lock = lockCache();
++		if ( !_pipelineRecipeHashes.insert(recipeHash).second ) { return; }	// Another thread recorded it.
++		// Grow the cached size rather than recounting the whole cache: a cereal
++		// entry type, then the string as a 64-bit length and its bytes.
++		if (_dataSize) { _dataSize += sizeof(uint32_t) + sizeof(uint64_t) + w.out.size(); }
++		_pipelineRecipes.push_back(std::move(w.out));
++	}
++}
++
++void MVKPipelineCache::recordPipeline(MTLRenderPipelineDescriptor* plDesc) { addPipelineRecipe(plDesc); }
++
++void MVKPipelineCache::recordPipeline(MTLComputePipelineDescriptor* plDesc) { addPipelineRecipe(plDesc); }
++
++// Returns a new (retained) function built from a function recipe, compiling its library if needed.
++id<MTLFunction> MVKPipelineCache::newReplayFunction(const char* pRecipe, uint32_t size) {
++	uint64_t contentKey;
++	if (size < sizeof(contentKey)) { return nil; }
++	memcpy(&contentKey, pRecipe, sizeof(contentKey));
++	auto libIter = _librariesByContentKey.find(contentKey);
++	if (libIter == _librariesByContentKey.end()) { return nil; }
++
++	// Specialization consumers read values by their shader type rather than the entry size,
++	// so accept only valid Vulkan sizes and give every value an 8-byte slot to read from.
++	static constexpr uint32_t kSlotSize = 8;
++	MVKSmallVector<VkSpecializationMapEntry> mapEntries;
++	std::string specData;
++	MVKRecipeReader r = { pRecipe + sizeof(contentKey), pRecipe + size };
++	while (r.ok && r.p < r.end) {
++		uint32_t constantID = r.u32();
++		uint32_t valSize;
++		const char* val = r.blob(valSize);
++		if ( !r.ok || !(valSize == 1 || valSize == 2 || valSize == 4 || valSize == 8) ) { return nil; }
++		mapEntries.push_back({constantID, (uint32_t)specData.size(), valSize});
++		specData.append(val, valSize);
++		specData.append(kSlotSize - valSize, '\0');
++	}
++	VkSpecializationInfo specInfo = { (uint32_t)mapEntries.size(), mapEntries.data(), specData.size(), specData.data() };
++	MVKMTLFunction mvkFunc = libIter->second->getMTLFunction(mapEntries.empty() ? nullptr : &specInfo, nullptr, nullptr);
++	return [mvkFunc.getMTLFunction() retain];
++}
++
++bool MVKPipelineCache::areAttachmentFormatsSupported(MTLRenderPipelineDescriptor* plDesc) {
++	MVKPixelFormats* pixFmts = getPixelFormats();
++	auto isSupported = [&](MTLPixelFormat mtlFmt, MVKMTLFmtCaps caps) {
++		return mtlFmt == MTLPixelFormatInvalid || mvkAreAllFlagsEnabled(pixFmts->getCapabilities(mtlFmt), caps);
++	};
++	for (uint32_t i = 0; i < kMVKMaxColorAttachmentCount; i++) {
++		if ( !isSupported(plDesc.colorAttachments[i].pixelFormat, kMVKMTLFmtCapsColorAtt) ) { return false; }
++	}
++	return (isSupported(plDesc.depthAttachmentPixelFormat, kMVKMTLFmtCapsDSAtt) &&
++			isSupported(plDesc.stencilAttachmentPixelFormat, kMVKMTLFmtCapsDSAtt));
++}
++
++// Compile and discard the pipeline to warm Metal's cache.
++void MVKPipelineCache::replayPipeline(const std::string& recipe) {
++	@autoreleasepool {
++		id plDesc = newDescriptor(recipe, ^id<MTLFunction>(const char* fnRecipe, uint32_t size) {
++			return newReplayFunction(fnRecipe, size);
++		});
++		if ( !plDesc ) { return; }
++
++		// Metal aborts on unsupported formats; the cache may come from another device.
++		if ([plDesc isKindOfClass: [MTLRenderPipelineDescriptor class]] && !areAttachmentFormatsSupported(plDesc)) {
++			[plDesc release];
++			return;
++		}
++
++		id plState = nil;
++		if ([plDesc isKindOfClass: [MTLRenderPipelineDescriptor class]]) {
++			plState = [getMTLDevice() newRenderPipelineStateWithDescriptor: plDesc error: nil];
++		} else {
++			plState = [getMTLDevice() newComputePipelineStateWithDescriptor: plDesc
++																	options: MTLPipelineOptionNone
++																 reflection: nil
++																	  error: nil];
++		}
++		[plDesc release];
++		[plState release];
++	}
++}
++
+ // Mark the cache as dirty, so that existing streaming info is released
+ void MVKPipelineCache::markDirty() {
+ 	_dataSize = 0;
+@@ -3115,6 +3527,11 @@ MVKPipelineCache::MVKPipelineCache(MVKDevice* device, const VkPipelineCacheCreat
+ }
+ 
+ MVKPipelineCache::~MVKPipelineCache() {
++	if (_backgroundWork) {
++		_stopBackgroundWork = true;
++		dispatch_group_wait(_backgroundWork, DISPATCH_TIME_FOREVER);
++		dispatch_release(_backgroundWork);
++	}
+ 	for (auto& pair : _shaderCache) { pair.second->destroy(); }
+ 	_shaderCache.clear();
+ }
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.h b/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.h
+index ec4131f..ad07f2a 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.h
+@@ -23,6 +23,7 @@
+ #include "MVKCodec.h"
+ #include "MVKSmallVector.h"
+ #include <MoltenVKShaderConverter/SPIRVToMSLConverter.h>
++#include <atomic>
+ #include <mutex>
+ 
+ #import <Metal/Metal.h>
+@@ -128,8 +129,48 @@ public:
+ 					 const void* mslCompiledCodeData,
+ 					 size_t mslCompiledCodeLength);
+ 
++	/** Defers cached MSL compilation until first use or compileIfNeeded(). */
++	MVKShaderLibrary(MVKVulkanAPIDeviceObject* owner,
++					 const mvk::SPIRVToMSLConversionResultInfo& resultInfo,
++					 MVKCompressor<std::string> compressedMSL,
++					 uint64_t contentKey);
++
++	/**
++	 * Shares the source's Metal library, compiling it on first use if needed.
++	 * MSL and compile options must match. The source must outlive this library.
++	 */
++	MVKShaderLibrary(MVKShaderLibrary* source,
++					 const mvk::SPIRVToMSLConversionResultInfo& resultInfo,
++					 MVKCompressor<std::string> compressedMSL);
++
+ 	MVKShaderLibrary(const MVKShaderLibrary& other);
+ 
++	/** Compiles a deferred library. Thread-safe. */
++	void compileIfNeeded();
++
++	/** Returns whether compilation has finished, including through a shared source. */
++	bool isCompiled() {
++		return !_needsCompile.load(std::memory_order_acquire) || (_compileSource && _compileSource->isCompiled());
++	}
++
++	/**
++	 * Hashes MSL and compile options. Use isSameCompile() to rule out collisions before sharing.
++	 */
++	static uint64_t getContentKey(const MVKCompressor<std::string>& compressedMSL,
++								  const mvk::SPIRVToMSLConversionResultInfo& resultInfo);
++
++	/** Returns whether two libraries compile identical MSL with identical compile options. */
++	static bool isSameCompile(const MVKCompressor<std::string>& compressedMSL1,
++							  const mvk::SPIRVToMSLConversionResultInfo& resultInfo1,
++							  const MVKCompressor<std::string>& compressedMSL2,
++							  const mvk::SPIRVToMSLConversionResultInfo& resultInfo2);
++
++	/**
++	 * Returns the MVKShaderLibrary content key and specialization constants from which
++	 * a Metal function returned by getMTLFunction() was created, or nil if unknown.
++	 */
++	static NSData* getFunctionRecipe(id<MTLFunction> mtlFunc);
++
+ 	MVKShaderLibrary& operator=(const MVKShaderLibrary& other);
+ 
+ 	~MVKShaderLibrary() override;
+@@ -138,6 +179,7 @@ protected:
+ 	friend MVKShaderCacheIterator;
+ 	friend MVKShaderLibraryCache;
+ 	friend MVKShaderModule;
++	friend MVKPipelineCache;
+ 
+ 	MVKMTLFunction getMTLFunction(const VkSpecializationInfo* pSpecializationInfo,
+ 								  VkPipelineCreationFeedback* pShaderFeedback,
+@@ -160,6 +202,10 @@ protected:
+ 	/** Can only be populated when _maySpecializeWithMacro is true */
+ 	std::map<std::vector<std::pair<uint32_t, MVKShaderMacroValue>>, MVKShaderLibrary *> _specializationVariants;
+ 	std::mutex _specializationVariantsLock;
++	MVKShaderLibrary* _compileSource = nullptr;
++	std::atomic<bool> _needsCompile = false;
++	std::mutex _deferredCompileLock;
++	uint64_t _contentKey = 0;
+ };
+ 
+ 
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm b/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm
+index f8a8865..f8024ef 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm
+@@ -20,6 +20,7 @@
+ #include "MVKPipeline.h"
+ #include "MVKFoundation.h"
+ #include <sys/stat.h>
++#import <objc/runtime.h>
+ 
+ using namespace std;
+ using namespace mvk;
+@@ -69,10 +70,51 @@ static uint32_t getWorkgroupDimensionSize(const SPIRVWorkgroupSizeDimension& wgD
+ 	return wgDim.size;
+ }
+ 
++static char kMVKFunctionRecipeKey;
++
++// Attach replay data to the function: library key, then each constant's ID, size, and value bytes.
++static void setFunctionRecipe(id<MTLFunction> mtlFunc, uint64_t contentKey, const VkSpecializationInfo* pSpecInfo) {
++	NSMutableData* recipe = [NSMutableData dataWithBytes: &contentKey length: sizeof(contentKey)];
++	for (uint32_t i = 0; pSpecInfo && i < pSpecInfo->mapEntryCount; i++) {
++		const auto& me = pSpecInfo->pMapEntries[i];
++		uint32_t hdr[2] = { me.constantID, (uint32_t)me.size };
++		[recipe appendBytes: hdr length: sizeof(hdr)];
++		[recipe appendBytes: (const char*)pSpecInfo->pData + me.offset length: me.size];
++	}
++	objc_setAssociatedObject(mtlFunc, &kMVKFunctionRecipeKey, recipe, OBJC_ASSOCIATION_RETAIN);
++}
++
++NSData* MVKShaderLibrary::getFunctionRecipe(id<MTLFunction> mtlFunc) {
++	return mtlFunc ? objc_getAssociatedObject(mtlFunc, &kMVKFunctionRecipeKey) : nil;
++}
++
++// Keep in sync with the per-library options used by getMTLCompileOptions().
++static uint64_t getCompileOptionsKey(const SPIRVToMSLConversionResultInfo& resultInfo) {
++	return (uint64_t)resultInfo.entryPoint.fpFastMathFlags << 1 | (uint64_t)resultInfo.isPositionInvariant;
++}
++
++// Deterministic compression lets us hash stored bytes without decompressing MSL.
++uint64_t MVKShaderLibrary::getContentKey(const MVKCompressor<string>& compressedMSL, const SPIRVToMSLConversionResultInfo& resultInfo) {
++	const auto& bytes = compressedMSL._compressed;
++	uint64_t key = std::hash<string_view>{}(string_view((const char*)bytes.data(), bytes.size()));
++	key ^= getCompileOptionsKey(resultInfo) * 0x9E3779B97F4A7C15ULL;
++	key ^= (uint64_t)compressedMSL._uncompressedSize << 32 ^ (uint64_t)compressedMSL._algorithm << 24;
++	return key ? key : 1;
++}
++
++bool MVKShaderLibrary::isSameCompile(const MVKCompressor<string>& compressedMSL1, const SPIRVToMSLConversionResultInfo& resultInfo1,
++									 const MVKCompressor<string>& compressedMSL2, const SPIRVToMSLConversionResultInfo& resultInfo2) {
++	return (getCompileOptionsKey(resultInfo1) == getCompileOptionsKey(resultInfo2) &&
++			compressedMSL1._algorithm == compressedMSL2._algorithm &&
++			compressedMSL1._uncompressedSize == compressedMSL2._uncompressedSize &&
++			compressedMSL1._compressed == compressedMSL2._compressed);
++}
++
+ MVKMTLFunction MVKShaderLibrary::getMTLFunction(const VkSpecializationInfo* pSpecializationInfo,
+ 												VkPipelineCreationFeedback* pShaderFeedback,
+ 												MVKShaderModule* shaderModule) {
+ 
++	compileIfNeeded();
+ 	if ( !_mtlLibrary ) { return MVKMTLFunctionNull; }
+ 
+ 	id<MTLLibrary> lib = _mtlLibrary;
+@@ -111,7 +153,8 @@ MVKMTLFunction MVKShaderLibrary::getMTLFunction(const VkSpecializationInfo* pSpe
+ 	}
+ 
+ 
+-	@synchronized (getMTLDevice()) {
++	// MTLLibrary is thread-safe; a device lock would serialize specialization compiles.
++	{
+ 		@autoreleasepool {
+ 			NSString* mtlFuncName = @(_shaderConversionResultInfo.entryPoint.mtlFunctionName.c_str());
+ 
+@@ -163,9 +206,10 @@ MVKMTLFunction MVKShaderLibrary::getMTLFunction(const VkSpecializationInfo* pSpe
+ 			}
+ 
+ 			// Set the debug name. First try name of shader module, otherwise try name of owner.
+-			NSString* dbName = shaderModule->getDebugName();
++			NSString* dbName = shaderModule ? shaderModule->getDebugName() : nil;
+ 			if ( !dbName ) { dbName = _owner->getDebugName(); }
+ 			_owner->setMetalObjectLabel(mtlFunc, dbName);
++			if (mtlFunc && _contentKey) { setFunctionRecipe(mtlFunc, _contentKey, pSpecializationInfo); }
+ 
+ 			auto& wgSize = _shaderConversionResultInfo.entryPoint.workgroupSize;
+ 			return MVKMTLFunction(mtlFunc, _shaderConversionResultInfo, MTLSizeMake(getWorkgroupDimensionSize(wgSize.width, pSpecializationInfo),
+@@ -208,6 +252,7 @@ MVKShaderLibrary::MVKShaderLibrary(MVKVulkanAPIDeviceObject* owner,
+ 
+ 	_shaderConversionResultInfo = conversionResult.resultInfo;
+ 	compressMSL(conversionResult.msl);
++	_contentKey = getContentKey(_compressedMSL, _shaderConversionResultInfo);
+ 	compileLibrary(conversionResult.msl);
+ }
+ 
+@@ -268,18 +313,71 @@ MVKShaderLibrary::MVKShaderLibrary(MVKVulkanAPIDeviceObject* owner,
+ 	addPerformanceInterval(getPerformanceStats().shaderCompilation.mslLoad, startTime);
+ }
+ 
++MVKShaderLibrary::MVKShaderLibrary(MVKVulkanAPIDeviceObject* owner,
++								   const SPIRVToMSLConversionResultInfo& resultInfo,
++								   MVKCompressor<std::string> compressedMSL,
++								   uint64_t contentKey) :
++	MVKBaseDeviceObject(owner->getDevice()),
++	_owner(owner),
++	_mtlLibrary(nil),
++	_maySpecializeWithMacro(true),
++	_needsCompile(true),
++	_contentKey(contentKey) {
++
++	_shaderConversionResultInfo = resultInfo;
++	_compressedMSL = std::move(compressedMSL);
++}
++
++MVKShaderLibrary::MVKShaderLibrary(MVKShaderLibrary* source,
++								   const SPIRVToMSLConversionResultInfo& resultInfo,
++								   MVKCompressor<std::string> compressedMSL) :
++	MVKBaseDeviceObject(source->_device),
++	_owner(source->_owner),
++	_mtlLibrary(nil),
++	_maySpecializeWithMacro(true),
++	_compileSource(source),
++	_needsCompile(true),
++	_contentKey(source->_contentKey) {
++
++	_shaderConversionResultInfo = resultInfo;
++	_compressedMSL = std::move(compressedMSL);
++}
++
++void MVKShaderLibrary::compileIfNeeded() {
++	auto needsCompile = [this]() { return _needsCompile.load(std::memory_order_acquire); };
++	if ( !needsCompile() ) { return; }
++
++	lock_guard<mutex> lock(_deferredCompileLock);
++	if ( !needsCompile() ) { return; }	// Compiled by another thread while this one waited
++
++	if (_compileSource) {
++		_compileSource->compileIfNeeded();
++		_mtlLibrary = [_compileSource->_mtlLibrary retain];
++	} else {
++		string msl;
++		decompressMSL(msl);
++		compileLibrary(msl);
++	}
++	_needsCompile.store(false, std::memory_order_release);
++}
++
+ MVKShaderLibrary::MVKShaderLibrary(const MVKShaderLibrary& other) :
+ 	MVKBaseDeviceObject(other._device),
+ 	_owner(other._owner),
+-	_maySpecializeWithMacro(other._maySpecializeWithMacro),
+-	_specializationVariants(other._specializationVariants) {
++	_maySpecializeWithMacro(other._maySpecializeWithMacro) {
++
++	// Build separate variants: the original owns them and replay may still be adding to them.
+ 
++	// The copy may outlive the original and its compile source, so compile before sharing.
++	const_cast<MVKShaderLibrary&>(other).compileIfNeeded();
+ 	_mtlLibrary = [other._mtlLibrary retain];
+ 	_shaderConversionResultInfo = other._shaderConversionResultInfo;
+ 	_compressedMSL = other._compressedMSL;
++	_contentKey = other._contentKey;
+ }
+ 
+ MVKShaderLibrary& MVKShaderLibrary::operator=(const MVKShaderLibrary& other) {
++	const_cast<MVKShaderLibrary&>(other).compileIfNeeded();
+ 	if (_mtlLibrary != other._mtlLibrary) {
+ 		[_mtlLibrary release];
+ 		_mtlLibrary = [other._mtlLibrary retain];
+@@ -287,6 +385,7 @@ MVKShaderLibrary& MVKShaderLibrary::operator=(const MVKShaderLibrary& other) {
+ 	_owner = other._owner;
+ 	_shaderConversionResultInfo = other._shaderConversionResultInfo;
+ 	_compressedMSL = other._compressedMSL;
++	_contentKey = other._contentKey;
+ 	return *this;
+ }
+ 

@@ -1,0 +1,13 @@
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+index 9772757..d9d32e8 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+@@ -3276,6 +3276,8 @@ void MVKPhysicalDevice::initPipelineCacheUUID() {
+ 	// might affect the contents of the pipeline cache (mostly MSL content).
+ 	uint32_t mtlFeatures = 0;
+ 	mtlFeatures |= _isUsingMetalArgumentBuffers << 0;
++	// Reject cached MSL generated without device-scope control barrier fences.
++	mtlFeatures |= 1u << 31;
+ 	*(uint32_t*)&_properties.pipelineCacheUUID[uuidComponentOffset] = NSSwapHostIntToBig(mtlFeatures);
+ 	uuidComponentOffset += sizeof(mtlFeatures);
+ }

@@ -1,5 +1,7 @@
 # 09 — Implementation roadmap (the plan of record)
 
+> ⚠️ **Historical document.** This was the plan of record during the research phase; milestones 0–1 are done ([10](10-milestone-1-results.md)) and the two-stage plan it forked into has been **completed** — see [13-working-solution.md](13-working-solution.md). Kept as the record of how the project was de-risked.
+
 > This is the ordered, de-risking plan. Each milestone is a **gate**: it produces evidence that decides whether the next (more expensive) milestone is worth starting.
 
 ## ⚡ Where we are now (2026-07-14) — the plan has forked into two stages
@@ -13,7 +15,7 @@ Milestones 0–1 (and 1b) are **done** ([docs/10](10-milestone-1-results.md), [d
 
 The original milestone list is preserved below for reference.
 
-## Milestone 0 — Environment inventory (30 min, no risk) — ✅ DONE (Apple M3, macOS 26.5, CrossOver 26.2 + 27-Preview, x86_64/Rosetta)
+## Milestone 0 — Environment inventory (30 min, no risk) — ✅ DONE (Apple M3, macOS 26.5, CrossOver 26.3 + 27-Preview, x86_64/Rosetta)
 
 Establish exactly what you're working with before touching anything.
 
@@ -35,12 +37,12 @@ sw_vers ; uname -m ; sysctl -n machdep.cpu.brand_string
 
 **Result: see [docs/10-milestone-1-results.md](10-milestone-1-results.md).** The failure is a **protector (VMProtect/TenProtect) exception-dispatch loop in `EndfieldBase.dll`** (repeated execute-`c0000005` → colliding unwind → stack overflow), *before* ACE loads — a user-space-fixable class, not a kernel wall. Two follow-ups remain: **1b** (run the faithful launcher path, not direct `Endfield.exe`) and confirming the exact patch that fixes it (milestones 3/6).
 
-Original procedure (use `scripts/01-capture-failure.sh`, which now uses `CX_LOG` + `--wait-children` — a plain stderr redirect does NOT work on CrossOver):
+Original procedure (use `scripts/01-capture-failure.sh`, which now uses `CX_LOG` + `--wait-children`; pass channels with `--debugmsg` — CrossOver's wrapper overwrites an exported `WINEDEBUG`, which is why a plain `WINEDEBUG=… wine … &> log` captured nothing, see [10](10-milestone-1-results.md#practical-finding-how-to-capture-logs-on-crossover)):
 
 ```bash
 # In a dedicated bottle, launch the launcher/game with Wine debug logging
-WINEDEBUG=+loaddll,+module,+ntoskrnl,+seh,+relay \
-  <CrossOver wine> "C:/Program Files/GRYPHLINK/Launcher.exe" &> ~/endfield-launch.log
+<CrossOver wine> --bottle <bottle> --debugmsg +loaddll,+module,+ntoskrnl,+seh,+relay \
+  "C:/Program Files/GRYPHLINK/Launcher.exe" &> ~/endfield-launch.log
 # also watch the macOS side:
 log stream --predicate 'process CONTAINS "wine" OR process CONTAINS "Endfield" OR process CONTAINS "ACE"' --info
 ```

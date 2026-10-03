@@ -1,0 +1,399 @@
+# build-wine.yml — build the patched CrossOver Wine modules on GitHub-hosted macOS.
+#
+# Produces, as workflow artifacts:
+#   1. `wine-modules` — the 3 patched Wine modules (ntdll.so, kernel32.dll, ntoskrnl.exe),
+#      pre-finished for drop-in use (lib64 LC_RPATH baked in + ad-hoc signed), plus
+#      SHA256SUMS + BUILD-INFO.txt. These feed swap-into-crossover.sh / the Patcher app.
+#   2. `moltenvk-out` — the patched libMoltenVK.dylib (x86_64), built by build-moltenvk.sh.
+#      Used by apply-modules.sh and bundled into the Patcher app.
+#   3. `patcher-app` (optional) — FineWine Patcher.app assembled around the Wine modules
+#      AND libMoltenVK.dylib.
+#
+# Runner: `xcode-27` = the "latest macOS + latest Xcode" image (macOS 27.0 + Xcode 27.0 RC,
+# public preview; arm64). Override with `runner: macos-26` (GA image, default Xcode 26.6)
+# from the manual dispatch. GitHub's arm64 macOS images ship Rosetta 2 preinstalled.
+#
+# Notes:
+#   - Builds run the existing scripts/build-wine.sh pipeline (fetch -> apply -> configure -> build),
+#     unchanged except: CC/CXX now default to clang but honor env overrides (so we can use ccache).
+#   - Homebrew deps are lean: bison, mingw-w64, pkgconf and ccache, all installed by
+#     `build-wine.sh deps` (which this workflow runs). The `deps` step is skipped on a
+#     wine-out cache hit, so anything it provides (including ccache) must not be assumed
+#     unconditionally afterward.
+#   - macOS 27 (Golden Gate) is a Homebrew Tier-1 Apple Silicon OS (Homebrew 7.0.0, Sept 2026),
+#     so bison/mingw-w64/ccache install from bottles, not source.
+#   - First (cold) run takes ~1.5-2.5 h on the 3-vCPU M1; ccache + tarball caches make
+#     subsequent runs much faster.
+#   - Cancel-in-progress is enabled: a superseded run stops a redundant build (its ccache
+#     upload is forfeited — acceptable tradeoff).
+
+name: build-wine
+
+on:
+  workflow_dispatch:
+    inputs:
+      cx_version:
+        description: CrossOver source version to build (must match your CrossOver.app)
+        required: false
+        default: "26.3.0"
+        type: string
+      runner:
+        description: macOS runner image (xcode-27 = macOS 27 + Xcode 27 preview; macos-26 = GA)
+        required: false
+        default: "xcode-27"
+        type: choice
+        options:
+          - "xcode-27"
+          - "macos-26"
+      build_patcher_app:
+        description: Also assemble FineWine Patcher.app around the built modules
+        required: false
+        default: true
+        type: boolean
+      app_version:
+        description: CFBundleShortVersionString for FineWine Patcher.app (blank = build-app.sh default)
+        required: false
+        default: ""
+        type: string
+  # Reusable-workflow entrypoint — called by nightly.yml, which gates the call on
+  # "new code since the last nightly" and only releases if this build is green.
+  workflow_call:
+    inputs:
+      cx_version:
+        description: CrossOver source version to build
+        required: false
+        default: "26.3.0"
+        type: string
+      runner:
+        description: macOS runner image
+        required: false
+        default: "xcode-27"
+        type: string
+      build_patcher_app:
+        description: Also assemble FineWine Patcher.app
+        required: false
+        default: true
+        type: boolean
+      app_version:
+        description: CFBundleShortVersionString for FineWine Patcher.app (blank = build-app.sh default)
+        required: false
+        default: ""
+        type: string
+  # NOTE: no `push:` trigger here on purpose — default-branch and PR builds run
+  # through .github/workflows/build.yml (which calls this workflow via
+  # workflow_call), so a main push builds exactly once instead of twice.
+
+concurrency:
+  group: build-wine-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-wine:
+    name: Wine modules (macOS ${{ inputs.runner || 'xcode-27' }})
+    runs-on: ${{ inputs.runner || 'xcode-27' }}
+    timeout-minutes: 120
+    env:
+      CX_VER: ${{ inputs.cx_version || '26.3.0' }}
+      BUILD_DIR: ${{ github.workspace }}/build
+      # ccache wraps Apple clang (CC/CXX now honor overrides in scripts/build-wine.sh)
+      CC: ccache clang
+      CXX: ccache clang++
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
+      CCACHE_COMPRESS: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Short SHA
+        run: echo "SHORT_SHA=${GITHUB_SHA::8}" >> "$GITHUB_ENV"
+
+      - name: Environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "== os: $(uname -m) / $(sw_vers -productName) $(sw_vers -productVersion)"
+          echo "== xcode: $(xcodebuild -version 2>/dev/null | tr '\n' ' ')"
+          echo "== clang: $(/usr/bin/clang --version | head -1)"
+          echo "== cpus: $(sysctl -n hw.ncpu)"
+          echo "== disk:"; df -h "$RUNNER_WORKSPACE" | tail -1
+
+      - name: Identify toolchain
+        id: toolchain
+        run: |
+          hash=$({ sw_vers; xcodebuild -version; clang --version; } | shasum -a 256 | cut -d ' ' -f 1)
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Wine build
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: build/wine-out
+          key: wine-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.hash }}-cx${{ env.CX_VER }}-${{ hashFiles('patches/stage1-macos/**', 'patches/stage2-dwproton/**', 'scripts/build-wine.sh', '.github/workflows/build-wine.yml') }}
+
+      - name: Install Rosetta 2
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: /usr/sbin/softwareupdate --install-rosetta --agree-to-license
+
+      - name: Install build dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-wine.sh deps
+
+      - name: Cache CrossOver source archive
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v6
+        with:
+          path: build/crossover-sources-${{ env.CX_VER }}.tar.gz
+          key: crossover-sources-${{ env.CX_VER }}
+
+      - name: Fetch Wine source
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-wine.sh fetch
+
+      - name: Apply patches
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-wine.sh apply
+
+      - name: Configure
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-wine.sh configure
+
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-wine.sh build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wine-out
+          path: build/wine-out
+          if-no-files-found: error
+      
+      - name: ccache + disk stats
+        shell: bash
+        run: |
+          # ccache is installed by 'build-wine.sh deps', which is skipped on a wine-out cache
+          # hit — so this informational step must not assume ccache exists.
+          if command -v ccache >/dev/null 2>&1; then
+            ccache -s
+          else
+            echo "ccache not installed (Wine build cache hit) — skipping ccache stats"
+          fi
+          df -h "$RUNNER_WORKSPACE" | tail -1
+          du -sh build
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wine-logs-cx${{ env.CX_VER }}
+          path: |
+            build/configure.log
+            build/build.log
+            build/wine-build64/config.log
+          if-no-files-found: ignore
+
+      - name: Smoke-test the x86_64 loader under Rosetta (informational)
+        shell: bash
+        run: |
+          L="${{ github.workspace }}/build/wine-build64/loader/wine64"
+          if [ -x "$L" ]; then
+            arch -x86_64 "$L" --version && echo "info: loader runs under Rosetta" \
+              || echo "warning: wine64 --version failed — informational only"
+          else
+            echo "warning: no $L — smoke test skipped"
+          fi
+
+      - name: Package modules zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # build/wine-out is the flat module tree (ntdll.so, kernel32.dll, ntoskrnl.exe, …)
+          ditto -c -k build/wine-out "dist/finewine-wine-modules-${{ env.CX_VER }}-${{ env.SHORT_SHA }}.zip"
+          ls -lh dist
+
+      - name: Upload wine modules
+        uses: actions/upload-artifact@v4
+        with:
+          name: wine-modules
+          path: dist/finewine-wine-modules-${{ env.CX_VER }}-${{ env.SHORT_SHA }}.zip
+          retention-days: 14
+
+      - name: Write job summary
+        if: always()
+        shell: bash
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Patched Wine build
+
+          | | |
+          |---|---|
+          | CrossOver source | ${{ env.CX_VER }} |
+          | Runner | ${{ inputs.runner || 'xcode-27' }} |
+          | Commit | `${{ github.sha }}` |
+          | Artifact | `wine-modules` — finewine-wine-modules-${{ env.CX_VER }}-${{ env.SHORT_SHA }}.zip |
+          EOF
+          echo "_The bundled modules are Wine (LGPL-2.1-or-later) — see \`patcher-app/README.md\` for the source offer / redistribution notes._" >> "$GITHUB_STEP_SUMMARY"
+
+  moltenvk:
+    runs-on: ${{ inputs.runner || 'xcode-27' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Identify toolchain
+        id: toolchain
+        run: |
+          hash=$({ sw_vers; xcodebuild -version; clang --version; } | shasum -a 256 | cut -d ' ' -f 1)
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Cache MoltenVK build
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: build/moltenvk-out
+          key: moltenvk-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.hash }}-${{ hashFiles('patches/moltenvk/**', 'scripts/build-moltenvk.sh', '.github/workflows/build-wine.yml') }}
+
+      - name: Fetch MoltenVK source
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-moltenvk.sh fetch
+
+      - name: Apply patches
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-moltenvk.sh apply
+
+      - name: Build dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-moltenvk.sh deps
+
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-moltenvk.sh build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: moltenvk-out
+          path: build/moltenvk-out
+          if-no-files-found: error
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: moltenvk-logs
+          path: |
+            build/moltenvk-deps.log
+            build/moltenvk-build.log
+          if-no-files-found: ignore
+
+  package:
+    needs: [build-wine, moltenvk]
+    runs-on: ${{ inputs.runner || 'xcode-27' }}
+    timeout-minutes: 10
+    env:
+      CX_VER: ${{ inputs.cx_version || '26.3.0' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: wine-out
+          path: build/wine-out
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: moltenvk-out
+          path: build/moltenvk-out
+
+      - name: Package
+        run: ./scripts/package.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: endfield-wine-modules-cx${{ env.CX_VER }}
+          path: |
+            dist/endfield-wine-modules.tar.gz
+            dist/endfield-wine-modules.tar.gz.sha256
+          if-no-files-found: error
+
+  patcher-app:
+    name: FineWine Patcher.app
+    needs: [build-wine, moltenvk]
+    if: ${{ inputs.build_patcher_app != false && needs.build-wine.result == 'success' && needs.moltenvk.result == 'success' }}
+    runs-on: ${{ inputs.runner || 'xcode-27' }}
+    timeout-minutes: 30
+    env:
+      CX_VER: ${{ inputs.cx_version || '26.3.0' }}
+      # Blank input -> build-app.sh's own default version.
+      VERSION: ${{ inputs.app_version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Short SHA
+        run: echo "SHORT_SHA=${GITHUB_SHA::8}" >> "$GITHUB_ENV"
+
+      - name: Download wine modules artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wine-modules
+          path: payload-dl
+
+      - name: Download MoltenVK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: moltenvk-out
+          path: moltenvk
+
+      - name: Unzip modules into a payload tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p payload
+          ditto -x -k payload-dl/*.zip payload/
+          find payload -type f | sort
+
+      - name: Build FineWine Patcher.app
+        shell: bash
+        env:
+          PAYLOAD_DIR: ${{ github.workspace }}/payload
+          MOLTENVK_DIR: ${{ github.workspace }}/moltenvk
+        run: ./patcher-app/scripts/build-app.sh
+
+      - name: Package Patcher.app zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          APP="patcher-app/build/FineWine Patcher.app"
+          codesign --verify "$APP"
+          ditto -c -k --keepParent "$APP" "dist/finewine-patcher-${{ env.CX_VER }}-${{ env.SHORT_SHA }}.zip"
+          ls -lh dist
+
+      - name: Upload Patcher app
+        uses: actions/upload-artifact@v4
+        with:
+          name: patcher-app
+          path: dist/finewine-patcher-${{ env.CX_VER }}-${{ env.SHORT_SHA }}.zip
+          retention-days: 14
+
+      - name: Write job summary
+        shell: bash
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## FineWine Patcher.app
+
+          | | |
+          |---|---|
+          | CrossOver source | ${{ env.CX_VER }} |
+          | Artifact | `patcher-app` — finewine-patcher-${{ env.CX_VER }}-${{ env.SHORT_SHA }}.zip |
+          | Signing | ad-hoc (right-click → Open on first launch) |
+          EOF
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          > ⚠️ **LGPL-2.1-or-later**: the app bundles Wine modules. If you publish releases
+          > from these artifacts, attach the exact `crossover-sources-${{ env.CX_VER }}` tarball +
+          > this repo's patches (see `patcher-app/README.md`).
+          EOF

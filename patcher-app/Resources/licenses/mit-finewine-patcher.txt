@@ -32,5 +32,10 @@ CrossOver Wine source with this project's patches applied and are licensed
 under the GNU Lesser General Public License, version 2.1 or later. See the
 "CrossOver Wine — patched modules" entry in the Licenses window.
 
+It also does NOT cover the bundled libMoltenVK.dylib, which is built from the
+Khronos Group MoltenVK source with this project's patches applied and is
+licensed under the Apache License, Version 2.0. See the "MoltenVK — patched"
+entry in the Licenses window.
+
 This application does not include or redistribute CrossOver itself, Apple's
-Game Porting Toolkit, MoltenVK, or Arknights: Endfield.
+Game Porting Toolkit, or Arknights: Endfield.

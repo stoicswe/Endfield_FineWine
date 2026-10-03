@@ -1,0 +1,131 @@
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.h b/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.h
+index 1665b51..e7ac960 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.h
+@@ -124,6 +124,7 @@ protected:
+ 	void beginPresentation(const MVKImagePresentInfo& presentInfo);
+ 	void endPresentation(const MVKImagePresentInfo& presentInfo, uint64_t beginPresentTime, uint64_t actualPresentTime = 0);
+ 	void notifyPresentComplete(const MVKImagePresentInfo& presentInfo);
++	void markPresentIdCompleted(uint64_t presentId);
+ 	void forceUnpresentedImageCompletion();
+ 
+ 	MVKSurface* _surface = nullptr;
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.mm b/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.mm
+index 4c90866..2336875 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.mm
+@@ -244,21 +244,83 @@
+ }
+ 
+ VkResult MVKSwapchain::waitForPresent(const VkPresentWait2InfoKHR* pWaitInfo) {
++
++	// Wait in bounded slices instead of a single potentially-overflowing wait: a timeout
++	// near UINT64_MAX overflows the absolute deadline and degenerates into a busy spin, and
++	// a stalled present-completion callback (a known Metal regression - see
++	// forceUnpresentedImageCompletion()) must not hang an app that waits for a present
++	// indefinitely.
++	constexpr uint64_t kWaitSliceNs = 100ull * 1000 * 1000;				// 100 ms
++	constexpr uint64_t kStalledPresentGraceNs = 1000ull * 1000 * 1000;	// 1 s
++
++	// A lost device or surface can never complete another present: Metal aborts the command
++	// buffer after a GPU hang or page fault and MVKQueue::handleMTLCommandBufferError() marks
++	// the device lost. Report that instead of waiting forever for a frame that will never
++	// arrive, so the app can recreate its device or swapchain.
++	auto getFailure = [this]() -> VkResult {
++		VkResult rslt = _device->getConfigurationResult();
++		return rslt != VK_SUCCESS ? rslt : getConfigurationResult();
++	};
++	auto isPresented = [this, pWaitInfo]() { return _currentPresentId >= pWaitInfo->presentId; };
++
+ 	std::unique_lock lock(_currentPresentIdMutex);
+-	const auto success = _currentPresentIdCondVar.wait_for(lock, std::chrono::nanoseconds(pWaitInfo->timeout), [this, pWaitInfo] {
+-		return _currentPresentId >= pWaitInfo->presentId || getConfigurationResult() == VK_ERROR_OUT_OF_DATE_KHR;
+-	});
+-	if (getConfigurationResult() == VK_ERROR_OUT_OF_DATE_KHR) return VK_ERROR_OUT_OF_DATE_KHR;
+-	return success ? VK_SUCCESS : VK_TIMEOUT;
++	VkResult failure = getFailure();
++	if (failure != VK_SUCCESS) { return failure; }
++	if (isPresented()) { return VK_SUCCESS; }
++	if (pWaitInfo->timeout == 0) { return VK_TIMEOUT; }
++
++	uint64_t waitedNs = 0;
++	bool completed = false;
++	bool timedOut = false;
++	while (true) {
++		if (isPresented()) { completed = true; break; }
++		if ((failure = getFailure()) != VK_SUCCESS) { break; }
++		if (waitedNs >= pWaitInfo->timeout) { timedOut = true; break; }
++
++		// A present that was queued but has not signalled its completion after a generous
++		// grace period is stalled. Treat it as presented so the app makes progress instead
++		// of waiting forever on a Metal callback that will never fire.
++		if (waitedNs >= kStalledPresentGraceNs) {
++			_currentPresentId = std::max(_currentPresentId, pWaitInfo->presentId);
++			_currentPresentIdCondVar.notify_all();
++			completed = true;
++			break;
++		}
++
++		uint64_t sliceNs = std::min(kWaitSliceNs, pWaitInfo->timeout - waitedNs);
++		uint64_t startTime = mvkGetRuntimeNanoseconds();
++		_currentPresentIdCondVar.wait_for(lock, std::chrono::nanoseconds(sliceNs), isPresented);
++		uint64_t elapsedNs = mvkGetRuntimeNanoseconds() - startTime;
++		waitedNs += elapsedNs < sliceNs ? sliceNs : elapsedNs;	// Guard against a coarse clock
++	}
++
++	if (failure != VK_SUCCESS) { return failure; }
++	return completed ? VK_SUCCESS : VK_TIMEOUT;
+ }
+ 
+ void MVKSwapchain::beginPresentation(const MVKImagePresentInfo& presentInfo) {
+ 	_unpresentedImageCount++;
++
++	// Present IDs increase monotonically, so queuing a newer present means every older one
++	// has been displayed or superseded. Advance the completed-present ID now, so an app
++	// waiting on VK_KHR_present_wait makes progress even when Metal fails to fire the
++	// completion callback of an older presentation (a known regression - Metal occasionally
++	// drops the callback for the last one or two presentations around a swapchain change;
++	// forceUnpresentedImageCompletion() works around the same regression for drawable reuse).
++	if (presentInfo.presentId != 0) {
++		markPresentIdCompleted(presentInfo.presentId - 1);
++	}
+ }
+ 
+ void MVKSwapchain::endPresentation(const MVKImagePresentInfo& presentInfo, uint64_t beginPresentTime, uint64_t actualPresentTime) {
+ 	_unpresentedImageCount--;
+ 
++	// The drawable was actually presented, which is precisely the event VK_KHR_present_wait
++	// waits for. MoltenVK otherwise advances the completed-present ID only from the command
++	// buffer's completion callback, which can stall (see waitForPresent()); completing it
++	// here as well means either callback reliably releases a waiter.
++	markPresentIdCompleted(presentInfo.presentId);
++
+ 	std::lock_guard<std::mutex> lock(_presentHistoryLock);
+ 
+ 	markFrameInterval();
+@@ -277,14 +339,21 @@
+ 	_presentHistoryIndex = (_presentHistoryIndex + 1) % kMaxPresentationHistory;
+ }
+ 
+-void MVKSwapchain::notifyPresentComplete(const MVKImagePresentInfo& presentInfo) {
+-	if (presentInfo.presentId != 0) {
+-		std::unique_lock pidLock(_currentPresentIdMutex);
+-		_currentPresentId = std::max(_currentPresentId, presentInfo.presentId);
++// Advances the completed-present ID and wakes any vkWaitForPresentKHR() waiter.
++// Present IDs are monotonic, so this only ever moves forward.
++void MVKSwapchain::markPresentIdCompleted(uint64_t presentId) {
++	if (presentId == 0) { return; }
++	std::lock_guard<std::mutex> lock(_currentPresentIdMutex);
++	if (presentId > _currentPresentId) {
++		_currentPresentId = presentId;
+ 		_currentPresentIdCondVar.notify_all();
+ 	}
+ }
+ 
++void MVKSwapchain::notifyPresentComplete(const MVKImagePresentInfo& presentInfo) {
++	markPresentIdCompleted(presentInfo.presentId);
++}
++
+ // Because of a regression in Metal, the most recent one or two presentations may not complete
+ // and call back. To work around this, if there are any uncompleted presentations, change the
+ // drawableSize of the CAMetalLayer, which will trigger presentation completion and callbacks.

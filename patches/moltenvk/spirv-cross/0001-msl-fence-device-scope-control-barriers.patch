@@ -1,0 +1,32 @@
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+index c5a9d433..bf98d184 100644
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -11131,7 +11131,27 @@ void CompilerMSL::emit_barrier(uint32_t id_exe_scope, uint32_t id_mem_scope, uin
+ 
+ 	bar_stmt += ");";
+ 
++	// threadgroup_barrier() alone does not provide device-scope memory visibility.
++	// Fence before it to publish each invocation's writes, and after it to acquire
++	// writes from other threadgroups.
++	string device_fence;
++	if (id_exe_scope && msl_options.supports_msl_version(3, 2) && mem_scope <= ScopeDevice &&
++	    (mem_sem & (MemorySemanticsUniformMemoryMask | MemorySemanticsCrossWorkgroupMemoryMask |
++	                MemorySemanticsImageMemoryMask)) != 0)
++	{
++		string fence_flags;
++		if (mem_sem & (MemorySemanticsUniformMemoryMask | MemorySemanticsCrossWorkgroupMemoryMask))
++			fence_flags = "mem_flags::mem_device";
++		if (mem_sem & MemorySemanticsImageMemoryMask)
++			fence_flags += fence_flags.empty() ? "mem_flags::mem_texture" : " | mem_flags::mem_texture";
++		device_fence = join("atomic_thread_fence(", fence_flags, ", memory_order_seq_cst, thread_scope_device);");
++	}
++
++	if (!device_fence.empty())
++		statement(device_fence);
+ 	statement(bar_stmt);
++	if (!device_fence.empty())
++		statement(device_fence);
+ 
+ 	assert(current_emitting_block);
+ 	flush_control_dependent_expressions(current_emitting_block->self);

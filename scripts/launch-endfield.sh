@@ -8,12 +8,18 @@
 #
 # Usage:
 #   scripts/launch-endfield.sh              # launch and play
-#   DEBUG=1 scripts/launch-endfield.sh      # also capture a Wine log to ~/endfield-debug/
+#   DEBUG=light scripts/launch-endfield.sh  # also log Wine errors to ~/endfield-debug/ (cheap —
+#                                           #   fine to leave on while playing)
+#   DEBUG=1 scripts/launch-endfield.sh      # full CrossOver log (CX_LOG) to ~/endfield-debug/ —
+#                                           #   heavy (hundreds of MB, slower; ACE is timing-sensitive)
 #
-# Env overrides: APP (CrossOver app), BOTTLE, TARGET (windows exe path), WINEDEBUG,
+# Env overrides: APP (CrossOver app), BOTTLE, TARGET (windows exe path),
+#   WINEDEBUG (channels for DEBUG=1/light, default +seh / err+all,fixme-all — passed with
+#   --debugmsg, because CrossOver's wine wrapper overwrites the WINEDEBUG variable itself),
 #   GFXARGS (default "-force-d3d11" — a DIRECT launch bypasses the launcher, so the
 #   launcher's DirectX-11 setting does NOT apply; without this flag Unity defaults to
-#   Vulkan, which does not render correctly under CrossOver. Set GFXARGS="" to disable.)
+#   Vulkan, which is experimental (see docs/graphics-performance.md). Set GFXARGS="" to
+#   disable, or GFXARGS=-force-vulkan to force Vulkan.)
 #
 # NOTE: the game still updates itself via the launcher. If a game patch ships, run the launcher
 # once when it's working again to update; this script is for launching an already-updated install.
@@ -50,13 +56,25 @@ sleep 1
 
 # ---- launch -----------------------------------------------------------------
 # --wait-children keeps this terminal attached until the game exits (Ctrl+C to stop).
-if [ "${DEBUG:-0}" = "1" ]; then
-  OUT="$HOME/endfield-debug/launch-$(date +%Y%m%d-%H%M%S)"; mkdir -p "$OUT"
-  echo "Debug log -> $OUT/cxlog.txt"
-  CX_LOG="$OUT/cxlog.txt" WINEDEBUG="${WINEDEBUG:-+seh}" \
+# Debug channels go through --debugmsg: CrossOver's wrapper sets WINEDEBUG itself ("-all" unless
+# CX_LOG or --debugmsg says otherwise), so an exported WINEDEBUG would be silently dropped.
+case "${DEBUG:-0}" in
+  1|full)
+    OUT="$HOME/endfield-debug/launch-$(date +%Y%m%d-%H%M%S)"; mkdir -p "$OUT"
+    echo "Debug log -> $OUT/cxlog.txt"
+    CX_LOG="$OUT/cxlog.txt" \
+      "$CXBIN/wine" --bottle "$BOTTLE" --debugmsg "${WINEDEBUG:-+seh}" --wait-children --cx-app "$TARGET" $GFXARGS
+    ;;
+  light|errors)
+    OUT="$HOME/endfield-debug/launch-$(date +%Y%m%d-%H%M%S)"; mkdir -p "$OUT"
+    echo "Launching Endfield… (Wine errors + the game's console output -> $OUT/wine-errors.txt)"
+    # Without CX_LOG the wrapper adds none of its heavy default channels, so this stays small.
+    "$CXBIN/wine" --bottle "$BOTTLE" --debugmsg "${WINEDEBUG:-err+all,fixme-all}" --wait-children \
+      --cx-app "$TARGET" $GFXARGS > "$OUT/wine-errors.txt" 2>&1
+    ;;
+  *)
+    echo "Launching Endfield… (log in from the game's own screen; close the game or press Ctrl+C to stop)"
     "$CXBIN/wine" --bottle "$BOTTLE" --wait-children --cx-app "$TARGET" $GFXARGS
-else
-  echo "Launching Endfield… (log in from the game's own screen; close the game or press Ctrl+C to stop)"
-  "$CXBIN/wine" --bottle "$BOTTLE" --wait-children --cx-app "$TARGET" $GFXARGS
-fi
+    ;;
+esac
 echo "Endfield exited."

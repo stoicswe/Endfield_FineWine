@@ -1,5 +1,7 @@
 # Executive Summary
 
+> ⚠️ **Historical document — the 2026-07-14 research phase, written before implementation.** The project has since **succeeded**; what actually worked is in [13-working-solution.md](13-working-solution.md), and the observed failure signature is in [10-milestone-1-results.md](10-milestone-1-results.md). Known correction: Endfield is **Unity IL2CPP**, not Unreal Engine 5 as stated below.
+
 ## The problem
 
 *Arknights: Endfield* (Gryphline / Tencent, Unreal Engine 5) uses **ACE — Anti-Cheat Expert**, Tencent's anti-cheat (a rebrand of TenProtect, "TP"). On macOS through CrossOver, the game does not launch: CodeWeavers' own compatibility test shows the Gryphlink launcher rendering **a single ~1 ms frame and then the app is force-quit** by ACE. CodeWeavers rates it "Installs, Will Not Run" and officially does not work on anti-cheat issues.

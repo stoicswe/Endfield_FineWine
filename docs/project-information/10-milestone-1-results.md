@@ -7,7 +7,7 @@
 | | |
 |---|---|
 | Hardware | Apple **M3**, macOS **26.5.2** (arm64) |
-| CrossOver | **26.2.0** (release) and **27.0 Preview** (`cxpreview-20260702-rc1`) — both tested |
+| CrossOver | **26.3.0** (release) and **27.0 Preview** (`cxpreview-20260702-rc1`) — both tested |
 | Wine arch | **x86_64** (`wineserver` is `Mach-O x86_64`) → runs under **Rosetta 2**. ✅ confirms the config where the dw-proton `#ifdef __x86_64__` int3 hack compiles |
 | Bottle | `Arknights Endfield`; `ProductName` already spoofed to **`Windows 11 Pro`** |
 | Game | `C:/Program Files/GRYPHLINK/games/Arknights Endfield/Endfield.exe` (loads at `0x140000000`), plus `EndfieldBase.dll` (loads at `0x6FFFFC060000`) |
@@ -71,12 +71,15 @@ Ran through `GRYPHLINK/Launcher.exe` and clicked **Launch**. Result: **the game 
 
 ## Practical finding: how to capture logs on CrossOver
 
-CrossOver's `bin/wine` is a **Perl wrapper** that re-execs the real `wineloader` as a detached child, so a plain `> log 2>&1` redirect captures almost nothing (this is why the user's first runs had empty `wine.log`). The working method, now baked into `scripts/01-capture-failure.sh`:
+CrossOver's `bin/wine` is a **Perl wrapper** that sets `WINEDEBUG` for the real `wineloader` itself — to `-all` unless `CX_LOG` or `--debugmsg` says otherwise — so an exported `WINEDEBUG` never reaches Wine. That, not the wrapper's forking, is why a plain `WINEDEBUG=… wine … > log 2>&1` captured almost nothing (this is why the user's first runs had empty `wine.log`). *(Corrected 2026-09: with `--debugmsg +process` the same plain redirect captures the trace lines, with or without `--wait-children`.)* The working methods — the first is baked into `scripts/01-capture-failure.sh`:
 ```bash
-CX_LOG="$OUTDIR/cxlog.txt" WINEDEBUG="+..." \
-  "$CXBIN/wine" --bottle "$BOTTLE" --wait-children --cx-app "$TARGET"
+# full log: the wrapper's own log + CrossOver's default channels + yours
+CX_LOG="$OUTDIR/cxlog.txt" \
+  "$CXBIN/wine" --bottle "$BOTTLE" --debugmsg "+..." --wait-children --cx-app "$TARGET"
+# lightweight: only the channels you ask for, on stderr
+"$CXBIN/wine" --bottle "$BOTTLE" --debugmsg "err+all" --wait-children --cx-app "$TARGET" > wine.log 2>&1
 ```
-`CX_LOG` routes **all** Wine debug channels (CrossOver adds `+seh,+module,+loaddll,+process,+unwind,+threadname` by default) to a file regardless of forking; `--wait-children` keeps the wrapper attached until the game's children exit.
+With `CX_LOG` set, CrossOver always enables `+timestamp,+pid,+seh,+unwind,+process,+module,+loaddll,+threadname` and appends the `--debugmsg` channels to that list; `--wait-children` keeps the wrapper attached until the game's children exit.
 
 ## Next steps (updates the roadmap)
 

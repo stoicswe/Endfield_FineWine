@@ -1,20 +1,36 @@
 # FineWine Patcher.app
 
-A minimal macOS app that turns a copy of **CrossOver 26.2** into the patched build that runs
+A minimal macOS app that turns a copy of **CrossOver 26.3** into the patched build that runs
 **Arknights: Endfield** on Apple Silicon. It is the GUI equivalent of
-[`scripts/swap-into-crossover.sh`](../scripts/swap-into-crossover.sh)'s core Wine-module swap:
+[`scripts/swap-into-crossover.sh`](../scripts/swap-into-crossover.sh)'s core module swap:
 
-1. Copies your `CrossOver.app` (the original is never touched).
-2. Swaps in the three pre-built patched Wine modules bundled inside the app
-   (`ntdll.so`, `kernel32.dll`, `ntoskrnl.exe`), keeping `.cxorig` backups.
-3. Ad-hoc signs the swapped files, strips the bundle seal, removes quarantine.
-4. Verifies the swap (sizes, `ntdll.so` signature, and the `lib64` rpath D3DMetal needs).
+1. Copies your `CrossOver.app` into a staging folder (the original is never touched).
+2. Swaps in the pre-built patched modules bundled inside the app:
+   * the three Wine modules — `ntdll.so`, `kernel32.dll`, `ntoskrnl.exe`
+   * `lib64/libMoltenVK.dylib` (built by [`scripts/build-moltenvk.sh`](../scripts/build-moltenvk.sh))
 
-Out of scope by design: the optional GPTK4 / MoltenVK graphics upgrades (Apple's GPTK may not
-be redistributed) — see the [main README](../README.md#graphics--performance-gptk4) for those.
+   keeping `.cxorig` backups.
+3. *(Optional)* Installs **GPTK4 / D3DMetal** from a copy **you** supply — a mounted
+   *"Evaluation environment for Windows games …"* DMG (or a folder you pick). Only
+   `lib64/apple_gptk/external/` is replaced (every D3DMetal glue module symlinks into it), so
+   the whole D3D11/D3D12/DXGI/DLSS stack upgrades and no `lib/wine/...` DLL is touched. Keeps
+   CrossOver's copy as `external.cxorig`.
+4. Re-seals the whole bundle with an ad-hoc signature and removes quarantine. (Just stripping
+   the seal gets the copy reported as *damaged* and its binaries killed, because a copy made by
+   a downloaded app carries `com.apple.provenance` — see
+   [docs/05](../docs/05-swapping-into-crossover.md#code-signing-after-modification-apple-silicon-specifics).)
+5. Verifies the swap (sizes, `ntdll.so` signature, the `lib64` rpath D3DMetal needs, the
+   installed GPTK4 files if selected, and the bundle signature).
+6. Moves the patched app into place; an existing copy macOS won't let it delete goes to the Trash.
+
+**Apple's Game Porting Toolkit is never bundled or redistributed** (it is evaluation-only
+software). The optional GPTK4 step reads the DMG *you* mounted, under Apple's own license; if
+you skip it, the patched app keeps CrossOver's bundled D3DMetal 3.0. See
+[docs/graphics-performance.md](../docs/graphics-performance.md) for the GPTK4 background.
+MoltenVK **is** bundled (it is Apache-2.0), since the game's Vulkan/DXVK/vkd3d paths use it.
 
 **End users need no developer tools** — the `lib64` rpath is baked into the payload at app-build
-time, so at patch time the app only uses `codesign` and `xattr`, which ship with macOS.
+time, so at patch time the app only uses `codesign`, `ditto` and `xattr`, which ship with macOS.
 
 ## Mod chain (EFMI) — optional second phase
 
@@ -84,14 +100,19 @@ Requires the Xcode Command Line Tools only (no Xcode):
 # 1. Build the patched Wine first (once) — produces build/wine-build64
 ./scripts/build-wine.sh all
 
-# 2. Build the app around it
+# 2. Build the patched MoltenVK (once) — produces build/moltenvk-out
+./scripts/build-moltenvk.sh all
+
+# 3. Build the app around them
 ./patcher-app/scripts/build-app.sh
 open "patcher-app/build/FineWine Patcher.app"
 ```
 
-`PAYLOAD_DIR` overrides where the modules come from (the `build/wine-build64` tree layout or a
-flat directory with the three files). `CODESIGN_ID` sets a real signing identity (default:
-ad-hoc). `ALLOW_MISSING_PAYLOAD=1` produces a payload-less smoke-test build that refuses to patch.
+`PAYLOAD_DIR` overrides where the Wine modules come from (the `build/wine-build64` tree layout or
+a flat directory with the three files); `MOLTENVK_DIR` overrides where `libMoltenVK.dylib` comes
+from (default `build/moltenvk-out`, or a copy inside `PAYLOAD_DIR`). `CODESIGN_ID` sets a real
+signing identity (default: ad-hoc). `ALLOW_MISSING_PAYLOAD=1` produces a payload-less smoke-test
+build that refuses to patch.
 
 ### App icon
 
@@ -104,24 +125,30 @@ third-party image libraries), centering the artwork on a transparent square with
 ## Licensing (important if you distribute the built app)
 
 - **The app itself** (Swift sources, UI, this directory): [MIT](../LICENSE).
-- **The bundled payload** (`ntdll.so`, `kernel32.dll`, `ntoskrnl.exe`): **LGPL-2.1-or-later** —
+- **The bundled Wine modules** (`ntdll.so`, `kernel32.dll`, `ntoskrnl.exe`): **LGPL-2.1-or-later** —
   they are Wine, built from CodeWeavers' freely published
-  [CrossOver 26.2 Wine source](https://www.codeweavers.com/crossover/source) with this repo's
+  [CrossOver 26.3 Wine source](https://www.codeweavers.com/crossover/source) with this repo's
   [patches](../patches/) applied (which include the
   [dw-proton](https://dawn.wine/) anti-cheat patches — see [patches/README.md](../patches/README.md)
   for authorship).
+- **The bundled `libMoltenVK.dylib`**: **Apache-2.0** — MoltenVK, built from the Khronos Group
+  [MoltenVK](https://github.com/KhronosGroup/MoltenVK) sources with this repo's
+  [patches/moltenvk](../patches/moltenvk/) applied.
 - The app's **Licenses…** window shows all of this, with the full license texts, offline.
 
 If you publish a built `FineWine Patcher.app` (e.g. a GitHub Release), LGPL-2.1 requires you to
-make the **complete corresponding source** of the payload available: this repository's patches +
-the exact `crossover-sources-26.2.0` archive from
+make the **complete corresponding source** of the Wine modules available: this repository's
+patches + the exact `crossover-sources-26.3.0` archive from
 [media.codeweavers.com/pub/crossover/source](https://media.codeweavers.com/pub/crossover/source/).
-Best practice: attach (or mirror in a release) the exact source tarball you built from, so your
+Apache-2.0 requires the MoltenVK license/notice to travel with the binary (the app bundles it)
+and the corresponding source to be offered (this repo's MoltenVK patches + the pinned upstream
+revision recorded by `scripts/build-moltenvk.sh`).
+Best practice: attach (or mirror in a release) the exact source tarballs you built from, so your
 source offer doesn't depend on a third-party URL staying alive.
 
-The app never contains or redistributes CrossOver itself, Apple's Game Porting Toolkit,
-MoltenVK, or the game. It requires the user's own licensed CrossOver install as input, and links
-to [codeweavers.com/store](https://www.codeweavers.com/store) for buying one.
+The app never contains or redistributes CrossOver itself, Apple's Game Porting Toolkit, or the
+game. It requires the user's own licensed CrossOver install as input, and links to
+[codeweavers.com/store](https://www.codeweavers.com/store) for buying one.
 
 ## Layout
 
@@ -139,7 +166,7 @@ Tests/FineWinePatcherTests/
 Resources/licenses/               license texts bundled into the app
 Resources/AppIcon.icns            the app icon (committed; regenerate with make-appicon.sh)
 Resources/appicon/                the icon source art
-scripts/build-app.sh              compile + assemble + payload staging + signing
+scripts/build-app.sh              compile + assemble + payload staging (Wine + MoltenVK) + signing
 scripts/make-appicon.sh           regenerate AppIcon.icns from the source art
 scripts/make-appicon.swift        the icon renderer (ImageIO/Core Graphics)
 build/                            (gitignored) the assembled .app
