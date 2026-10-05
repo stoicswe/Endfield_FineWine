@@ -11,12 +11,18 @@
 # Requires: /Applications/CrossOver.app at version 26.3 (ABI must match the build), and a completed
 # build in build/wine-build64 (run scripts/build-wine.sh all first).
 #
-# Usage:  scripts/swap-into-crossover.sh
-# Env:
-#   SRC_APP    (default /Applications/CrossOver.app)
-#   DEST_APP   (default /Applications/CrossOver_Endfield_Patch.app)
-#   GPTK_DIR   (default ~/Downloads/GPTK_4/redist/lib/external)  — set SKIP_GPTK=1 to skip
-#   MVK_VER    (default 1.4.1)                                    — set SKIP_MVK=1 to skip
+# Usage:
+#   scripts/swap-into-crossover.sh                          # full app patch
+#   scripts/swap-into-crossover.sh --help                   # all options
+#   scripts/swap-into-crossover.sh --mod-chain --skip-app-patch --bottle "Arknights Endfield"
+#   scripts/swap-into-crossover.sh --mod-chain-revert --skip-app-patch
+#
+# Every option also exists as an environment variable (see --help); a flag always wins over
+# its env var.
+#
+# Optional mod (EFMI) chain step — see docs/mod-injection/{07,08}*.md: points EFMI's d3dx.ini
+# [System] proxy_d3d11 at the backend d3d11.dll inside the patched app, so 3DMigoto hands off to
+# CrossOver's D3D11→Metal backend instead of Wine's wined3d (the default chain ends at wined3d).
 #
 # See docs/13-working-solution.md.
 
@@ -38,13 +44,118 @@ log(){ printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 ok(){  printf '  \033[32m✓\033[0m %s\n' "$*"; }
 warn(){ printf '  \033[33m!\033[0m %s\n' "$*"; }
 
+# --- optional mod (EFMI) chain step --------------------------------------------
+MOD_CHAIN="${MOD_CHAIN:-0}"
+MOD_CHAIN_REVERT="${MOD_CHAIN_REVERT:-0}"
+MOD_BOTTLE="${MOD_BOTTLE:-Arknights Endfield}"
+MOD_APP="${MOD_APP:-}"                     # resolved after the flags below are parsed
+MOD_IMPORTER="${MOD_IMPORTER:-}"
+MOD_CHAIN_MODE="${MOD_CHAIN_MODE:-path}"   # path | copy
+MOD_BOTTLES_ROOT="${MOD_BOTTLES_ROOT:-$HOME/Library/Application Support/CrossOver/Bottles}"
+
+# ---------------------------------------------------------------- CLI arguments
+# Every flag overrides its environment-variable counterpart; --help has the full list.
+usage(){
+cat <<EOF
+usage: scripts/swap-into-crossover.sh [options]
+
+app patch (the Wine-module swap into a copy of CrossOver):
+  --src-app PATH          CrossOver to copy (env SRC_APP; default /Applications/CrossOver.app)
+  --dest-app PATH         where to write the patched copy (env DEST_APP;
+                          default /Applications/CrossOver_Endfield_Patch.app)
+  --gptk-dir PATH         Apple GPTK4 redist to install (env GPTK_DIR)
+  --skip-gptk             don't touch GPTK4/D3DMetal (env SKIP_GPTK=1)
+  --skip-mvk              don't refresh MoltenVK (env SKIP_MVK=1)
+
+mod (EFMI) chain — see docs/mod-injection/:
+  --mod-chain             point EFMI's d3dx.ini [System] proxy_d3d11 at the backend d3d11.dll
+                          inside the patched app (env MOD_CHAIN=1)
+  --mod-chain-revert      undo a previously applied chain (env MOD_CHAIN_REVERT=1)
+  --bottle NAME           bottle to chain into (env MOD_BOTTLE; default "Arknights Endfield")
+  --app PATH              patched app to chain against (env MOD_APP; default DEST_APP)
+  --importer PATH         explicit EFMI folder (must contain d3dx.ini) instead of auto-discovery
+                          (env MOD_IMPORTER)
+  --chain-mode path|copy  "path": Z:\\ path into the app bundle (default). "copy": stage the
+                          backend dll next to EFMI's as d3d11_cx.dll (env MOD_CHAIN_MODE)
+  --bottles-root PATH     bottles directory (env MOD_BOTTLES_ROOT) — for scratch-bottle testing
+  --skip-app-patch        run only the mod-chain step against an existing patched app
+                          (env SKIP_APP_PATCH=1); requires --mod-chain or --mod-chain-revert
+
+misc:
+  -h, --help              this help
+EOF
+}
+ARG_VALUE=""
+arg_value(){ # $1 = option name, $2 = candidate value -> sets ARG_VALUE, or dies.
+  # NB: called directly (NOT inside $(...)) so that `exit` below really stops the script.
+  if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
+    echo "ERROR: option '$1' needs a value (see --help)" >&2; exit 1
+  fi
+  case "$2" in
+    -?*) echo "ERROR: option '$1' got '$2' which looks like another option (see --help)" >&2; exit 1 ;;
+  esac
+  ARG_VALUE="$2"
+}
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --mod-chain)           MOD_CHAIN=1; shift ;;
+    --mod-chain-revert)    MOD_CHAIN_REVERT=1; shift ;;
+    --skip-app-patch)      SKIP_APP_PATCH=1; shift ;;
+    --skip-gptk)           SKIP_GPTK=1; shift ;;
+    --skip-mvk)            SKIP_MVK=1; shift ;;
+    --bottle)              arg_value "$1" "${2:-}"; MOD_BOTTLE="$ARG_VALUE"; shift 2 ;;
+    --bottle=*)            MOD_BOTTLE="${1#*=}"; shift ;;
+    --app)                 arg_value "$1" "${2:-}"; MOD_APP="$ARG_VALUE"; shift 2 ;;
+    --app=*)               MOD_APP="${1#*=}"; shift ;;
+    --importer)            arg_value "$1" "${2:-}"; MOD_IMPORTER="$ARG_VALUE"; shift 2 ;;
+    --importer=*)          MOD_IMPORTER="${1#*=}"; shift ;;
+    --chain-mode)          arg_value "$1" "${2:-}"; MOD_CHAIN_MODE="$ARG_VALUE"; shift 2 ;;
+    --chain-mode=*)        MOD_CHAIN_MODE="${1#*=}"; shift ;;
+    --bottles-root)        arg_value "$1" "${2:-}"; MOD_BOTTLES_ROOT="$ARG_VALUE"; shift 2 ;;
+    --bottles-root=*)      MOD_BOTTLES_ROOT="${1#*=}"; shift ;;
+    --src-app)             arg_value "$1" "${2:-}"; SRC_APP="$ARG_VALUE"; shift 2 ;;
+    --src-app=*)           SRC_APP="${1#*=}"; shift ;;
+    --dest-app)            arg_value "$1" "${2:-}"; DEST_APP="$ARG_VALUE"; shift 2 ;;
+    --dest-app=*)          DEST_APP="${1#*=}"; shift ;;
+    --gptk-dir)            arg_value "$1" "${2:-}"; GPTK_DIR="$ARG_VALUE"; shift 2 ;;
+    --gptk-dir=*)          GPTK_DIR="${1#*=}"; shift ;;
+    -h|--help)             usage; exit 0 ;;
+    --)                    shift; break ;;
+    -*)                    echo "ERROR: unknown option '$1' (see --help)" >&2; exit 1 ;;
+    *)                     echo "ERROR: unexpected argument '$1' (see --help)" >&2; exit 1 ;;
+  esac
+done
+case "$MOD_CHAIN_MODE" in
+  path|copy) ;;
+  *) echo "ERROR: --chain-mode must be 'path' or 'copy' (got '$MOD_CHAIN_MODE')" >&2; exit 1 ;;
+esac
+
 # ---------------------------------------------------------------- preflight
-[ -d "$SRC_APP" ] || { echo "ERROR: $SRC_APP not found"; exit 1; }
-[ -f "$B/dlls/ntdll/ntdll.so" ] || { echo "ERROR: no build at $B — run scripts/build-wine.sh all first"; exit 1; }
-ver="$(defaults read "$SRC_APP/Contents/Info" CFBundleShortVersionString 2>/dev/null)"
-[ "$ver" = "26.3" ] || warn "$SRC_APP is version '$ver', expected 26.3 — the Wine ABI must match the build."
+DO_APP_PATCH=1
+[ "${SKIP_APP_PATCH:-0}" = "1" ] && DO_APP_PATCH=0
+if [ "$DO_APP_PATCH" = "0" ] && [ "$MOD_CHAIN" != "1" ] && [ "$MOD_CHAIN_REVERT" != "1" ]; then
+  echo "ERROR: --skip-app-patch needs --mod-chain or --mod-chain-revert (nothing else to do)" >&2
+  exit 1
+fi
+if [ "$DO_APP_PATCH" = "1" ]; then
+  [ -d "$SRC_APP" ] || { echo "ERROR: $SRC_APP not found"; exit 1; }
+  [ -f "$B/dlls/ntdll/ntdll.so" ] || { echo "ERROR: no build at $B — run scripts/build-wine.sh all first"; exit 1; }
+  ver="$(defaults read "$SRC_APP/Contents/Info" CFBundleShortVersionString 2>/dev/null)"
+  [ "$ver" = "26.3" ] || warn "$SRC_APP is version '$ver', expected 26.3 — the Wine ABI must match the build."
+  if [ -n "$MOD_APP" ] && [ "$MOD_APP" != "$DEST_APP" ]; then
+    warn "--app points the mod chain at $MOD_APP while the patch will be created at $DEST_APP"
+  fi
+  [ -n "$MOD_APP" ] || MOD_APP="$DEST_APP"
+else
+  [ -n "$MOD_APP" ] || MOD_APP="$DEST_APP"
+  [ -d "$MOD_APP/Contents/SharedSupport/CrossOver" ] \
+    || { echo "ERROR: $MOD_APP is not a (patched) CrossOver app — pass --app <path to the patched app>"; exit 1; }
+fi
 
 # ---------------------------------------------------------------- 1. copy app
+# Steps 1–6 are skipped entirely with SKIP_APP_PATCH=1 (e.g. to only run the mod
+# chain step below against an already-patched app).
+if [ "$DO_APP_PATCH" = "1" ]; then
 log "Copying $SRC_APP -> $STAGE (staging)"
 rm -rf "$STAGE_ROOT"; mkdir -p "$STAGE_ROOT"
 # --noextattr: don't carry over Finder/iCloud xattrs (e.g. FinderInfo on a CrossOver.app that was
@@ -175,6 +286,256 @@ done
 echo "  MoltenVK:  $(strings -a "$CXR/lib64/libMoltenVK.dylib" 2>/dev/null | grep -oE '^1\.[0-9]+\.[0-9]+$' | sort -u | head -1)"
 echo "  D3DMetal:  $(plutil -extract CFBundleShortVersionString raw "$CXR/lib64/apple_gptk/external/D3DMetal.framework/Resources/Info.plist" 2>/dev/null)"
 
+else
+  CXR="$MOD_APP/Contents/SharedSupport/CrossOver"
+  log "App patch skipped (SKIP_APP_PATCH=1) — operating on the existing $MOD_APP"
+fi
+
+# ---------------------------------------------------------------- 7. mod (EFMI) chain — optional
+# Points EFMI's d3dx.ini [System] proxy_d3d11 at the *backend* d3d11.dll inside the patched app,
+# so 3DMigoto hands off to CrossOver's D3D11→Metal backend instead of Wine's wined3d. Without it,
+# 3DMigoto's default "original" resolution (C:\Windows\system32\d3d11.dll) ends at wined3d on
+# every backend. Mechanism: docs/mod-injection/07-load-ordering-and-chaining.md
+# Plan:       docs/mod-injection/08-patcher-integration-plan.md
+mod_backend_rel(){ # backend -> d3d11.dll path relative to the CrossOver root
+  case "$1" in
+    d3dmetal) printf '%s' "lib64/apple_gptk/wine/x86_64-windows/d3d11.dll" ;;
+    dxmt)     printf '%s' "lib/dxmt/x86_64-windows/d3d11.dll" ;;
+    dxvk)     printf '%s' "lib/dxvk/x86_64-windows/d3d11.dll" ;;
+    *)        return 1 ;;
+  esac
+}
+mod_backend_from_conf(){ # $1 = cxbottle.conf  (active backend first, configured one as fallback)
+  local v
+  v=$(sed -n 's/.*"CX_ACTIVE_GRAPHICS_BACKEND"[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -1)
+  [ -n "$v" ] || v=$(sed -n 's/.*"CX_GRAPHICS_BACKEND"[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -1)
+  printf '%s' "$v"
+}
+mod_bottle_path(){ # mac path -> in-bottle windows path (drive Z:)
+  printf 'Z:%s' "$(printf '%s' "$1" | tr / '\\')"
+}
+mod_find_efmi(){ # $1 = bottle root; prints the EFMI folder (mac path) or exits non-zero
+  python3 - "$1" "${MOD_IMPORTER:-}" <<'PY'
+import glob, json, os, sys
+bp, override = sys.argv[1], sys.argv[2]
+def win2mac(p):
+    p = (p or "").strip().strip('"')
+    if len(p) >= 2 and p[1] == ":":
+        link = os.path.join(bp, "dosdevices", p[0].lower())
+        rest = p[2:].replace("\\", "/").lstrip("/")
+        if os.path.isdir(link):
+            real = os.path.realpath(link)
+            return os.path.normpath(os.path.join(real, rest) if rest else real)
+    return ""
+cands = []
+if override:
+    cands.append(override)
+for cfg in glob.glob(os.path.join(bp, "drive_c", "users", "*", "AppData", "Roaming",
+                                  "XXMI Launcher", "XXMI Launcher Config.json")):
+    try:
+        j = json.load(open(cfg, encoding="utf-8"))
+        p = j.get("Importers", {}).get("EFMI", {}).get("Importer", {}).get("importer_path", "")
+        m = win2mac(p)
+        if m: cands.append(m)
+    except Exception:
+        pass
+for d in glob.glob(os.path.join(bp, "drive_c", "users", "*", "AppData", "Roaming",
+                                "XXMI Launcher", "EFMI")):
+    cands.append(d)
+for c in cands:
+    if os.path.isfile(os.path.join(c, "d3dx.ini")):
+        print(c); sys.exit(0)
+sys.exit(1)
+PY
+}
+# Edit ONLY the [System] section's proxy_d3d11 line (+ our marker). Everything else in the
+# file stays byte-identical, including CRLF line endings (the split-on-\n trick keeps the
+# trailing \r attached to each line).
+#
+# Normalising invariant: after this runs there is EXACTLY ONE active `proxy_d3d11` in [System]
+# (ours), which makes re-runs true no-ops:
+#   * commented example lines (;proxy_d3d11=...) are KEPT, ours goes right after the first one;
+#   * any *active* proxy_d3d11 line is removed; the first one's text is printed to stdout as
+#     "REPLACED=<line>" so the caller can record it for an exact revert;
+#   * if the section has neither, ours is inserted right after the [System] header.
+mod_edit_ini(){ # $1 = d3dx.ini  $2 = target  $3 = backend  $4 = short sha  -> prints REPLACED=<line>
+  python3 - "$1" "$2" "$3" "$4" <<'PY'
+import sys
+path, target, backend, sha8 = sys.argv[1:5]
+text = open(path, encoding="utf-8", newline="").read()   # newline="" keeps CRLF intact
+lines = text.split("\n")          # a trailing "\r" (CRLF files) stays attached to each line
+def core(s):  return s[:-1] if s.endswith("\r") else s
+def tail(s):  return "\r" if s.endswith("\r") else ""
+def kind(c):
+    t = c.strip()
+    commented = t.startswith(";")
+    while t.startswith(";"):
+        t = t[1:].lstrip()
+    if not t.lower().startswith("proxy_d3d11"):
+        return None
+    rest = t[len("proxy_d3d11"):]
+    if not (rest and (rest[0] == "=" or rest[0] in " \t")):
+        return None
+    return "commented" if commented else "active"
+marker = "; FineWine chain: backend=%s target_sha256=%s" % (backend, sha8)
+lines = [l for l in lines if not core(l).strip().startswith("; FineWine chain:")]
+out, in_sys, replaced, replaced_at, first_example = [], False, "", None, None
+for ln in lines:
+    c = core(ln); s = c.strip()
+    if s.lower().startswith("[system]"):
+        in_sys = True
+    elif s.startswith("[") and s.endswith("]"):
+        in_sys = False
+    if in_sys:
+        k = kind(c)
+        if k == "commented" and first_example is None:
+            first_example = len(out)          # insert right after the documented example
+        if k == "active":
+            if replaced_at is None:
+                val = c.split("=", 1)[1].strip() if "=" in c else ""
+                if val.lower() != target.lower():
+                    # a genuinely different (user-set) chain — remember it for the exact revert
+                    replaced, replaced_at = c.strip(), len(out)
+            continue                          # drop it — there must be exactly one active key
+    out.append(ln)
+if first_example is not None:
+    at = first_example + 1
+elif replaced_at is not None:
+    at = replaced_at                           # put ours back where the replaced line was
+else:
+    hdr = next((i for i, l in enumerate(out) if core(l).strip().lower().startswith("[system]")), None)
+    if hdr is None:
+        print("ERROR: no [System] section in d3dx.ini", file=sys.stderr); sys.exit(1)
+    at = hdr + 1
+eol = tail(out[at - 1]) if at > 0 else ""
+out[at:at] = ["proxy_d3d11 = " + target + eol, marker + eol]
+open(path, "w", encoding="utf-8", newline="").write("\n".join(out))
+print("REPLACED=" + replaced)
+PY
+}
+# Undo ONLY the lines we added (proxy line + marker). If the apply replaced an active
+# proxy_d3d11 line, $2 is its original text and it is re-inserted exactly where ours was.
+# Falls back to the pre-chain backup when XXMI has since rewritten d3dx.ini (marker gone).
+mod_unedit_ini(){ # $1 = d3dx.ini  [$2 = original line to re-insert]
+  python3 - "$1" "${2:-}" <<'PY'
+import re, sys
+path, reinsert = sys.argv[1], sys.argv[2]
+text = open(path, encoding="utf-8", newline="").read()   # newline="" keeps CRLF intact
+lines = text.split("\n")
+def core(s):  return s[:-1] if s.endswith("\r") else s
+def tail(s):  return "\r" if s.endswith("\r") else ""
+def is_proxy(c):
+    t = c.strip()
+    while t.startswith(";"):
+        t = t[1:].lstrip()
+    if not t.lower().startswith("proxy_d3d11"):
+        return False
+    rest = t[len("proxy_d3d11"):]
+    return bool(rest) and (rest[0] == "=" or rest[0] in " \t")
+out, i, removed, insert_at, insert_tail = [], 0, 0, None, ""
+while i < len(lines):
+    c = core(lines[i])
+    if c.strip().startswith("; FineWine chain:"):
+        removed += 1; i += 1; continue
+    if is_proxy(c) and i + 1 < len(lines) and core(lines[i+1]).strip().startswith("; FineWine chain:"):
+        if insert_at is None:
+            insert_at, insert_tail = len(out), tail(c)
+        removed += 2; i += 2; continue
+    out.append(lines[i]); i += 1
+if removed == 0:
+    print("no chain lines found", file=sys.stderr); sys.exit(1)
+if reinsert:
+    out.insert(insert_at if insert_at is not None else len(out), reinsert + insert_tail)
+open(path, "w", encoding="utf-8", newline="").write("\n".join(out))
+PY
+}
+mod_chain_apply(){
+  local BP="$MOD_BOTTLES_ROOT/$MOD_BOTTLE" backend rel src importer ini sha target mode
+  BP="${BP%\/}"
+  [ -f "$BP/cxbottle.conf" ] || { echo "ERROR: bottle '$MOD_BOTTLE' not found at $BP (set MOD_BOTTLE or MOD_BOTTLES_ROOT)"; exit 1; }
+  log "Mod chain: bottle '$MOD_BOTTLE'"
+  backend="$(mod_backend_from_conf "$BP/cxbottle.conf")"
+  if ! rel="$(mod_backend_rel "$backend")"; then
+    ok "backend '${backend:-none}' (wined3d) already IS the system d3d11 — no chain needed, skipping"
+    return 0
+  fi
+  src="$CXR/$rel"
+  [ -f "$src" ] || { echo "ERROR: the backend d3d11.dll is missing from the patched app: $src"; exit 1; }
+  importer="$(mod_find_efmi "$BP")" \
+    || { echo "ERROR: could not locate the EFMI folder (no XXMI Launcher config and no default EFMI dir with d3dx.ini). Set MOD_IMPORTER=<path to the EFMI folder>."; exit 1; }
+  ini="$importer/d3dx.ini"
+  sha="$(shasum -a 256 "$src" | cut -d' ' -f1)"
+  if [ "$MOD_CHAIN_MODE" = "copy" ] || [ "$(readlink "$BP/dosdevices/z:" 2>/dev/null)" != "/" ]; then
+    [ "$(readlink "$BP/dosdevices/z:" 2>/dev/null)" = "/" ] \
+      || warn "bottle dosdevices/z: does not map to / — falling back to copy mode"
+    mode="copy"
+    cp -f "$src" "$importer/d3d11_cx.dll"
+    target="d3d11_cx.dll"
+    ok "staged the backend d3d11.dll next to EFMI (d3d11_cx.dll, sha256 ${sha:0:12}…)"
+  else
+    mode="path"
+    target="$(mod_bottle_path "$src")"
+    ok "target: $target"
+  fi
+  [ -f "$ini.cxorig" ] || cp -p "$ini" "$ini.cxorig"
+  local replaced
+  replaced="$(mod_edit_ini "$ini" "$target" "$backend" "${sha:0:12}")" || { echo "ERROR: failed to edit $ini"; exit 1; }
+  replaced="${replaced#REPLACED=}"
+  grep -F "proxy_d3d11 = $target" "$ini" >/dev/null && grep -F "FineWine chain: backend=$backend" "$ini" >/dev/null \
+    || { echo "ERROR: $ini does not contain the chain after editing"; exit 1; }
+  {
+    printf 'app_path = %s\n' "$MOD_APP"
+    printf 'backend = %s\n' "$backend"
+    printf 'mode = %s\n' "$mode"
+    printf 'target = %s\n' "$target"
+    printf 'target_sha256 = %s\n' "$sha"
+    printf 'applied_at = %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    [ -n "$replaced" ] && printf 'replaced_line = %s\n' "$replaced"
+  } > "$importer/d3dx.ini.finewine-chain"
+  ok "wrote $importer/d3dx.ini.finewine-chain"
+  cat <<EOF3
+
+Mod chain applied -> $ini
+  backend : $backend
+  target  : $target
+
+Verify it works: launch Endfield via XXMI, then check "$importer/d3d11_log.txt" for
+  "Proxy loading active, Forcing load_library_redirect=0"
+(experiments L1–L5 in docs/mod-injection/06-experiment-plan.md).
+
+Note: XXMI rewrites d3dx.ini when it updates EFMI (overwrite_ini=True). If the chain
+disappears after an update, re-run this step (MOD_CHAIN=1) or disable "overwrite ini"
+in XXMI's settings.
+EOF3
+}
+mod_chain_revert(){
+  local BP="$MOD_BOTTLES_ROOT/$MOD_BOTTLE" importer ini
+  [ -f "$BP/cxbottle.conf" ] || { echo "ERROR: bottle '$MOD_BOTTLE' not found at $BP"; exit 1; }
+  importer="$(mod_find_efmi "$BP")" \
+    || { echo "ERROR: could not locate the EFMI folder. Set MOD_IMPORTER=<path to the EFMI folder>."; exit 1; }
+  ini="$importer/d3dx.ini"
+  log "Mod chain revert: $ini"
+  if grep -F "FineWine chain:" "$ini" >/dev/null 2>&1; then
+    local replaced=""
+    if [ -f "$importer/d3dx.ini.finewine-chain" ]; then
+      replaced="$(sed -n 's/^replaced_line = //p' "$importer/d3dx.ini.finewine-chain")"
+    fi
+    mod_unedit_ini "$ini" "$replaced" && ok "removed the chain lines from d3dx.ini"
+  elif [ -f "$ini.cxorig" ]; then
+    warn "no FineWine marker in d3dx.ini (rewritten by XXMI?) — restoring the pre-chain backup instead"
+    cp -p "$ini.cxorig" "$ini"
+  else
+    warn "nothing to revert (no marker, no backup)"; return 0
+  fi
+  rm -f "$importer/d3d11_cx.dll" "$importer/d3dx.ini.finewine-chain"
+  ok "reverted (pre-chain backup kept at $ini.cxorig)"
+}
+if [ "${MOD_CHAIN_REVERT:-0}" = "1" ]; then
+  mod_chain_revert
+elif [ "${MOD_CHAIN:-0}" = "1" ]; then
+  mod_chain_apply
+fi
+
 cat <<EOF
 
 Done -> $DEST_APP
@@ -186,4 +547,8 @@ Next:
      DX12 does NOT work for this game (white screen); Vulkan is experimental, see
      docs/graphics-performance.md.
   3. See docs/13-working-solution.md for troubleshooting.
+
+Optional — mods (XXMI / EFMI): install XXMI Launcher + EFMI inside the bottle, then run
+  scripts/swap-into-crossover.sh --mod-chain --skip-app-patch --bottle "Arknights Endfield"
+to chain EFMI's d3d11.dll onto this app's D3D11→Metal backend (see docs/mod-injection/).
 EOF

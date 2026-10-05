@@ -158,6 +158,103 @@ final class PatcherEngine: ObservableObject {
     @Published private(set) var patchedApp: URL?
     @Published var errorMessage: String?
 
+    // MARK: Mod (EFMI) chain phase (bottle-side; independent of the app patch above)
+
+    @Published private(set) var modSteps: [Step] = []
+    @Published private(set) var modIsRunning = false
+    @Published var modError: String?
+    @Published private(set) var modAppliedPlan: ChainPlan?
+
+    private static let modStepLabels = [
+        "Backing up d3dx.ini",
+        "Staging the backend d3d11.dll",
+        "Writing the chain into d3dx.ini",
+        "Verifying",
+    ]
+
+    private static let modRevertLabels = [
+        "Undoing the d3dx.ini edit",
+        "Removing staged files",
+    ]
+
+    func modReset() {
+        modSteps = []
+        modError = nil
+        modAppliedPlan = nil
+    }
+
+    func applyModChain(plan: ChainPlan) {
+        guard !isRunning, !modIsRunning else { return }
+        modReset()
+        modIsRunning = true
+        modSteps = Self.modStepLabels.enumerated().map { Step(id: $0.offset, label: $0.element) }
+
+        Task.detached(priority: .userInitiated) {
+            var current = 0
+            func begin(_ index: Int) async {
+                current = index
+                await MainActor.run { self.modSteps[index].status = .running }
+            }
+            func finish(_ index: Int) async {
+                await MainActor.run { self.modSteps[index].status = .done }
+            }
+            do {
+                await begin(0)
+                try ModChain.backup(plan)
+                await finish(0)
+
+                await begin(1)
+                try ModChain.stage(plan)
+                await finish(1)
+
+                await begin(2)
+                let replaced = try ModChain.writeChain(plan)
+                await finish(2)
+
+                await begin(3)
+                try ModChain.verify(plan)
+                try ModChain.writeState(plan, replaced: replaced)
+                await finish(3)
+
+                await MainActor.run {
+                    self.modAppliedPlan = plan
+                    self.modIsRunning = false
+                }
+            } catch {
+                let failed = current
+                await MainActor.run {
+                    self.modSteps[failed].status = .failed
+                    self.modError = error.localizedDescription
+                    self.modIsRunning = false
+                }
+            }
+        }
+    }
+
+    func revertModChain(importerDir: URL) {
+        guard !isRunning, !modIsRunning else { return }
+        modReset()
+        modIsRunning = true
+        modSteps = Self.modRevertLabels.enumerated().map { Step(id: $0.offset, label: $0.element) }
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                try ModChain.revert(importerDir: importerDir)
+                await MainActor.run {
+                    self.modSteps[0].status = .done
+                    self.modSteps[1].status = .done
+                    self.modIsRunning = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.modSteps[0].status = .failed
+                    self.modError = error.localizedDescription
+                    self.modIsRunning = false
+                }
+            }
+        }
+    }
+
     private static func stepLabels(includingGPTK: Bool) -> [String] {
         var labels = [
             "Copying CrossOver",

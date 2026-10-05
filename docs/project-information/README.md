@@ -49,6 +49,12 @@ Written during the research/planning phase; kept as the record of how the projec
 - [references.md](references.md) — consolidated, deduplicated source list.
 - The other components (not in `docs/`, each with its own README): **[patches/](../patches/README.md)** — the Wine patch inventory + licensing (LGPL, dw-proton provenance) · **[scripts/](../scripts/README.md)** — the build/swap/bottle/launch/capture scripts · **[patcher-app/](../patcher-app/README.md)** — the FineWine Patcher.app GUI (SwiftPM) · **[.github/workflows/](../.github)** — Wine CI builds, nightly, and the wiki generator.
 
+### Research sub-packages
+
+| Sub-package | What it covers |
+|---|---|
+| [../mod-injection/](../mod-injection/README.md) | ⭐ **Modding research (2026-09-20):** how XXMI Launcher / EFMI loads mods, whether dwproton has patches for it (no), Wine's builtin-vs-native DLL loading and the upstream Wine 11.6 fix, CrossOver's four D3D11 backends, and a documentation-only experiment plan for getting EFMI working in the `Arknights Endfield` bottle. |
+
 ## Conventions used in these docs
 
 - **Confidence** is tagged inline as `[confidence: high/medium/low]` on the claims where it matters.

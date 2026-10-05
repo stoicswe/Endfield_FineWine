@@ -9,6 +9,11 @@ let package = Package(
         .executableTarget(
             name: "FineWinePatcher",
             path: "Sources/FineWinePatcher"
+        ),
+        .testTarget(
+            name: "FineWinePatcherTests",
+            dependencies: ["FineWinePatcher"],
+            path: "Tests/FineWinePatcherTests"
         )
     ]
 )

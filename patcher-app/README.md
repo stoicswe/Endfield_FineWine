@@ -32,6 +32,66 @@ MoltenVK **is** bundled (it is Apache-2.0), since the game's Vulkan/DXVK/vkd3d p
 **End users need no developer tools** — the `lib64` rpath is baked into the payload at app-build
 time, so at patch time the app only uses `codesign`, `ditto` and `xattr`, which ship with macOS.
 
+## Mod chain (EFMI) — optional second phase
+
+Below the patch flow there is an independent **bottle-side** phase that makes the **XXMI Launcher /
+EFMI** mod stack work: it writes 3DMigoto's own chain-load option,
+
+```ini
+[System]
+proxy_d3d11 = <the backend d3d11.dll inside the patched app>
+```
+
+into EFMI's `d3dx.ini`, so the mod's `d3d11.dll` hands off to this app's **D3D11→Metal backend**
+instead of Wine's wined3d. (Why this is needed at all — 3DMigoto resolves its "original" as
+`C:\Windows\system32\d3d11.dll`, which under CrossOver is wined3d on *every* backend — is
+documented in [docs/mod-injection/](../docs/mod-injection/07-load-ordering-and-chaining.md).)
+
+What it does, in order:
+
+1. Reads the bottle's graphics backend from `cxbottle.conf`
+   (`CX_ACTIVE_GRAPHICS_BACKEND`, falling back to `CX_GRAPHICS_BACKEND`). A bottle on
+   **wined3d** (no backend) needs no chain and the phase reports that.
+2. Finds the EFMI folder (XXMI Launcher's `XXMI Launcher Config.json` → its default
+   `%APPDATA%\XXMI Launcher\EFMI` → or you pick it).
+3. Backs up `d3dx.ini` → `d3dx.ini.cxorig` (once), then sets `proxy_d3d11` inside `[System]`
+   **only** — everything else in the file stays byte-identical, and the shipped
+   `;proxy_d3d11=…` example line is kept.
+4. Verifies the edit and writes a `d3dx.ini.finewine-chain` state file (app path, backend, mode,
+   target, SHA-256, date) so re-runs and reverts know what they did.
+
+Guarantees:
+
+- **Idempotent** — re-running with the same app + backend changes nothing.
+- **Byte-exact revert** — "Revert" removes only the two added lines and restores any line the
+  apply replaced (recorded in the state file as `replaced_line`); if XXMI has since rewritten
+  `d3dx.ini`, the pre-chain backup is used instead.
+- **Backend-aware** — if you switch the bottle's backend (`d3dmetal` ↔ `dxmt` ↔ `dxvk`), re-running
+  rewrites the target.
+- **No CrossOver files are bundled or shipped** — the backend `d3d11.dll` is referenced at its
+  location inside *your* patched app (or, when the bottle has no `Z:` mapping, copied from it into
+  the EFMI folder as `d3d11_cx.dll`). It is never included in the app payload or a release.
+- It never changes the bottle's `CX_GRAPHICS_BACKEND`; it adapts to it.
+
+The same feature is available from the shell, either with flags or environment variables
+(a flag always wins over its env var):
+
+```bash
+scripts/swap-into-crossover.sh --mod-chain --skip-app-patch --bottle "Arknights Endfield"   # apply
+scripts/swap-into-crossover.sh --mod-chain-revert --skip-app-patch                          # undo
+```
+
+Other flags: `--app PATH` (patched app to chain against), `--importer PATH` (explicit EFMI
+folder), `--chain-mode path|copy`, `--bottles-root PATH`, plus the app-patch flags
+(`--src-app`, `--dest-app`, `--gptk-dir`, `--skip-gptk`, `--skip-mvk`). `--help` has the full
+list; the env equivalents (`MOD_CHAIN`, `MOD_BOTTLE`, …) are documented in the script header.
+
+After applying, verify with experiment **L3** in
+[docs/mod-injection/06-experiment-plan.md](../docs/mod-injection/06-experiment-plan.md): launch
+Endfield via XXMI and check `d3d11_log.txt` for *"Proxy loading active, Forcing
+load_library_redirect=0"*. Note that XXMI rewrites `d3dx.ini` when it updates EFMI
+(`overwrite_ini=True`), so re-run the phase (or disable that option in XXMI) after an update.
+
 ## Building the app
 
 Requires the Xcode Command Line Tools only (no Xcode):
@@ -96,9 +156,13 @@ game. It requires the user's own licensed CrossOver install as input, and links 
 Package.swift                     SwiftPM manifest (macOS 13+)
 Sources/FineWinePatcher/
   FineWinePatcherApp.swift        app entry
-  ContentView.swift               the single-window UI
-  PatcherEngine.swift             the patch steps (mirrors swap-into-crossover.sh)
+  ContentView.swift               the single-window UI (incl. the Mod chain group box)
+  PatcherEngine.swift             the patch steps (mirrors swap-into-crossover.sh) + the mod-chain phase
+  ModChain.swift                  the mod (EFMI) chain support: backend/bottle/EFMI discovery,
+                                  the d3dx.ini [System] proxy_d3d11 edit, verify, revert, state file
   LicensesView.swift              the Licenses window + component metadata
+Tests/FineWinePatcherTests/
+  ModChainTests.swift             the mod-chain ini-editing rules (swift test)
 Resources/licenses/               license texts bundled into the app
 Resources/AppIcon.icns            the app icon (committed; regenerate with make-appicon.sh)
 Resources/appicon/                the icon source art
