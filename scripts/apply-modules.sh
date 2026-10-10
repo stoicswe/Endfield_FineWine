@@ -5,6 +5,7 @@
 # Env:
 #   SRC_APP   CrossOver to copy (default /Applications/CrossOver.app)
 #   DEST_APP  patched copy to create, replacing any existing one (default /Applications/CrossOver_Endfield_Patch.app)
+#   BUNDLE_ID bundle identifier for patched copy (default com.codeweavers.CrossOvEF)
 #   GPTK      Apple Game Porting Toolkit to take D3DMetal from (optional): its .dmg, the mounted
 #             volume, or its redist/lib/external directory
 #   FORCE=1   apply even if the modules were built for a different CrossOver version
@@ -14,6 +15,8 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 MODULES="${1:-$REPO/dist/endfield-wine-modules}"
 SRC_APP="${SRC_APP:-/Applications/CrossOver.app}"
 DEST_APP="${DEST_APP:-/Applications/CrossOver_Endfield_Patch.app}"
+BUNDLE_ID="${BUNDLE_ID:-com.codeweavers.CrossOvEF}"
+ORIG_BUNDLE_ID="com.codeweavers.CrossOver"
 GPTK="${GPTK:-}"
 log(){  printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 ok(){   printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -133,6 +136,43 @@ cp "$DEST_MVK" "$DEST_MVK.cxorig"
 cp "$mvk_src" "$DEST_MVK"
 codesign --force --sign - "$DEST_MVK"
 ok "MoltenVK $(mvk_version "$DEST_MVK") (was $(mvk_version "$DEST_MVK.cxorig"))"
+
+log "Patching bundle ID ($BUNDLE_ID) & seed launcher helper archives"
+[ "${#BUNDLE_ID}" -eq "${#ORIG_BUNDLE_ID}" ] || die "BUNDLE_ID must be exactly ${#ORIG_BUNDLE_ID} characters (same length as $ORIG_BUNDLE_ID)"
+
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$DEST_APP/Contents/Info.plist" 2>/dev/null \
+  || defaults write "$DEST_APP/Contents/Info" CFBundleIdentifier "$BUNDLE_ID"
+ok "CFBundleIdentifier -> $BUNDLE_ID"
+
+for helper in "Menu Helper" "Bottle Helper"; do
+  cpbz2="$DEST_APP/Contents/Resources/$helper.cpbz2"
+  if [ -f "$cpbz2" ]; then
+    hwork="$(mktemp -d)"
+    (
+      cd "$hwork"
+      bzip2 -dc "$cpbz2" | cpio -idm 2>/dev/null
+      if [ -f "Contents/Info.plist" ]; then
+        sed -i '' "s/$ORIG_BUNDLE_ID/$BUNDLE_ID/g" "Contents/Info.plist" 2>/dev/null || true
+      fi
+      bin="Contents/MacOS/$helper"
+      if [ -f "$bin" ]; then
+        python3 -c "
+with open('$bin', 'rb') as f: data = f.read()
+target = b'$ORIG_BUNDLE_ID\x00'
+rep = b'$BUNDLE_ID\x00'
+if target in data:
+    data = data.replace(target, rep)
+    with open('$bin', 'wb') as f: f.write(data)
+"
+        codesign --force --sign - "$bin" 2>/dev/null || true
+      fi
+      find . | cpio -o -H odc 2>/dev/null | bzip2 -c > "$cpbz2.tmp"
+      mv -f "$cpbz2.tmp" "$cpbz2"
+    )
+    rm -rf "$hwork"
+    ok "patched $helper.cpbz2"
+  fi
+done
 
 log "Removing bundle seal and quarantine"
 rm -rf "$DEST_APP/Contents/_CodeSignature" "$DEST_APP/Contents/CodeResources"

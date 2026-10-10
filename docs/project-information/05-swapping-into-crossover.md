@@ -81,6 +81,15 @@ codesign --verify --deep --strict CrossOver_Endfield_Patch.app  # must pass befo
 - GPTK's `D3DMetal.framework` / `libd3dshared.dylib` keep Apple's signature ("Software Signing") when copied with `ditto --noextattr`.
 - Replace swapped files with `mv`+`cp` rather than overwriting in place, and don't launch the bundle before it verifies — a failed first launch leaves it tagged and read-only (see above).
 
+### Bundle identifier separation & launcher seed templates
+
+If the patched app keeps `CFBundleIdentifier` as `com.codeweavers.CrossOver`, macOS Launch Services considers both original `CrossOver.app` and `CrossOver_Endfield_Patch.app` interchangeable. When running bottle-created app launchers (which launch via `Menu Helper` or `Bottle Helper`), macOS frequently delegates to the original `CrossOver.app`, bypassing the anti-cheat wine modules and causing an instant crash.
+
+To isolate the patched environment:
+1. `CFBundleIdentifier` in `Contents/Info.plist` is changed to `com.codeweavers.CrossOvEF` (25 characters, byte-identical length to stock `com.codeweavers.CrossOver`).
+2. The seed launcher templates (`Contents/Resources/Menu Helper.cpbz2` and `Bottle Helper.cpbz2`) are unpacked, their internal `Contents/Info.plist` and Mach-O binaries (`Contents/MacOS/Menu Helper`, `Contents/MacOS/Bottle Helper`) patched to target `com.codeweavers.CrossOvEF`, re-signed ad-hoc, and repacked.
+3. Newly created app launchers from the patched CrossOver automatically target `com.codeweavers.CrossOvEF`, ensuring they always launch with the patched build.
+
 ## Bottle structure (for reference)
 
 - Default: `~/Library/Application Support/CrossOver/Bottles/<name>/`

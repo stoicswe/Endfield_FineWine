@@ -44,8 +44,9 @@ The custom Wine is built minimal (no graphics libs), so we **surgically swap onl
    - `x86_64-unix/ntdll.so` (both Rosetta fixes + NtDelayExecution)
    - `x86_64-windows/kernel32.dll` (int3 hack)
    - `x86_64-windows/ntoskrnl.exe` (em-backports)
-3. `codesign --force --sign -` each swapped file; remove `Contents/_CodeSignature` + `Contents/CodeResources`; `xattr -drs com.apple.quarantine`.
-4. Run the game through `build/CrossOver_patched.app` (its wrapper sets up D3DMetal) against the existing bottle → login screen.
+3. Patch bundle identifier (`CFBundleIdentifier -> com.codeweavers.CrossOvEF`) and seed launcher archives (`Menu Helper.cpbz2` and `Bottle Helper.cpbz2`) so bottle launchers always route to the patched CrossOver.
+4. `codesign --force --sign -` swapped Mach-O files; re-seal the outer bundle with ad-hoc signature; `xattr -drs com.apple.quarantine`.
+5. Run the game through `CrossOver_Endfield_Patch.app` against the bottle → login screen.
 
 ## Reproduce from scratch
 `scripts/build-wine.sh` (deps→fetch→configure→build under `arch -x86_64`), apply all patches (`git apply`), rebuild, then `scripts/swap-into-crossover.sh`. Full build details: [04](04-building-crossover-wine.md).

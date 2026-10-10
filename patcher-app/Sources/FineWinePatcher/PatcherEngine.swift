@@ -391,6 +391,14 @@ final class PatcherEngine: ObservableObject {
         }
     }
 
+    nonisolated static let originalBundleIdentifier = "com.codeweavers.CrossOver"
+    nonisolated static var patchedBundleIdentifier: String {
+        if let env = ProcessInfo.processInfo.environment["BUNDLE_ID"], env.count == originalBundleIdentifier.count {
+            return env
+        }
+        return "com.codeweavers.CrossOvEF"
+    }
+
     private static func stepLabels(includingGPTK: Bool) -> [String] {
         var labels = [
             "Copying CrossOver",
@@ -398,6 +406,7 @@ final class PatcherEngine: ObservableObject {
         ]
         if includingGPTK { labels.append("Installing GPTK4 / D3DMetal") }
         labels += [
+            "Patching bundle ID and launcher seeds",
             "Re-sealing the bundle",
             "Verifying",
             "Moving the patched app into place",
@@ -451,6 +460,10 @@ final class PatcherEngine: ObservableObject {
                     try Self.installGPTK(into: app, from: gptk.url)
                     await finish(index); index += 1
                 }
+
+                await begin(index)
+                try Self.patchBundleIdentifier(in: app)
+                await finish(index); index += 1
 
                 await begin(index)
                 try Self.resealBundle(app)
@@ -688,11 +701,98 @@ final class PatcherEngine: ObservableObject {
               data.range(of: needle) != nil else {
             throw PatchError("ntdll.so is missing the lib64 rpath — D3DMetal would not work. Rebuild the patcher with scripts/build-app.sh (it adds the rpath to the payload).")
         }
+        // Verify bundle identifier
+        let infoPlist = app.appendingPathComponent("Contents/Info.plist")
+        guard let plistData = try? Data(contentsOf: infoPlist),
+              let plist = (try? PropertyListSerialization.propertyList(from: plistData, format: nil)) as? [String: Any],
+              let bid = plist["CFBundleIdentifier"] as? String,
+              bid == patchedBundleIdentifier else {
+            throw PatchError("The patched app's CFBundleIdentifier was not set to \(patchedBundleIdentifier).")
+        }
+
         // The whole bundle must verify, or macOS reports it as damaged and kills its binaries.
         do {
             try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path])
         } catch {
             throw PatchError("The patched app's signature does not verify, so macOS would refuse to run it. \(error.localizedDescription)")
+        }
+    }
+
+    /// Patches the app's CFBundleIdentifier in Info.plist to `com.codeweavers.CrossOvEF`
+    /// and patches the seed launcher templates (`Contents/Resources/Menu Helper.cpbz2`
+    /// and `Bottle Helper.cpbz2`) so that launcher app bundles created by this patched
+    /// CrossOver will reference its bundle ID and always launch with the patched version.
+    private nonisolated static func patchBundleIdentifier(in app: URL) throws {
+        let fm = FileManager.default
+        let infoPlist = app.appendingPathComponent("Contents/Info.plist")
+        guard fm.fileExists(atPath: infoPlist.path) else {
+            throw PatchError("Info.plist not found in staged app.")
+        }
+        guard let data = try? Data(contentsOf: infoPlist),
+              var plist = (try? PropertyListSerialization.propertyList(from: data, options: .mutableContainersAndLeaves, format: nil)) as? [String: Any] else {
+            throw PatchError("Failed to parse Info.plist in staged app.")
+        }
+        plist["CFBundleIdentifier"] = patchedBundleIdentifier
+        let newData = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+        try newData.write(to: infoPlist, options: .atomic)
+
+        let resDir = app.appendingPathComponent("Contents/Resources", isDirectory: true)
+        let helpers = ["Menu Helper", "Bottle Helper"]
+        for helper in helpers {
+            let cpbz2 = resDir.appendingPathComponent("\(helper).cpbz2")
+            guard fm.fileExists(atPath: cpbz2.path) else { continue }
+            let tmpDir = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: resDir, create: true)
+            defer { try? fm.removeItem(at: tmpDir) }
+
+            // Extract cpbz2
+            try run("/bin/sh", ["-c", "cd '\(tmpDir.path)' && bzip2 -dc '\(cpbz2.path)' | cpio -idm 2>/dev/null"])
+
+            // Patch Info.plist if present in helper
+            let helperPlist = tmpDir.appendingPathComponent("Contents/Info.plist")
+            if fm.fileExists(atPath: helperPlist.path),
+               let hData = try? Data(contentsOf: helperPlist),
+               var hPlist = (try? PropertyListSerialization.propertyList(from: hData, options: .mutableContainersAndLeaves, format: nil)) as? [String: Any] {
+                if var secPolicy = hPlist["NSUpdateSecurityPolicy"] as? [String: Any],
+                   var allowProc = secPolicy["AllowProcesses"] as? [String: [String]] {
+                    for (k, arr) in allowProc {
+                        allowProc[k] = arr.map { $0 == originalBundleIdentifier ? patchedBundleIdentifier : $0 }
+                    }
+                    secPolicy["AllowProcesses"] = allowProc
+                    hPlist["NSUpdateSecurityPolicy"] = secPolicy
+                    if let newHData = try? PropertyListSerialization.data(fromPropertyList: hPlist, format: .xml, options: 0) {
+                        try? newHData.write(to: helperPlist, options: .atomic)
+                    }
+                }
+            }
+
+            // Patch Mach-O binary
+            let bin = tmpDir.appendingPathComponent("Contents/MacOS/\(helper)")
+            if fm.fileExists(atPath: bin.path) {
+                var binData = try Data(contentsOf: bin)
+                guard let target = (originalBundleIdentifier + "\0").data(using: .utf8),
+                      let replacement = (patchedBundleIdentifier + "\0").data(using: .utf8),
+                      target.count == replacement.count else {
+                    throw PatchError("Invalid bundle ID replacement length for \(helper).")
+                }
+                var replaced = false
+                while let range = binData.range(of: target) {
+                    binData.replaceSubrange(range, with: replacement)
+                    replaced = true
+                }
+                if replaced {
+                    try binData.write(to: bin, options: .atomic)
+                    _ = try? run("/usr/bin/codesign", ["--force", "--sign", "-", bin.path])
+                }
+            }
+
+            // Repack cpbz2
+            let tmpCpbz2 = tmpDir.appendingPathComponent("\(helper).cpbz2.tmp")
+            try run("/bin/sh", ["-c", "cd '\(tmpDir.path)' && find . | cpio -o -H odc 2>/dev/null | bzip2 -c > '\(tmpCpbz2.path)'"])
+            guard fm.fileExists(atPath: tmpCpbz2.path) else {
+                throw PatchError("Failed to repack \(helper).cpbz2.")
+            }
+            try fm.removeItem(at: cpbz2)
+            try fm.moveItem(at: tmpCpbz2, to: cpbz2)
         }
     }
 
