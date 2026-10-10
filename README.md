@@ -2,7 +2,7 @@
 
 # Endfield_FineWine — Arknights: Endfield on Apple Silicon
 
-⚠️ These patches for Crossover are provided as-is. While the patches do allow for the Endfield anti-cheat to operator on macOS like it does on windows, it is your choice to use this tool and you therefore take on the risks associated with that.
+⚠️ These patches for Crossover are provided as-is. While the patches do allow for the Endfield anti-cheat to operate on macOS like it does on windows, it is your choice to use this tool and you therefore take on the risks associated with that.
 
 [![Watch on YouTube](./docs/screenshot_2026.09.28.png)](https://www.youtube.com/watch?v=baokvOArBKc)
 
