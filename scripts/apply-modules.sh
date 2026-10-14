@@ -164,7 +164,14 @@ if target in data:
     data = data.replace(target, rep)
     with open('$bin', 'wb') as f: f.write(data)
 "
-        codesign --force --sign - "$bin" 2>/dev/null || true
+        # Sign the Mach-O outside Contents so the generated launcher's plist
+        # and resources remain unbound, as in CrossOver's stock seed.
+        loose_bin=".$helper.signing"
+        mv "$bin" "$loose_bin"
+        codesign --force --sign - --options runtime --timestamp=none \
+          --identifier "com.codeweavers.CrossOver.$helper" "$loose_bin"
+        mv "$loose_bin" "$bin"
+        rm -rf Contents/_CodeSignature Contents/CodeResources
       fi
       find . | cpio -o -H odc 2>/dev/null | bzip2 -c > "$cpbz2.tmp"
       mv -f "$cpbz2.tmp" "$cpbz2"

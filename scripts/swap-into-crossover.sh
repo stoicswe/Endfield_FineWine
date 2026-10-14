@@ -291,11 +291,18 @@ if target in data:
     data = data.replace(target, rep)
     with open('$bin', 'wb') as f: f.write(data)
 "
-        codesign --force --sign - "$bin" 2>/dev/null || true
+        # Sign the Mach-O outside Contents. Signing it in place makes codesign
+        # seal the template bundle, which CrossOver later customizes.
+        loose_bin=".$helper.signing"
+        mv "$bin" "$loose_bin" || exit 1
+        codesign --force --sign - --options runtime --timestamp=none \
+          --identifier "com.codeweavers.CrossOver.$helper" "$loose_bin" || exit 1
+        mv "$loose_bin" "$bin" || exit 1
+        rm -rf Contents/_CodeSignature Contents/CodeResources
       fi
       find . | cpio -o -H odc 2>/dev/null | bzip2 -c > "$cpbz2.tmp"
       mv -f "$cpbz2.tmp" "$cpbz2"
-    )
+    ) || { echo "ERROR: failed to patch $helper seed" >&2; exit 1; }
     rm -rf "$hwork"
     ok "patched $helper.cpbz2"
   fi

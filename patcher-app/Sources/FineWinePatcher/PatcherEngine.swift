@@ -781,7 +781,19 @@ final class PatcherEngine: ObservableObject {
                 }
                 if replaced {
                     try binData.write(to: bin, options: .atomic)
-                    _ = try? run("/usr/bin/codesign", ["--force", "--sign", "-", bin.path])
+                    // Sign outside Contents so codesign treats this as a Mach-O, not an app
+                    // bundle. CrossOver changes the helper's plist/resources when it creates
+                    // a launcher, so the seed must not seal either of them.
+                    let looseBin = tmpDir.appendingPathComponent(".\(helper).signing")
+                    try fm.moveItem(at: bin, to: looseBin)
+                    try run("/usr/bin/codesign", ["--force", "--sign", "-", "--options", "runtime",
+                                                  "--timestamp=none", "--identifier", "com.codeweavers.CrossOver.\(helper)",
+                                                  looseBin.path])
+                    try fm.moveItem(at: looseBin, to: bin)
+                    for sealPath in ["Contents/_CodeSignature", "Contents/CodeResources"] {
+                        let bundleSeal = tmpDir.appendingPathComponent(sealPath)
+                        if fm.fileExists(atPath: bundleSeal.path) { try fm.removeItem(at: bundleSeal) }
+                    }
                 }
             }
 
