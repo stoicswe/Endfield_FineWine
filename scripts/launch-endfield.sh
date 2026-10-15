@@ -13,7 +13,7 @@
 #   DEBUG=1 scripts/launch-endfield.sh      # full CrossOver log (CX_LOG) to ~/endfield-debug/ —
 #                                           #   heavy (hundreds of MB, slower; ACE is timing-sensitive)
 #
-# Env overrides: APP (CrossOver app), BOTTLE, TARGET (windows exe path),
+# Env overrides: APP (CrossOver app), BUNDLE_ID (find a renamed patched app by bundle id), BOTTLE, TARGET (windows exe path),
 #   WINEDEBUG (channels for DEBUG=1/light, default +seh / err+all,fixme-all — passed with
 #   --debugmsg, because CrossOver's wine wrapper overwrites the WINEDEBUG variable itself),
 #   GFXARGS (default "-force-d3d11" — a DIRECT launch bypasses the launcher, so the
@@ -26,8 +26,20 @@
 
 set -uo pipefail
 
-# ---- locate the patched CrossOver app ---------------------------------------
+# ---- locate the patched CrossOver app (by bundle identifier; it may be renamed) ------------
+BUNDLE_ID="${BUNDLE_ID:-com.codeweavers.CrossOvEF}"
+bundle_id_of() { plutil -extract CFBundleIdentifier raw "$1/Contents/Info.plist" 2>/dev/null \
+                 || defaults read "$1/Contents/Info" CFBundleIdentifier 2>/dev/null; }
 APP="${APP:-}"
+if [ -z "$APP" ] && command -v mdfind >/dev/null 2>&1; then
+  APP="$(mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null | head -n1)"
+fi
+if [ -z "$APP" ]; then
+  for c in /Applications/*.app "$HOME"/Applications/*.app; do
+    [ -d "$c/Contents/SharedSupport/CrossOver" ] || continue
+    if [ "$(bundle_id_of "$c")" = "$BUNDLE_ID" ]; then APP="$c"; break; fi
+  done
+fi
 if [ -z "$APP" ]; then
   for c in "/Applications/CrossOver_Endfield_Patch.app" \
            "$HOME/Applications/CrossOver_Endfield_Patch.app" \
@@ -35,7 +47,7 @@ if [ -z "$APP" ]; then
     [ -d "$c" ] && APP="$c" && break
   done
 fi
-[ -d "$APP" ] || { echo "ERROR: patched CrossOver app not found. Set APP=/path/to/CrossOver_Endfield_Patch.app" >&2; exit 1; }
+[ -d "$APP" ] || { echo "ERROR: patched CrossOver app not found (bundle id $BUNDLE_ID). Set APP=/path/to/CrossOver_Endfield_Patch.app" >&2; exit 1; }
 CXR="$APP/Contents/SharedSupport/CrossOver"; CXBIN="$CXR/bin"
 [ -x "$CXBIN/wine" ] || { echo "ERROR: wine not found at $CXBIN/wine" >&2; exit 1; }
 

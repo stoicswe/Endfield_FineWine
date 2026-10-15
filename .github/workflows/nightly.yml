@@ -176,6 +176,7 @@ jobs:
           | Asset | What it is |
           |---|---|
           | `finewine-patcher-…zip` | **FineWine Patcher.app** — patches a copy of your CrossOver @@CX_VER@@ with the anti-cheat Wine modules and a patched MoltenVK (open it and follow the UI) |
+          | `finewine-launcher-…zip` | **Arknights Endfield.app** — a double-clickable alias that opens the Gryphline launcher via the direct wine path (the CrossOver GUI's *Start* crashes it — see `docs/project-information/15-…`) |
           | `finewine-wine-modules-…zip` | The three patched Wine modules alone — for `scripts/swap-into-crossover.sh` users |
           | `SHA256SUMS.txt` | SHA-256 checksums of the assets |
 
@@ -257,7 +258,7 @@ jobs:
           | Title | %TITLE% |
           | Tag | %TAG% (pre-release) |
           | Commit | `%SHA%` |
-          | Assets | Patcher.app zip · modules zip · SHA256SUMS.txt |
+          | Assets | Patcher.app zip · Arknights Endfield.app zip · modules zip · SHA256SUMS.txt |
           | URL | %RELEASE_URL% |
           EOT
           sed -i \

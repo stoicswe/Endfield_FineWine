@@ -9,12 +9,15 @@
 #   scripts/make-launcher-app.sh [options]
 # Options (all optional; sensible defaults):
 #   --out-dir DIR     where to create "<name>.app"      (default: the patched app's folder, else /Applications)
-#   --cx-app PATH     patched CrossOver.app             (default: first of the usual locations)
+#   --cx-app PATH     patched CrossOver.app             (default: matched by bundle id, then usual locations)
+#   --bundle-id ID    patched app's bundle identifier   (default: com.codeweavers.CrossOvEF)
 #   --bottle NAME     CrossOver bottle name             (default: "Arknights Endfield")
 #   --target WINPATH  Windows exe to launch             (default: the Gryphline launcher, .../GRYPHLINK/Launcher.exe)
 #   --gfxargs ARGS    launch args                       (default: "" — add "-force-d3d11" if --target is Endfield.exe)
 #   --name NAME       launcher app name                 (default: "Arknights Endfield")
 #   --force           overwrite an existing launcher app
+#   --portable        build for distribution: do not require a local CrossOver app — bake the
+#                     default path as a hint (the runtime template also searches at launch).
 # Env: SKIP=1 to do nothing (used by the install scripts to opt out).
 
 set -euo pipefail
@@ -26,21 +29,25 @@ die(){ printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 OUT_DIR=""
 CX_APP=""
+BUNDLE_ID="com.codeweavers.CrossOvEF" # the patched CrossOver's bundle id (used to find a renamed app)
 BOTTLE="Arknights Endfield"
 TARGET="C:/Program Files/GRYPHLINK/Launcher.exe"
 GFXARGS=""
 NAME="Arknights Endfield"
 FORCE=0
+PORTABLE=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --out-dir)  OUT_DIR="${2:-}"; shift 2 ;;
     --cx-app)   CX_APP="${2:-}";  shift 2 ;;
+    --bundle-id) BUNDLE_ID="${2:-}"; shift 2 ;;
     --bottle)   BOTTLE="${2:-}";  shift 2 ;;
     --target)   TARGET="${2:-}";  shift 2 ;;
     --gfxargs)  GFXARGS="${2:-}"; shift 2 ;;
     --name)     NAME="${2:-}";    shift 2 ;;
     --force)    FORCE=1; shift ;;
+    --portable) PORTABLE=1; shift ;;
     -h|--help)  sed -n '2,20p' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -49,7 +56,20 @@ done
 [ "${SKIP:-0}" = "1" ] && { echo "make-launcher-app: SKIP=1, doing nothing"; exit 0; }
 [ -f "$TEMPLATE" ] || die "template not found: $TEMPLATE"
 
-# Resolve the patched CrossOver app.
+bundle_id_of() { plutil -extract CFBundleIdentifier raw "$1/Contents/Info.plist" 2>/dev/null \
+                 || defaults read "$1/Contents/Info" CFBundleIdentifier 2>/dev/null; }
+
+# Resolve the patched CrossOver app. Prefer matching the bundle identifier (the .app may be renamed),
+# via Spotlight then a scan; fall back to the well-known filenames.
+if [ -z "$CX_APP" ] && command -v mdfind >/dev/null 2>&1; then
+  CX_APP="$(mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null | head -n1)"
+fi
+if [ -z "$CX_APP" ]; then
+  for app in /Applications/*.app "$HOME"/Applications/*.app; do
+    [ -d "$app/Contents/SharedSupport/CrossOver" ] || continue
+    if [ "$(bundle_id_of "$app")" = "$BUNDLE_ID" ]; then CX_APP="$app"; break; fi
+  done
+fi
 if [ -z "$CX_APP" ]; then
   for c in "/Applications/CrossOver_Endfield_Patch.app" \
            "$HOME/Applications/CrossOver_Endfield_Patch.app" \
@@ -57,13 +77,24 @@ if [ -z "$CX_APP" ]; then
     [ -d "$c" ] && CX_APP="$c" && break
   done
 fi
-[ -n "$CX_APP" ] && [ -d "$CX_APP" ] || die "patched CrossOver app not found (pass --cx-app PATH)"
+if [ -z "$CX_APP" ]; then
+  if [ "$PORTABLE" = "1" ]; then
+    CX_APP="/Applications/CrossOver_Endfield_Patch.app" # hint only; the runtime template searches
+  else
+    die "patched CrossOver app not found (pass --cx-app PATH, or --portable for a shippable build)"
+  fi
+fi
+[ "$PORTABLE" = "1" ] || [ -d "$CX_APP" ] || die "patched CrossOver app not found at $CX_APP"
 
 # Default output directory: alongside the patched app (its parent), which is writable if the
-# patcher put it there; fall back to ~/Applications.
+# patcher put it there; fall back to ~/Applications or (portable) the cwd.
 if [ -z "$OUT_DIR" ]; then
-  OUT_DIR="$(cd "$CX_APP/.." && pwd)"
-  [ -w "$OUT_DIR" ] || OUT_DIR="$HOME/Applications"
+  if [ "$PORTABLE" = "1" ]; then
+    OUT_DIR="$PWD"
+  else
+    OUT_DIR="$(cd "$CX_APP/.." && pwd)"
+    [ -w "$OUT_DIR" ] || OUT_DIR="$HOME/Applications"
+  fi
 fi
 mkdir -p "$OUT_DIR"
 
@@ -75,11 +106,12 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 # Render the template (Python for safe substitution — paths may contain spaces).
-python3 - "$TEMPLATE" "$APP/Contents/MacOS/launcher" "$CX_APP" "$BOTTLE" "$TARGET" "$GFXARGS" <<'PY'
+python3 - "$TEMPLATE" "$APP/Contents/MacOS/launcher" "$CX_APP" "$BUNDLE_ID" "$BOTTLE" "$TARGET" "$GFXARGS" <<'PY'
 import sys
-tpl, out, cx, bottle, target, gfx = sys.argv[1:7]
+tpl, out, cx, bundle, bottle, target, gfx = sys.argv[1:8]
 s = open(tpl, encoding="utf-8").read()
-for k, v in (("@CX_APP@", cx), ("@BOTTLE@", bottle), ("@TARGET@", target), ("@GFXARGS@", gfx)):
+for k, v in (("@CX_APP@", cx), ("@BUNDLE_ID@", bundle), ("@BOTTLE@", bottle),
+             ("@TARGET@", target), ("@GFXARGS@", gfx)):
     s = s.replace(k, v)
 open(out, "w", encoding="utf-8").write(s)
 PY

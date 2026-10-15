@@ -606,6 +606,7 @@ final class PatcherEngine: ObservableObject {
         var script = template
         for (token, value) in [
             ("@CX_APP@", patchedApp.path),
+            ("@BUNDLE_ID@", Self.patchedBundleIdentifier),
             ("@BOTTLE@", bottle),
             // The alias opens the Gryphline launcher (install/update/play) via the direct wine path,
             // which stays up where the CrossOver GUI's Start button crashes it. Leave the direct

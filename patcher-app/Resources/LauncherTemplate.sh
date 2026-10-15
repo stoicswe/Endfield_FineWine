@@ -10,14 +10,46 @@
 # Default target: the Gryphline launcher (Launcher.exe) — use it to install/update/play.
 # Point it at the game with: scripts/make-launcher-app.sh --target "C:/…/Endfield.exe" --gfxargs -force-d3d11
 #
-# Placeholders substituted at generation time: @CX_APP@ @BOTTLE@ @TARGET@ @GFXARGS@
+# Placeholders substituted at generation time: @CX_APP@ @BUNDLE_ID@ @BOTTLE@ @TARGET@ @GFXARGS@
 
 set -uo pipefail
 
-CX_APP="@CX_APP@"
+# Path this app was generated for (a hint; the .app may since have been renamed).
+CX_APP_HINT="@CX_APP@"
+# The patched CrossOver's bundle identifier — lets us find it even if the .app is renamed.
+BUNDLE_ID="@BUNDLE_ID@"
 BOTTLE="@BOTTLE@"
 TARGET="@TARGET@"
 GFXARGS="@GFXARGS@"
+
+bundle_id_of() {
+  plutil -extract CFBundleIdentifier raw "$1/Contents/Info.plist" 2>/dev/null \
+    || defaults read "$1/Contents/Info" CFBundleIdentifier 2>/dev/null
+}
+
+# Find the patched CrossOver app. The filename is not reliable (it can be renamed), so match on the
+# bundle identifier: FINEWINE_CX_APP override -> generated-path hint -> Spotlight -> scan the usual
+# folders. This is also what lets a prebuilt copy of this app work on any machine.
+resolve_cx_app() {
+  if [ -n "${FINEWINE_CX_APP:-}" ] && [ -d "${FINEWINE_CX_APP}" ]; then
+    printf '%s' "$FINEWINE_CX_APP"; return
+  fi
+  if [ -n "$CX_APP_HINT" ] && [ -d "$CX_APP_HINT/Contents/SharedSupport/CrossOver" ]; then
+    printf '%s' "$CX_APP_HINT"; return
+  fi
+  if command -v mdfind >/dev/null 2>&1; then
+    local hit
+    hit="$(mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null | head -n1)"
+    if [ -n "$hit" ] && [ -d "$hit" ]; then printf '%s' "$hit"; return; fi
+  fi
+  local app
+  for app in /Applications/*.app "$HOME"/Applications/*.app; do
+    [ -d "$app/Contents/SharedSupport/CrossOver" ] || continue
+    if [ "$(bundle_id_of "$app")" = "$BUNDLE_ID" ]; then printf '%s' "$app"; return; fi
+  done
+}
+
+CX_APP="$(resolve_cx_app)"
 
 CXR="$CX_APP/Contents/SharedSupport/CrossOver"
 CXBIN="$CXR/bin"
@@ -25,7 +57,7 @@ BP="$HOME/Library/Application Support/CrossOver/Bottles/$BOTTLE"
 
 alert() { osascript -e "display alert \"Arknights: Endfield\" message \"$1\"" >/dev/null 2>&1 || echo "$1" >&2; }
 
-[ -d "$CX_APP" ] || { alert "Patched CrossOver not found at: $CX_APP"; exit 1; }
+[ -n "$CX_APP" ] && [ -d "$CX_APP" ] || { alert "Patched CrossOver not found (install it from the FineWine Patcher, or set FINEWINE_CX_APP)."; exit 1; }
 [ -x "$CXBIN/wine" ] || { alert "wine not found under $CX_APP"; exit 1; }
 [ -d "$BP" ] || { alert "Bottle '$BOTTLE' not found. Create it first (scripts/create-bottle.sh)."; exit 1; }
 

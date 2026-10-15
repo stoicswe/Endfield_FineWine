@@ -32,7 +32,7 @@ Tested on an Apple **M4 Pro** (MacBook Pro 12-core, 24 GB), macOS 27.0, CrossOve
 ## Quick Start
 
 ### Using the Patcher.app
-Use the latest available release patcher found on the [releases page](https://github.com/stoicswe/Endfield_FineWine/releases).
+Use the latest available release patcher found on the [releases page](https://github.com/stoicswe/Endfield_FineWine/releases). Releases (and nightlies) also ship **`Arknights.Endfield.app.zip`** — the double-clickable launcher alias — which you can drop next to the patched app.
 
 The patcher can also install **Apple's GPTK4 / D3DMetal** if you mount the *"Evaluation environment for Windows games …"* DMG first — it is never bundled or redistributed, only read from the copy you supply.
 
