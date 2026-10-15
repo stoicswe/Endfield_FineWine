@@ -36,6 +36,8 @@ Use the latest available release patcher found on the [releases page](https://gi
 
 The patcher can also install **Apple's GPTK4 / D3DMetal** if you mount the *"Evaluation environment for Windows games …"* DMG first — it is never bundled or redistributed, only read from the copy you supply.
 
+It also drops a **double-clickable `Arknights Endfield.app`** next to the patched CrossOver that **opens the Gryphline launcher** through the *direct* wine path — that path stays up where the CrossOver GUI's *Start* button crashes the launcher's Chromium renderer ([docs/15](docs/project-information/15-launcher-qtwebengine-crash.md)). Use it to install/update/play. To start the game **directly** (once installed), use `scripts/launch-endfield.sh`.
+
 ### Manual Build and Installation
 
 #### Dependancies
@@ -56,6 +58,7 @@ git clone <your-fork-url> Endfield_FineWine && cd Endfield_FineWine
 ./scripts/build-wine.sh all          # 1. build the patched Wine (deps -> fetch -> patch -> configure -> build)
 
 ./scripts/swap-into-crossover.sh     # 2. deploy into a copy of CrossOver -> /Applications/CrossOver_Endfield_Patch.app
+                                     #    …and create a double-clickable "Arknights Endfield.app" launcher
 
 ./scripts/create-bottle.sh           # 3. create the "Arknights Endfield" bottle (Win11 64-bit, D3DMetal + DLSS + MSync)
                                      #    …then install the Gryphline launcher into it via CrossOver's GUI

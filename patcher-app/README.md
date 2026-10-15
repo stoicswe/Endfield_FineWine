@@ -23,6 +23,13 @@ A minimal macOS app that turns a copy of **CrossOver 26.3** into the patched bui
 5. Verifies the swap (sizes, `ntdll.so` signature, the `lib64` rpath D3DMetal needs, the
    installed GPTK4 files if selected, and the bundle signature).
 6. Moves the patched app into place; an existing copy macOS won't let it delete goes to the Trash.
+7. Creates a **double-clickable `Arknights Endfield.app`** next to it that **opens the Gryphline
+   launcher** through the *direct* wine path. That path stays up where the CrossOver app's bottle
+   *Start* button crashes the launcher's Chromium renderer
+   ([docs/project-information/15](../docs/project-information/15-launcher-qtwebengine-crash.md)).
+   (Direct `Endfield.exe` launching stays in [`scripts/launch-endfield.sh`](../scripts/launch-endfield.sh).)
+   The app is rendered from [`Resources/LauncherTemplate.sh`](Resources/LauncherTemplate.sh) — the same
+   template [`scripts/make-launcher-app.sh`](../scripts/make-launcher-app.sh) uses.
 
 **Apple's Game Porting Toolkit is never bundled or redistributed** (it is evaluation-only
 software). The optional GPTK4 step reads the DMG *you* mounted, under Apple's own license; if

@@ -602,6 +602,15 @@ elif [ "${MOD_CHAIN:-0}" = "1" ]; then
   mod_chain_apply
 fi
 
+# ---------------------------------------------------------------- 8. direct-launch app
+# The Gryphline launcher's Chromium renderer is unusable under Wine (docs/project-information/15-*),
+# so ship a double-clickable app that launches the game directly.
+if [ "$DO_APP_PATCH" = "1" ] && [ "${SKIP_LAUNCHER_APP:-0}" != "1" ]; then
+  log "Creating the double-clickable launcher app"
+  "$REPO/scripts/make-launcher-app.sh" --out-dir "$(dirname "$DEST_APP")" --cx-app "$DEST_APP" --force \
+    || warn "launcher app not created (non-fatal; run scripts/make-launcher-app.sh manually)"
+fi
+
 cat <<EOF
 
 Done -> $DEST_APP

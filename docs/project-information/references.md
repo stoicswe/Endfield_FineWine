@@ -29,6 +29,7 @@ All sources fetched/consulted during research, grouped by topic. Confidence and 
 - dw-proton issue #30 (Endfield `PsGetProcessExitStatus`) — <https://dawn.wine/dawn-winery/dwproton/issues/30> (Anubis-walled)
 - xia0ji233: "某FPS游戏反作弊分析" (2026-03-05) — RE of a "Neac"-generation ACE kernel driver — <https://xia0ji233.github.io/2026/03/05/Game7/index.html>
 - `LaggyTMD/nte-driver-analysis` (Tencent ACE driver roles) — <https://github.com/LaggyTMD/nte-driver-analysis>
+- `crystalidea/qt6windows7` (Qt6/Chromium backport; documents Chromium's `0xE0000008` = shared-memory OOM, "the first paint kills the renderer" without a working GPU) — <https://github.com/crystalidea/qt6windows7>
 - wine-staging `ntdll-Hide_Wine_Exports` — <https://github.com/wine-staging/wine-staging/blob/master/patches/ntdll-Hide_Wine_Exports/0001-ntdll-Add-support-for-hiding-wine-version-informatio.patch>
 - wine-staging ntoskrnl stubs — <https://github.com/wine-compholio/wine-staging/tree/master/patches/ntoskrnl-Stubs>
 - Wine `dlls/ntdll/version.c` — <https://github.com/wine-mirror/wine/blob/master/dlls/ntdll/version.c>

@@ -426,6 +426,7 @@ final class PatcherEngine: ObservableObject {
             "Re-sealing the bundle",
             "Verifying",
             "Moving the patched app into place",
+            "Creating the direct launcher app",
         ]
         return labels
     }
@@ -491,6 +492,12 @@ final class PatcherEngine: ObservableObject {
 
                 await begin(index)
                 try Self.moveIntoPlace(app, destination: destination)
+                await finish(index); index += 1
+
+                // Best-effort: a double-clickable "Arknights Endfield.app" that launches the game
+                // directly (the Gryphline launcher's Chromium renderer is broken under Wine).
+                await begin(index)
+                try? Self.createLauncherApp(patchedApp: destination)
                 await finish(index); index += 1
 
                 await MainActor.run {
@@ -574,6 +581,66 @@ final class PatcherEngine: ObservableObject {
                 try run("/usr/bin/codesign", ["--force", "--sign", "-", dst.path])
             }
         }
+    }
+
+    /// Writes a double-clickable `Arknights Endfield.app` next to the patched CrossOver that opens the
+    /// Gryphline launcher (Launcher.exe) via the *direct* wine path, which stays up where the CrossOver
+    /// GUI's Start button crashes it (docs/project-information/15-launcher-qtwebengine-crash.md).
+    /// Rendered from the bundled `LauncherTemplate.sh`, the same source `scripts/make-launcher-app.sh`
+    /// uses. Best-effort. (Direct `Endfield.exe` launching stays in scripts/launch-endfield.sh.)
+    private nonisolated static func createLauncherApp(patchedApp: URL, bottle: String = "Arknights Endfield") throws {
+        let fm = FileManager.default
+        guard let resources = Bundle.main.resourceURL,
+              let template = try? String(contentsOf: resources.appendingPathComponent("LauncherTemplate.sh"),
+                                         encoding: .utf8) else { return }
+
+        let name = "Arknights Endfield"
+        let launcher = patchedApp.deletingLastPathComponent()
+            .appendingPathComponent("\(name).app", isDirectory: true)
+        try? fm.removeItem(at: launcher)
+        let macos = launcher.appendingPathComponent("Contents/MacOS", isDirectory: true)
+        try fm.createDirectory(at: macos, withIntermediateDirectories: true)
+        try fm.createDirectory(at: launcher.appendingPathComponent("Contents/Resources", isDirectory: true),
+                               withIntermediateDirectories: true)
+
+        var script = template
+        for (token, value) in [
+            ("@CX_APP@", patchedApp.path),
+            ("@BOTTLE@", bottle),
+            // The alias opens the Gryphline launcher (install/update/play) via the direct wine path,
+            // which stays up where the CrossOver GUI's Start button crashes it. Leave the direct
+            // Endfield.exe launch to scripts/launch-endfield.sh.
+            ("@TARGET@", "C:/Program Files/GRYPHLINK/Launcher.exe"),
+            ("@GFXARGS@", ""),
+        ] { script = script.replacingOccurrences(of: token, with: value) }
+
+        let exe = macos.appendingPathComponent("launcher")
+        try script.write(to: exe, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: exe.path)
+
+        let plist = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+        \t<key>CFBundleName</key><string>\(name)</string>
+        \t<key>CFBundleDisplayName</key><string>\(name)</string>
+        \t<key>CFBundleExecutable</key><string>launcher</string>
+        \t<key>CFBundleIdentifier</key><string>io.github.stoicswe.EndfieldFineWine.launcher</string>
+        \t<key>CFBundleShortVersionString</key><string>1.0</string>
+        \t<key>CFBundleVersion</key><string>1.0</string>
+        \t<key>CFBundlePackageType</key><string>APPL</string>
+        \t<key>LSMinimumSystemVersion</key><string>13.0</string>
+        \t<key>LSUIElement</key><true/>
+        \t<key>NSHighResolutionCapable</key><true/>
+        </dict>
+        </plist>
+        """
+        let plistURL = launcher.appendingPathComponent("Contents/Info.plist")
+        try plist.write(to: plistURL, atomically: true, encoding: .utf8)
+        _ = try? run("/usr/bin/plutil", ["-lint", "-s", plistURL.path])
+        _ = try? run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", launcher.path])
+        _ = try? run("/usr/bin/codesign", ["--force", "--sign", "-", launcher.path])
     }
 
     /// Installs Apple's GPTK4 / D3DMetal (the user's own mounted DMG) over CrossOver's bundled
