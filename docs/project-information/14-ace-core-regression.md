@@ -344,8 +344,8 @@ The whole series (31 patches) applies cleanly, and `ntoskrnl.exe`, `lsass.exe` a
 | 3 | `ace-core/0004` | `dwproton/0005` (`593daa15ba`) | `MmCopyMemory` export (stub) + `MM_COPY_ADDRESS` in `wdm.h`. |
 | 5 | `ace-core/0002` | `upstream/0006` | Update the driver security cookie once relocation has happened. |
 | 5 | `ace-core/0006` | `macos/0005` | Real `PsGetProcessExitStatus` (was a `@ stub`). |
-| — | **not ported** | `dwproton/0007` (`84407729bf`) | Keep section views mapped while a locked MDL uses them. Conflicts with this project's CrossOver base; depends on `upstream/0037–0042` (MDL impls), which also conflict. NIKKE-specific; not established as needed for Endfield. |
-| — | **not ported** | `dwproton/0008` (`dac7007ad0`) | `PsGetContextThread` as a PE thunk. This project already implements `PsGetContextThread` via `em-backports/0013`; the NIKKE-specific thunk conflicts and is not needed to launch. |
+| 4 | `ace-core/0010` | `dwproton/0007` (`84407729bf`) | Keep section views mapped while a locked MDL uses them (see §13). |
+| 4 | `ace-core/0014` | `dwproton/0008` (`dac7007ad0`) | `PsGetContextThread` as a thunk around a helper. Without it ACE-CORE calls `KeBugCheckEx` before login. |
 
 **Shipped-module changes.** Because ACE-CORE needs `lsass.exe` (absent from stock CrossOver)
 and the patched `wineboot.exe`, the installers now carry five Wine modules. Updated:
