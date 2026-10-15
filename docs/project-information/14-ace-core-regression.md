@@ -1,7 +1,11 @@
 # 14 — The ACE-CORE regression (Oct 2026): why the game stopped launching
 
-> **Status: the `0x65636157` bug check is FIXED and hardware-verified; the game now fails one
-> ACE stage later with a "security component" error. See §12.**
+> **Status (2026-10-15): the `0x65636157` entry bug check is FIXED and hardware-verified, and the
+> game now launches and is playable.** The two `ACE-CORE*.sys` kernel drivers still raise
+> `KeBugCheckEx 0x65636154` ("Tace") from a background watchdog thread ~1 s after init, and the
+> Service Control Manager reports both services `STOPPED` (**exit 1067 = `ERROR_PROCESS_ABORTED`**)
+> — but gameplay is unaffected because the user-mode ACE path runs in its own process. It is a
+> **timed notify-routine handshake**, not an init check: see **§13.9**.
 > This doc consolidates the Oct-2026 regression (issue [#43](https://github.com/stoicswe/Endfield_FineWine/issues/43)),
 > cross-checks it against other ACE-on-Wine projects, and lays out the ranked hypotheses
 > and the experiments that will settle them. Everything here is either **CONFIRMED** from a
@@ -624,3 +628,169 @@ Instrumented Wine to get the answer from the runtime:
 in‑process single-stepping without changing ACE's behaviour. Combined with §13.7, there is no
 practical Wine-side lever left; a Windows/Parallels reference trace (or upstream coordination)
 is the realistic path. The tracer was reverted.
+
+---
+
+### 13.9 Runtime `"Tace"` is a timed notify-routine handshake `[NEW 2026-10-15]`
+
+Once the `"Wace"`/`DriverEntry` wall (§13.1) and the MDL/section‑view wall (§13.3) are past, the
+`ACE-CORE*.sys` drivers **load successfully and the game is playable** — but they still raise
+`KeBugCheckEx 0x65636154` from a background thread a moment later. A runtime log from the
+deployed `ace-core` series shows the actual shape of the failure:
+
+```text
+582.686 PsSetCreateProcessNotifyRoutineEx   stub
+582.686 PsSetCreateThreadNotifyRoutine      stub
+582.686 PsSetLoadImageNotifyRoutineEx       semi-stub
+582.725 [new thread] KeWaitForMultipleObjects  count 1, timeout ...
+583.727 [same thread] KeBugCheckEx 65636154
+```
+
+- `582.725 → 583.727` is **1.002 s**: a hardcoded handshake **timeout**, not a scan. ACE-CORE
+  registers its callbacks, spawns a worker thread, waits on a single dispatcher object with a
+  1 s timeout, and deliberately bug-checks when it expires — the same `.tvm0` worker thread the
+  §13.8 backtrace located. This refines §13.8's "virtualized self-check": the trigger is a
+  **missed event**, not an opaque predicate.
+- **All three callbacks are dead in Wine** (`dlls/ntoskrnl.exe/ntoskrnl.c`, Wine 11.0 /
+  CrossOver 26.3):
+  - `PsSetCreateProcessNotifyRoutineEx` is a pure `FIXME("stub")` returning `STATUS_SUCCESS` —
+    it never stores the callback (`PsSetCreateProcessNotifyRoutine` was the same).
+  - `PsSetCreateThreadNotifyRoutine` is the same pure stub (`PsRemoveCreateThreadNotifyRoutine`
+    likewise).
+  - `PsSetLoadImageNotifyRoutineEx` is a "semi-stub": it appends to
+    `load_image_notify_routines[]`, but the only dispatch site is inside `load_driver` — it
+    fires **only for `.sys` images loaded via `NtLoadDriver`**, never for a user-mode image such
+    as `ACE-Base64.dll` or a game module.
+- So ACE arms three notifications that Wine accepts but never delivers; its ~1 s watchdog lapses
+  and `"Tace"` fires **by design**.
+
+#### Why the game is still playable, and why exit code 1067
+
+Wine's `KeBugCheckEx` does not halt anything: it logs and `ExitProcess()`es the host. The two
+CORE drivers live in `winedevice.exe` service hosts, so the SCM reports both services `STOPPED`
+with **exit code 1067 = `ERROR_PROCESS_ABORTED`** ("the process terminated unexpectedly") —
+exactly what a killed service host looks like, as opposed to a normal stop.
+
+The game (`Endfield.exe`) and the user-mode ACE path (`ACE-Base64.dll` / `ACE-Service64.exe`)
+run in their **own** processes and have already connected, so gameplay continues. Net:
+"initialized successfully" only means `DriverEntry` returned; the driver then kills itself. The
+bug check is cosmetic *for this build*, but the kernel component is **not running** — any check
+that later requires a live CORE driver would still fail.
+
+#### Experimental lever (`ace-core/0017`)
+
+Supply the event the watchdog is waiting on before its 1 s timeout by making the notify routines
+real. `patches/stage2-dwproton/ace-core/0017-ntoskrnl-Implement-process-and-thread-notify-routines.patch`:
+
+- makes `PsSetCreateProcessNotifyRoutine[Ex]`, `PsSetCreateThreadNotifyRoutine`, and
+  `PsRemoveCreateThreadNotifyRoutine` register/remove real callbacks; and
+- dispatches them from `create_process_object` / `create_thread_object` — the points where Wine
+  first builds a kernel object for a process/thread — with a re-entrancy guard. The Ex callback
+  is handed a synthesized `PS_CREATE_NOTIFY_INFO`.
+
+**Caveats:** Wine creates a process kernel object lazily and possibly more than once per process,
+so the "create" event is not exactly-once as on Windows; load-image notify is still driver-only
+(extending it to user-mode images needs a loader hook).
+
+#### Result (hardware, 2026-10-15): NEGATIVE — the watchdog is not a process/thread-create handshake
+
+Tested on M3 hardware through the Gryphline launcher path, stock module vs the `0017` module, with
+`WINEDEBUG=+ntoskrnl,+module,+loaddll`:
+
+- The registration now takes effect — `PsSetCreateProcessNotifyRoutineEx` and
+  `PsSetCreateThreadNotifyRoutine` are logged as real calls, and the dispatch **fires**: after ACE
+  registers, `call_process_notify_routines` runs for every subsequently-created process
+  (`winewrapper.exe`, `services.exe`, `winedevice.exe`, `plugplay.exe`, `svchost.exe`,
+  `lsass.exe`, …) — e.g. `call_process_notify_routines process 0xA330A0 (winewrapper.exe): 1 Ex + 0 legacy routines`.
+- **`KeBugCheckEx 65636154` still fires**, ~1.05 s after registration, for both
+  `ACE-CORE1024303.sys` and `ACE-CORE2024303.sys`, **identically to the stock module**.
+- Conclusion: supplying process/thread-creation notifications does **not** satisfy the watchdog.
+  It waits on **something else** — not a create-callback, and (from §13.9) not the load-image
+  routine either. The next step is to read the object pointers passed to the two
+  `KeWaitForMultipleObjects` calls (they are visible in the `+ntoskrnl` trace as
+  `objs 0x…FF10`) and identify what each dispatcher object is, rather than guessing at the
+  callback family.
+- Separately: a **direct** `--cx-app Endfield.exe` launch renders a black screen in this bottle;
+  launching through **Gryphline (`Launcher.exe`) → “Launch with DirectX 11”** loads normally. That
+  is a launch-path difference, not the ACE bug check.
+
+#### Wait-object identification (hardware, 2026-10-15): two driver-global auto-reset events
+
+Instrumented `KeWaitForMultipleObjects` (`dlls/ntoskrnl.exe/sync.c`, temporary) to dereference the
+waited-on dispatcher object under `+ntoskrnl`. Both the direct and **launcher** runs agree:
+
+```text
+KeWaitForMultipleObjects count 1, objs 0x…FF10, wait_type 1, … timeout 0x…FF88
+  wait object[0] 0x10045BBD0 type 1 state 0
+  wait object[0] 0x10045BC10 type 1 state 0
+```
+
+- `type 1` = **auto-reset (Synchronization) event**; `state 0` = **unsignaled**.
+- The addresses are **inside the driver image** (`0x100400000+`): each `ACE-CORE*.sys` initializes
+  four events in `DriverEntry` (`KeInitializeEvent … type 1`) — two signaled (`state 1`), two
+  unsignaled (`state 0`). The worker threads wait on the **unsignaled** pair, and **no `KeSetEvent`
+  is ever issued for them** anywhere in the log → the ~1 s timeout → `Tace`.
+- What ACE does in `DriverEntry` immediately before those events (thread `061c`):
+
+  ```text
+  PsSetCreateProcessNotifyRoutineEx / PsSetCreateThreadNotifyRoutine / PsSetLoadImageNotifyRoutineEx
+  ObRegisterCallbacks                                   (stub: fake handle, registers nothing)
+  ExCreateCallback / ExRegisterCallback                 (stubs: callback object is NULL)
+  KeRegisterBugCheckReasonCallback ×2                   (stubs)
+  IoCreateDeviceSecure → IoCreateDevice → IoCreateSymbolicLink
+        \Device\df91a73d…  ←  \??\ef8d11ed…
+  KeInitializeEvent A8D8 / A8F0 (signaled)
+  KeInitializeEvent BBD0 / BC10 (unsignaled)   ← the watchdog waits here
+  ```
+
+So `Tace` is a **kernel↔user handshake timeout**: the driver creates a control device + two
+auto-reset events and waits for something to signal them. The strongest suspects are the
+registrations ACE arms in the same `DriverEntry` that Wine no-ops:
+
+- **`ObRegisterCallbacks`** (`dlls/ntoskrnl.exe/ntoskrnl.c`) returns `STATUS_SUCCESS` and a fake
+  handle `0xdeadbeaf` but registers nothing, so ACE's process/thread **handle-operation callbacks
+  never fire**.
+- **`ExCreateCallback` / `ExRegisterCallback`** are no-ops (`ExCreateCallback` does not even set
+  the out-pointer, so `ExRegisterCallback` is handed `NULL`).
+- The control device `\??\ef8d11ed…`, which ACE's user-mode service would open (IRP path).
+
+**Next experiment:** implement a real `ObRegisterCallbacks` dispatch (invoke the registered
+pre/post callbacks from Wine's process/thread handle-open paths) and check whether `BBD0`/`BC10`
+get signaled before the timeout; otherwise verify whether the ACE user-mode service ever opens
+`\??\ef8d11ed…` (device IRP path).
+
+#### Ob callback experiment (`ace-core/0015`, `0016`): callbacks fire, but the watchdog is cross-process `[NEGATIVE]`
+
+Implemented the suggested next experiment (patches are numbered in **apply** order: the Ob patch is
+`0015`, `IoThreadToProcess` is `0016`, and the notify patch `0017`):
+
+- **`ace-core/0015`** — real `ObRegisterCallbacks`/`ObUnRegisterCallbacks` (store registrations,
+  add the missing `OB_OPERATION_HANDLE_CREATE`/`_DUPLICATE` constants) and dispatch the pre/post
+  callbacks from `ObReferenceObjectByHandle`, with a re-entrancy guard.
+- **`ace-core/0016`** — `IoThreadToProcess` (`PETHREAD → PEPROCESS`), which ACE's pre-op callback
+  calls the moment the dispatch works.
+
+Hardware result (M3, launcher path, `+ntoskrnl`):
+
+- With `0015`, ACE's pre-operation callback **runs** — and immediately hit the then-stubbed
+  `IoThreadToProcess`, aborting the driver host (`wine: Call … to unimplemented function
+  ntoskrnl.exe.IoThreadToProcess, aborting` → the WineDbg pop-up). So registration + dispatch are
+  genuinely wired, and this uncovered a real missing export.
+- With `0015`+`0016`, the abort is gone and the game runs, and the callback is entered **64 times**
+  (108 `PsLookupThreadByThreadId` calls inside it) — but **`KeBugCheckEx 65636154` still fires** and
+  `BBD0`/`BC10` are still never `KeSetEvent`-ed (only the two already-signaled events are).
+
+**Conclusion:** ACE's watchdog is **not** satisfied by in-process handle-*create* callbacks. The
+remaining candidates are all **cross-process**, and Wine's per-process driver model never routes
+them to the `winedevice` host:
+
+- `OB_OPERATION_HANDLE_DUPLICATE` (ACE registered `0x3` = CREATE|DUPLICATE; we only fire CREATE);
+- a handle operation by *another* process (e.g. the game opening a handle to a protected process);
+- the user-mode ACE service opening the control device `\??\ef8d11ed…` (only the creation lines
+  appear — no IRP to that device is observed).
+
+Fully satisfying `Tace` therefore needs **wineserver-level routing** of those events to the driver
+host (analogous to the `get_kernel_obj_list` work in §12.2), not another `ntoskrnl` stub. Because
+the bug check is cosmetic (gameplay is unaffected), `0015`/`0016` are kept as correctness/reference
+improvements — `ObRegisterCallbacks` no longer lies about success, and `IoThreadToProcess` exists —
+**not** as a fix for `Tace`.

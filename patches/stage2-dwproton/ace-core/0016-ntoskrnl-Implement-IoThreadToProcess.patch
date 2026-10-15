@@ -1,0 +1,30 @@
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -498,7 +498,7 @@
+ @ stdcall IoStopTimer(ptr)
+ @ stub IoSynchronousInvalidateDeviceRelations
+ @ stub IoSynchronousPageWrite
+-@ stub IoThreadToProcess
++@ stdcall IoThreadToProcess(ptr)
+ @ stdcall IoUnregisterFileSystem(ptr)
+ @ stub IoUnregisterFsRegistrationChange
+ @ stdcall IoUnregisterPlugPlayNotification(ptr)
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.c b/dlls/ntoskrnl.exe/ntoskrnl.c
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -3011,6 +3011,14 @@
+ {
+     TRACE("%p -> %p\n", thread, thread->kthread.process);
+     return thread->kthread.process;
++}
++
++/*********************************************************************
++ *           IoThreadToProcess    (NTOSKRNL.@)
++ */
++PEPROCESS WINAPI IoThreadToProcess( PETHREAD thread )
++{
++    return PsGetThreadProcess( thread );
+ }
+ 
+ /*********************************************************************

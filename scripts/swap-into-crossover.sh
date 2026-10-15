@@ -25,7 +25,7 @@
 #   DEST_APP   (default /Applications/CrossOver_Endfield_Patch.app)
 #   BUNDLE_ID  (default com.codeweavers.CrossOvEF) — 25 chars matching stock CrossOver
 #   GPTK_DIR   (default ~/Downloads/GPTK_4/redist/lib/external)  — set SKIP_GPTK=1 to skip
-#   MVK_VER    (default 1.4.1)                                    — set SKIP_MVK=1 to skip
+#   MVK_VER    (default 1.4.2)                                    — set SKIP_MVK=1 to skip
 #
 # Optional mod (EFMI) chain step — see docs/mod-injection/{07,08}*.md: points EFMI's d3dx.ini
 # [System] proxy_d3d11 at the backend d3d11.dll inside the patched app, so 3DMigoto hands off to
@@ -41,7 +41,7 @@ DEST_APP="${DEST_APP:-/Applications/CrossOver_Endfield_Patch.app}"
 BUNDLE_ID="${BUNDLE_ID:-com.codeweavers.CrossOvEF}"
 ORIG_BUNDLE_ID="com.codeweavers.CrossOver"
 GPTK_DIR="${GPTK_DIR:-$HOME/Downloads/GPTK_4/redist/lib/external}"
-MVK_VER="${MVK_VER:-1.4.1}"
+MVK_VER="${MVK_VER:-1.4.2}"
 WORK="${TMPDIR:-/tmp}/efw-swap.$$"
 # The app is assembled and sealed here, then moved into place in one step: every modification
 # happens on a fresh copy macOS has never registered, and a half-patched bundle is never visible
