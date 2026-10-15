@@ -1,0 +1,60 @@
+From b234077648ead01ddbe0e4c563df808b90472627 Mon Sep 17 00:00:00 2001
+From: Nello De Gregoris <bluechxindv@gmail.com>
+Date: Thu, 10 Sep 2026 04:28:39 +0200
+Subject: [PATCH] server: Allow creating token kernel objects.
+
+(cherry picked from commit 44ae05436ab58a5d6946676c0fed21f6df2bcae7)
+---
+ server/token.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/server/token.c b/server/token.c
+index b75a589a834..3d36589fedb 100644
+--- a/server/token.c
++++ b/server/token.c
+@@ -120,6 +120,7 @@ struct token
+     struct acl    *default_dacl;    /* the default DACL to assign to objects created by this user */
+     int            impersonation_level; /* impersonation level this token is capable of if non-primary token */
+     int            elevation;       /* elevation type */
++    struct list    kernel_object;   /* list of kernel object pointers */
+ };
+ 
+ struct privilege
+@@ -141,6 +142,7 @@ static void token_dump( struct object *obj, int verbose );
+ static void token_destroy( struct object *obj );
+ static int token_set_sd( struct object *obj, const struct security_descriptor *sd,
+                          unsigned int set_info );
++static struct list *token_get_kernel_obj_list( struct object *obj );
+ 
+ static const struct object_ops token_ops =
+ {
+@@ -162,7 +164,7 @@ static const struct object_ops token_ops =
+     no_link_name,              /* link_name */
+     NULL,                      /* unlink_name */
+     no_open_file,              /* open_file */
+-    no_kernel_obj_list,        /* get_kernel_obj_list */
++    token_get_kernel_obj_list, /* get_kernel_obj_list */
+     no_close_handle,           /* close_handle */
+     token_destroy              /* destroy */
+ };
+@@ -181,6 +183,12 @@ static int token_set_sd( struct object *obj, const struct security_descriptor *s
+     return default_set_sd( obj, sd, set_info & ~LABEL_SECURITY_INFORMATION );
+ }
+ 
++static struct list *token_get_kernel_obj_list( struct object *obj )
++{
++    struct token *token = (struct token *)obj;
++    return &token->kernel_object;
++}
++
+ void security_set_thread_token( struct thread *thread, obj_handle_t handle )
+ {
+     if (!handle)
+@@ -518,6 +526,7 @@ static struct token *create_token( unsigned int primary, unsigned int session_id
+             allocate_luid( &token->modified_id );
+         list_init( &token->privileges );
+         list_init( &token->groups );
++        list_init( &token->kernel_object );
+         token->primary = primary;
+         token->session_id = session_id;
+         /* primary tokens don't have impersonation levels */

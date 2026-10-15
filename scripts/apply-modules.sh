@@ -31,7 +31,7 @@ cleanup(){
 trap cleanup EXIT
 
 log "Checking modules in $MODULES"
-for f in ntdll.so kernel32.dll ntoskrnl.exe lsass.exe wineboot.exe libMoltenVK.dylib CROSSOVER_VERSION SHA256SUMS; do
+for f in ntdll.so kernel32.dll ntoskrnl.exe lsass.exe wineboot.exe wineserver libMoltenVK.dylib CROSSOVER_VERSION SHA256SUMS; do
   [ -f "$MODULES/$f" ] || die "$MODULES/$f not found — run scripts/install-release.sh or follow README.md's source build steps"
 done
 ( cd "$MODULES" && shasum -a 256 -c -s SHA256SUMS ) || die "checksum mismatch in $MODULES"
@@ -123,6 +123,17 @@ swap ntoskrnl.exe x86_64-windows/ntoskrnl.exe
 swap lsass.exe    x86_64-windows/lsass.exe    allow-new
 swap wineboot.exe x86_64-windows/wineboot.exe
 codesign --force --sign - "$CXR/lib/wine/x86_64-unix/ntdll.so"
+
+# The ACE-CORE driver opens kernel objects for every process token; stock CrossOver's server
+# refuses them (set_object_reference returns STATUS_INVALID_HANDLE). Our patched wineserver
+# allows token+directory kernel objects. CrossOver ships the same binary at two paths.
+for dst in "$CXR/bin/wineserver" "$CXR/CrossOver-Hosted Application/wineserver"; do
+  [ -f "$dst" ] || die "wineserver missing: $dst"
+  cp "$dst" "$dst.cxorig"
+  cp "$MODULES/wineserver" "$dst"
+  codesign --force --sign - "$dst"
+  ok "wineserver ($dst)"
+done
 
 if [ -n "$gptk_src" ]; then
   log "Installing GPTK D3DMetal"

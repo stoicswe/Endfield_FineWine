@@ -191,6 +191,13 @@ swap "$B/dlls/kernel32/x86_64-windows/kernel32.dll"     "lib/wine/x86_64-windows
 swap "$B/dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe" "lib/wine/x86_64-windows/ntoskrnl.exe" # ntoskrnl em-backports + ACE-CORE DriverInit/lsass support
 swap "$B/programs/lsass/x86_64-windows/lsass.exe"       "lib/wine/x86_64-windows/lsass.exe"     # new: ACE-CORE requires a running lsass.exe
 swap "$B/programs/wineboot/x86_64-windows/wineboot.exe" "lib/wine/x86_64-windows/wineboot.exe"  # starts the lsass.exe stub at boot
+# ACE-CORE opens kernel objects for each process token; stock CrossOver's server refuses them
+# (set_object_reference fails with STATUS_INVALID_HANDLE). Our server allows token+directory
+# kernel objects. CrossOver ships the same binary at two paths; replace both.
+swap "$B/server/wineserver"                             "bin/wineserver"
+swap "$B/server/wineserver"                             "CrossOver-Hosted Application/wineserver"
+codesign --force --sign - "$CXR/bin/wineserver" 2>/dev/null || true
+codesign --force --sign - "$CXR/CrossOver-Hosted Application/wineserver" 2>/dev/null || true
 
 # CRITICAL: CrossOver's ntdll dlopens cxcompatdb.so (which applies the CX_GRAPHICS_BACKEND
 # choice per process). cxcompatdb.so needs @rpath/libgnutls.30.dylib from lib64/, and dyld

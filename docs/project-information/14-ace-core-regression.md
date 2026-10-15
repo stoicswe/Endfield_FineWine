@@ -1,6 +1,7 @@
 # 14 — The ACE-CORE regression (Oct 2026): why the game stopped launching
 
-> **Status: ROOT CAUSE IDENTIFIED — a working fix exists downstream (not yet ported here).**
+> **Status: the `0x65636157` bug check is FIXED and hardware-verified; the game now fails one
+> ACE stage later with a "security component" error. See §12.**
 > This doc consolidates the Oct-2026 regression (issue [#43](https://github.com/stoicswe/Endfield_FineWine/issues/43)),
 > cross-checks it against other ACE-on-Wine projects, and lays out the ranked hypotheses
 > and the experiments that will settle them. Everything here is either **CONFIRMED** from a
@@ -358,3 +359,269 @@ re-tested here. Deploy and run with `WINEDEBUG=+ntoskrnl,+module,+loaddll`: the
 `import_dll` warnings for the seven exports should be gone, and `KeBugCheckEx 0x65636157`
 should no longer appear. For an existing bottle, ensure `wineboot` re-runs so the `lsass.exe`
 stub is started (recreate the bottle, or run `wineboot`/restart the bottle).
+
+---
+
+## 12. Hardware test (2026-10-15): bug check gone, new "security component" wall
+
+Tested on a real Apple‑Silicon Mac (M‑series) with a patched `CrossOver_Endfield_Patch.app`
+(the `ace-core` series above deployed) and a fresh bottle `Arknights Endfield`, launching
+`Endfield.exe` both **directly** and **through the Gryphline launcher (`Games.exe`)**.
+Captured with `CX_LOG` and `WINEDEBUG=+ntoskrnl,+module,+loaddll,+seh,+process`.
+
+### 12.1 The bug check is fixed `[CONFIRMED]`
+
+- **No `KeBugCheckEx 0x65636157`**, no `unimplemented` imports — the import warnings for the
+  seven exports are gone.
+- `lsass.exe` (the stub from `ace-core/0007`) **starts** and stays up.
+- ACE‑CORE loads (`ACE-CORE1024303.sys`, `ACE-CORE2024303.sys`) in `winedevice.exe` hosts and
+  runs past `DriverInit`; its only faults are two handled reads of
+  `KUSER_SHARED_DATA.TickCount` (`0xFFFFF78000000320`), which Wine's `ntoskrnl` vectored
+  handler emulates. ACE user‑mode also loads (`ACE-Base64.dll`, `ACE-Service64.exe`,
+  `ACE-Setup64.exe`, `ACE-Base.dat`).
+
+**This is further than the reports in issue #43**, which stop at *"unable to load driver"
+`(1-1720-1000015145)`*; we now reach a later ACE stage.
+
+### 12.2 New fix ported: kernel objects for **tokens** and **directories** `[CONFIRMED]`
+
+The ACE‑CORE driver opens a kernel object for **every process token** it enumerates. Stock
+CrossOver's `wineserver` refuses this:
+
+```
+fixme:ntoskrnl:kernel_object_from_handle No constructor for type L"Token"
+fixme:ntoskrnl:alloc_kernel_object set_object_reference failed: 0xc0000008
+fixme:ntoskrnl:ObReferenceObject failed to grab 0x000000003FD10 reference
+```
+
+- Added `patches/stage2-dwproton/ace-core/0008` (token) + `0009` (directory), ported from the
+  downstream's `upstream/0024` + `0002` (`server/token.c`, `server/change.c` —
+  `get_kernel_obj_list` instead of `no_kernel_obj_list`).
+- **The `wineserver` must be shipped for this to take effect** (unlike the other modules,
+  this change is in the server, not a DLL). Added `server/wineserver` to
+  `scripts/build-wine.sh` `MODULES`, `scripts/package.sh`, `scripts/apply-modules.sh`, and
+  `scripts/swap-into-crossover.sh` (CrossOver ships the same binary at both `bin/wineserver`
+  and `CrossOver-Hosted Application/wineserver` — both are replaced and ad‑hoc signed).
+- After deploying: **`set_object_reference failed` is gone**. (The remaining
+  `No constructor for type L"Token"` line is an informational `FIXME` — the object is then
+  allocated and now succeeds.)
+
+### 12.3 The new wall: ACE Center `(1-1812-1020)` `[CONFIRMED]`
+
+The game now shows ACE's own dialog and exits (launcher and direct paths are identical):
+
+> **ACE Center** — *"An exception occurred when the game security component was running,
+> please close unnecessary software or other games, or restart the machine and try again."*
+> `(1-1812-1020)`
+
+Evidence from the captured runs:
+
+- The game main thread sits in the `EndfieldBase.dll` protector (`0F 1F` NOP skips), loads
+  `msimg32.dll`, then builds the error dialog (`blue_button_bmp`, `RtlCaptureStackBackTrace`).
+- No Wine‑level crash: no unhandled fault in any ACE module; no `unimplemented function …,
+  aborting` (so this is **not** the `msimg32.dll.AlphaBlend` abort from GE‑Proton #433).
+- `ACE-Setup64.exe -install -g24303` and `ACE-Service64.exe -autorun` both run and exit
+  cleanly ~1 s later, immediately before the dialog.
+
+### 12.4 `ACE-Helper.exe` is missing and nothing creates it `[CONFIRMED]`
+
+The game calls `CreateProcessInternalW` for
+`…\AntiCheatExpert\ACE-Helper.exe 5000 3`, but:
+
+- **No `NtCreateUserProcess`** results (the launch fails — the file does not exist).
+- The file exists **nowhere** in the bottle, and **no new `.exe` is created** anywhere during
+  a launch (whole‑bottle sweep after the run).
+- The launcher's own integrity check reports **1690/1690 files present**, so `ACE-Helper.exe`
+  is **not a game file** — ACE itself is expected to produce/install it.
+- **`fs_usage -f filesys` (definitive):** during a full launch the *only* file the game writes
+  into the bottle is a 22‑byte hex token in `…/AppData/Local/Temp/onominan.tmp`; the only
+  `ACE-Helper.exe` events are six `fstatat64` existence checks by `Endfield.exe`. Nothing
+  creates, renames, or extracts a helper binary **anywhere**. The "self‑extracting image /
+  write‑file" hypothesis is therefore **disproven** for this component.
+
+This is the strongest concrete lead for `(1-1812-1020)`: an ACE helper component the game
+expects to be installed, which Wine never produces.
+
+### 12.5 Tooling limitation: file/network channels are unavailable
+
+`WINEDEBUG=+file`, `+wininet`, `+ws2_32`, `+relay` produce **no output** in this build (a
+trivial `dir` gives 8089 lines but 0 `:file:` lines) — only `ntoskrnl/seh/module/process/
+loaddll` emit. **File and network operations are therefore not observable via `WINEDEBUG`
+here.** Use an OS‑level tracer instead: **`sudo fs_usage -f filesys` works** and was used for
+the §12.4 result (`sudo -v` first so the backgrounded `sudo fs_usage` reuses the ticket; the
+output buffers, so let it run its full window before stopping it).
+
+### 12.6 Open questions / next steps
+
+1. Does `…\AntiCheatExpert\ACE-Helper.exe` exist on a Windows or Parallels‑WoA install? If
+   yes, where does it come from (shipped by the game, or written by ACE)? A trustworthy
+   Windows reference install (e.g. Parallels, per issue #43) would settle this quickly.
+   **Network probe (2026-10-15):** `sudo fs_usage -f network` prints no remote addresses
+   (only local `mDNSResponder`/launchd socket connects); the ACE binaries contain **no
+   download URLs** (only DigiCert OCSP/CRL), so there is **no evidence ACE downloads the
+   helper**. `tcpdump 'udp port 53'` captured 0 packets on this host (PKTAP/BPF quirk) —
+   re‑try with `-i en0` if a DNS answer is needed.
+2. If it is a **self‑extracted image**, confirm the source container (`ACE-Base64.dll` has
+   four `This program cannot be run in DOS mode` strings, but only its own valid MZ/PE header
+   was found, so a naive embedded‑PE scan does not locate them — the container is likely
+   packed/encrypted). Then look for a Wine write/execute mismatch on the extracted file.
+3. DW‑proton (`dwproton/patches/wine`) runs Endfield's ACE fine on Linux; if #1 shows the
+   helper is produced there, diff the relevant DW‑proton patch. Note `dwproton/0007`
+   (keep section views mapped while a locked MDL uses them) + `upstream/0037–0042` are the
+   only DW‑proton patches **not** ported here (§11) — worth re‑testing if the failure turns
+   out to be an MDL/section‑view issue.
+
+---
+
+## 13. The MDL/section‑view fix (2026‑10‑15): a real advance to a new ACE wall
+
+The §12.6 lead was right: the failure was an **MDL/section‑view** issue, not a missing file.
+
+### 13.1 What ACE‑CORE actually does `[CONFIRMED]`
+
+The driver host (`winedevice.exe`) calls, in sequence:
+
+```
+fixme:ntoskrnl:MmProbeAndLockPages (mdl, 1, 2): stub
+fixme:ntoskrnl:MmMapLockedPagesSpecifyCache (mdl, 0, 1, NULL, 0, 32): stub   <-- returns NULL
+fixme:ntoskrnl:MmUnlockPages (mdl): stub
+```
+
+CrossOver 26.3's `ntoskrnl.exe` has these as **stubs** (`MmMapLockedPagesSpecifyCache`
+returns `NULL`; `MmProbeAndLockPages`/`MmUnlockPages`/`MmUnmapLockedPages` do nothing;
+`MmBuildMdlForNonPagedPool` does nothing). ACE dereferences the `NULL` map pointer — the
+"exception in the security component".
+
+> Note: `ntoskrnl.exe.spec` lists these as `@ stdcall` (not `@ stub`), so a spec‑only
+> cross‑diff is misleading — the *bodies* are stubs. Verify against the source.
+
+### 13.2 The fix `[CONFIRMED]`
+
+Ported `upstream/0037,0039,0040,0042` (the MDL implementations) + `dwproton/0007`
+(keep section views mapped while a locked MDL uses them) as
+**`patches/stage2-dwproton/ace-core/0010`**. They conflict as raw patches (our base is
+newer), so the change was applied by hand and re‑exported as a clean patch.
+
+- `MmProbeAndLockPages`/`MmUnlockPages` set/clear `MDL_PAGES_LOCKED`.
+- `MmBuildMdlForNonPagedPool` sets `MDL_SOURCE_IS_NONPAGED_POOL` + `MappedSystemVa`.
+- `MmMapLockedPagesSpecifyCache` → `MmMapLockedPages` (real `StartVa + ByteOffset`).
+- `MmUnmapLockedPages` clears `MDL_MAPPED_TO_SYSTEM_VA`.
+- `dwproton/0007`: `ZwUnmapViewOfSection` defers unmapping a view while a locked MDL maps
+  it (`mapped_views` list; `add_mapped_view` on `MmMapLockedPages`, `remove_mapped_view` on
+  `MmUnmapLockedPages`/`IoFreeMdl`).
+
+### 13.3 Effect on hardware `[CONFIRMED]`
+
+| Stage | Unhandled write fault `0x10042AA83` → `0x7FF001D40188` | Bug check |
+|---|---|---|
+| Before (stubs) | present | none (ACE error dialog) |
+| MDL impls only | present | `0x65636154` ("Tace") |
+| + `dwproton/0007` | **gone** | `0x65636154` ("Tace") |
+
+So the NULL deref and the section‑view write fault are both fixed. ACE‑CORE now
+*deliberately* `KeBugCheckEx 0x65636154` (**"Tace"**, little‑endian ASCII) — a **new, later**
+wall than the original `0x65636157` ("Wace") `DriverInit` check. (`0x6563615x` decodes to
+the four‑byte strings "Wace"/"Tace".)
+
+**Still open:** what `"Tace"` checks. The bug check fires on the driver host's watchdog
+thread ~0.3 s after the process‑enumeration + KUSER_SHARED_DATA phase, with no preceding
+unhandled fault — so it looks like another ACE anti‑emulator/consistency check. `/tmp/ef-mdl3.log`
+has the full trace.
+
+### 13.4 Small missing pieces ported (no change to the wall)
+
+Ported the downstream's remaining non‑test ntoskrnl bits as **`ace-core/0011`**
+(`FsRtlGetFileSize`, `PsGetProcessPeb`, `PsDereferencePrimaryToken`, `KdChangeOption` stub) —
+all four were stubs/missing here. Result: **no change** — still `KeBugCheckEx 0x65636154`
+("Tace"), identical exception list. They were added for parity with the downstream.
+
+Just before the `"Tace"` bug check, the driver host also registers a filesystem minifilter:
+
+```
+fixme:fltmgr:FltRegisterFilter ...
+fixme:fltmgr:FltStartFiltering (00000000DEADBEAF): stub
+```
+
+`dlls/fltmgr.sys` returns a fake filter handle and "success" (the downstream does not touch
+fltmgr), so `"Tace"` is not simply "the filter failed to start". Tested (negative): a stub
+`ACE-Helper.exe` (the `lsass.exe` stub copied into `AntiCheatExpert\`) makes the game's
+`CreateProcess`/`NtCreateUserProcess` succeed and the process stay resident, but
+`KeBugCheckEx 0x65636154` **still fires**. So ACE‑Helper's absence is not the trigger.
+
+**Next for `"Tace"`:** a Windows/Parallels reference trace of `ACE-CORE` reaching this stage
+(the trigger looks like another deliberate anti‑emulator/consistency check, possibly tied to
+the `FltRegisterFilter`/`FltStartFiltering` minifilter handshake, which Wine stubs).
+
+### 13.5 What the wider community has (and hasn't) solved (2026‑10‑15)
+
+Searched DW‑proton (the known‑good Linux reference), the GE‑Proton tracker and the web. There
+is **no documented fix for `0x65636154` ("Tace")** anywhere — this is past what anyone has
+posted. The relevant prior art:
+
+- **DW‑proton #55 (NIKKE)**: ACE *"Unable to load driver"* after a client patch; fixed in
+  `dwproton-11.0-13`. Its release notes say the fix *"should also apply to other games if/when
+  they get similar updates"* — and it **is** the upstream MDL + section‑view patch group we
+  ported as `ace-core/0010`. So the documented Endfield/NIKKE ACE fix is already in.
+- **DW‑proton #64 (Arknights: Endfield, Exit 222)**: blamed `Inbv*` /
+  `PsGetProcessExitProcessCalled` stubs — **rejected as AI slop** (the real cause was the
+  reporter's own launch command; vanilla worked).
+- **DW‑proton #66 (CODM)**: after fixing driver load, ACE hit `IoGetBaseFileSystemDeviceObject`
+  — closed (competitive game, unsupported).
+- **DW‑proton #34 (CZN)/#30 (Endfield)** and **DW‑proton #10 (NTE)**: the same "Unable to load
+  driver" / `Token` kernel‑object logs we saw; #10's resolution was unrelated (Wayland driver).
+
+### 13.6 Parity stubs added (`ace-core/0012`)
+
+Implemented the exports those reports name, which this base still has as `@ stub` (and a
+`@ stub` aborts via `__wine_spec_unimplemented_stub` if a driver calls it): the `Inbv*` family,
+`PsGetProcessExitProcessCalled`, `SeQueryInformationToken`, and
+`IoGetBaseFileSystemDeviceObject`. Tested: **no change** — none of them are actually called in
+our run (0 stub aborts), so this is hardening for other ACE builds, not the `"Tace"` fix.
+
+**Conclusion:** `"Tace"` remains undocumented. The next real step is a Windows/Parallels
+reference trace of `ACE-CORE` reaching this stage.
+
+### 13.7 Aligned em-backports to current upstream (`ace-core/0013`)
+
+Cross-diffed our `em-backports/*` against the downstream's current `upstream/*` series (the
+reorg in `mary-ext@a0ebeae`). Every downstream function is present; the implementations
+differed in ~10 places, mostly cosmetic/win64‑equivalent (e.g. `FASTCALL` calling convention).
+Ported the semantically-different ones to the current upstream versions:
+
+- `PsGetContextThread` → 3‑arg `(PETHREAD, CONTEXT*, KPROCESSOR_MODE)` (spec `(ptr ptr long)`).
+- `PsReferencePrimaryToken` → open the token (`NtOpenProcessToken` + `ObReferenceObjectByHandle(SeTokenObjectType)`).
+- `SeLocateProcessImageName` → `NtQueryInformationProcess(ProcessImageFileName)` via `ObOpenObjectByPointer`.
+- `MmGetPhysicalMemoryRanges` → allocated 2-range array with a **byte** base address (`MmLowestPhysicalPage * PageSize`); the old code returned a page number as the base.
+- `KeAcquire/ReleaseGuardedMutex[Unsafe]` + `KeInitializeGuardedMutex` → `FASTCALL` + `DEFINE_FASTCALL1_WRAPPER` (+ `-fastcall` spec).
+
+Tested: **no change** — still `KeBugCheckEx 0x65636154` ("Tace"). So the `em-backports`↔
+`upstream` delta is *not* the residual cause; this is parity/correctness work.
+
+**Net:** the load-bearing part of `mary-ext@a0ebeae` (the upstream MDL impls + `dwproton/0007`)
+was already in as `ace-core/0010`, and the remaining differences don't explain `"Tace"`.
+
+### 13.8 Dynamic tracing attempt (2026‑10‑15): too invasive to observe `"Tace"`
+
+Instrumented Wine to get the answer from the runtime:
+
+1. **Backtrace at the bug check.** `KeBugCheckEx` (which just logs + `ExitProcess(code)`)
+   was made to dump `RtlCaptureStackBackTrace`, giving the call chain:
+   `ntdll/kernel32 thread start → ACE-CORE+0x192783 → ACE-CORE+0x1C7033 → KeBugCheckEx(0x65636154)`
+   (ACE-CORE mapped at `0x100400000`). So `"Tace"` is raised from an ACE-CORE **worker thread**
+   inside the packed `.tvm0` section (`RVA 0x1C7033`, caller `0x192783`).
+2. **Live code dump** at those frames (raw bytes → `x86_64-w64-mingw32-objdump`) shows the code
+   is **VMProtect/TenProtect-virtualized**: `movabs` opaque constants + `pushfq`/`add`/`popf`
+   opaque predicates + `jmp reg` computed dispatches + `call rel32` into VM offsets. There is no
+   readable check, and the `"Tace"`/`"Wace"` constants are not in the image (computed at runtime).
+3. **Single-step RIP tracer.** Added a `FINE_WINE_VMTRACE` (env or `C:\vmtrace`) single-step
+   tracer to the `ntoskrnl` vectored handler (ring buffer of RIPs, dumped at `KeBugCheckEx`).
+   Result: with stepping active, ACE **never reaches `Tace`** — it fails earlier with
+   **"Unable to connect to ACE service" `(1-1705-0)`**. The ~1000× slowdown trips ACE's own
+   service‑connection timeout. So full single-step tracing is *self‑defeating* here.
+   (Also: `WINEDEBUG`/env vars don't reach the driver host, so its per‑single‑step `+seh` logging
+   ballooned the log to ~3.9 GB for ~0 observable benefit.)
+
+**Conclusion:** `"Tace"` is a deliberate, virtualized self-check that can't be observed by
+in‑process single-stepping without changing ACE's behaviour. Combined with §13.7, there is no
+practical Wine-side lever left; a Windows/Parallels reference trace (or upstream coordination)
+is the realistic path. The tracer was reverted.

@@ -1,0 +1,237 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: FineWine <noreply@localhost>
+Date: Thu, 15 Oct 2026 12:45:00 +0000
+Subject: [PATCH] ntoskrnl.exe: Add Inbv family and remaining ACE-adjacent stubs.
+
+Implements exports that Wine leaves as `@ stub` (which abort via
+__wine_spec_unimplemented_stub if a driver calls them): the Inbv* boot-video
+family, PsGetProcessExitProcessCalled, SeQueryInformationToken and
+IoGetBaseFileSystemDeviceObject (minifilter base-volume query).
+
+Reported needed by ACE games: dwproton #64 (Endfield Inbv/PsGetProcessExitProcessCalled)
+and #66 (CODM IoGetBaseFileSystemDeviceObject).  Not observed to be called by
+ACE-CORE here, so this is parity/hardening rather than a confirmed fix.
+---
+ dlls/ntoskrnl.exe/ntoskrnl.c        | 110 ++++++++++++++++++++++++++++
+ dlls/ntoskrnl.exe/ntoskrnl.exe.spec |  16 +++++-----
+ 2 files changed, 122 insertions(+), 4 deletions(-)
+
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -1401,6 +1401,15 @@
+     work_item->worker = worker;
+     work_item->context = context;
+     TrySubmitThreadpoolCallback( run_work_item_worker, work_item, NULL );
++}
++
++/***********************************************************************
++ *           IoGetBaseFileSystemDeviceObject   (NTOSKRNL.EXE.@)
++ */
++DEVICE_OBJECT *WINAPI IoGetBaseFileSystemDeviceObject( FILE_OBJECT *file )
++{
++    FIXME( "semi-stub: %p\n", file );
++    return NULL;
+ }
+ 
+ /***********************************************************************
+@@ -2717,6 +2726,15 @@
+ }
+ 
+ /*********************************************************************
++ *           PsGetProcessExitProcessCalled    (NTOSKRNL.@)
++ */
++BOOLEAN WINAPI PsGetProcessExitProcessCalled( PEPROCESS process )
++{
++    TRACE( "%p\n", process );
++    return FALSE;
++}
++
++/*********************************************************************
+  *           PsGetProcessExitStatus    (NTOSKRNL.@)
+  */
+ NTSTATUS WINAPI PsGetProcessExitStatus( PEPROCESS process )
+@@ -4778,6 +4796,16 @@
+ }
+ 
+ /*********************************************************************
++ *           SeQueryInformationToken    (NTOSKRNL.@)
++ */
++NTSTATUS WINAPI SeQueryInformationToken(PACCESS_TOKEN token, TOKEN_INFORMATION_CLASS token_info_class, PVOID *token_info)
++{
++    FIXME("stub: %p %u %p\n", token, token_info_class, token_info);
++    if (token_info) *token_info = NULL;
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++/*********************************************************************
+  *           SeLocateProcessImageName    (NTOSKRNL.@)
+  */
+ NTSTATUS WINAPI SeLocateProcessImageName(PEPROCESS process, UNICODE_STRING **image_name)
+@@ -5232,6 +5260,107 @@
+     return STATUS_SUCCESS;
+ }
+ 
++/*********************************************************************
++ *           InbvAcquireDisplayOwnership    (NTOSKRNL.@)
++ */
++void WINAPI InbvAcquireDisplayOwnership(void)
++{
++    TRACE("\n");
++}
++
++/*********************************************************************
++ *           InbvResetDisplay    (NTOSKRNL.@)
++ */
++BOOLEAN WINAPI InbvResetDisplay(void)
++{
++    TRACE("\n");
++    return TRUE;
++}
++
++/*********************************************************************
++ *           InbvCheckDisplayOwnership    (NTOSKRNL.@)
++ */
++BOOLEAN WINAPI InbvCheckDisplayOwnership(void)
++{
++    TRACE("\n");
++    return TRUE;
++}
++
++/*********************************************************************
++ *           InbvNotifyDisplayOwnershipLost    (NTOSKRNL.@)
++ */
++void WINAPI InbvNotifyDisplayOwnershipLost(void *callback)
++{
++    TRACE("%p\n", callback);
++}
++
++/*********************************************************************
++ *           InbvDisplayString    (NTOSKRNL.@)
++ */
++void WINAPI InbvDisplayString(char *string)
++{
++    TRACE("%s\n", debugstr_a(string));
++}
++
++/*********************************************************************
++ *           InbvEnableBootDriver    (NTOSKRNL.@)
++ */
++void WINAPI InbvEnableBootDriver(BOOLEAN enable)
++{
++    TRACE("%u\n", enable);
++}
++
++/*********************************************************************
++ *           InbvEnableDisplayString    (NTOSKRNL.@)
++ */
++BOOLEAN WINAPI InbvEnableDisplayString(BOOLEAN enable)
++{
++    TRACE("%u\n", enable);
++    return TRUE;
++}
++
++/*********************************************************************
++ *           InbvInstallDisplayStringFilter    (NTOSKRNL.@)
++ */
++void WINAPI InbvInstallDisplayStringFilter(void *filter)
++{
++    TRACE("%p\n", filter);
++}
++
++/*********************************************************************
++ *           InbvIsBootDriverInstalled    (NTOSKRNL.@)
++ */
++BOOLEAN WINAPI InbvIsBootDriverInstalled(void)
++{
++    TRACE("\n");
++    return FALSE;
++}
++
++/*********************************************************************
++ *           InbvSetScrollRegion    (NTOSKRNL.@)
++ */
++void WINAPI InbvSetScrollRegion(ULONG left, ULONG top, ULONG right, ULONG bottom)
++{
++    TRACE("%lu %lu %lu %lu\n", left, top, right, bottom);
++}
++
++/*********************************************************************
++ *           InbvSetTextColor    (NTOSKRNL.@)
++ */
++ULONG WINAPI InbvSetTextColor(ULONG color)
++{
++    TRACE("%lx\n", color);
++    return 0;
++}
++
++/*********************************************************************
++ *           InbvSolidColorFill    (NTOSKRNL.@)
++ */
++void WINAPI InbvSolidColorFill(ULONG left, ULONG top, ULONG right, ULONG bottom, ULONG color)
++{
++    TRACE("%lu %lu %lu %lu %lx\n", left, top, right, bottom, color);
++}
++
+ /*****************************************************
+  *           DllMain
+  */
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -315,18 +315,18 @@
+ @ stub HalDispatchTable
+ @ stub HalPrivateDispatchTable
+ @ stub HeadlessDispatch
+-@ stub InbvAcquireDisplayOwnership
+-@ stub InbvCheckDisplayOwnership
+-@ stub InbvDisplayString
+-@ stub InbvEnableBootDriver
+-@ stub InbvEnableDisplayString
+-@ stub InbvInstallDisplayStringFilter
+-@ stub InbvIsBootDriverInstalled
+-@ stub InbvNotifyDisplayOwnershipLost
+-@ stub InbvResetDisplay
+-@ stub InbvSetScrollRegion
+-@ stub InbvSetTextColor
+-@ stub InbvSolidColorFill
++@ stdcall InbvAcquireDisplayOwnership()
++@ stdcall InbvCheckDisplayOwnership()
++@ stdcall InbvDisplayString(str)
++@ stdcall InbvEnableBootDriver(long)
++@ stdcall InbvEnableDisplayString(long)
++@ stdcall InbvInstallDisplayStringFilter(ptr)
++@ stdcall InbvIsBootDriverInstalled()
++@ stdcall InbvNotifyDisplayOwnershipLost(ptr)
++@ stdcall InbvResetDisplay()
++@ stdcall InbvSetScrollRegion(long long long long)
++@ stdcall InbvSetTextColor(long)
++@ stdcall InbvSolidColorFill(long long long long long)
+ @ extern InitSafeBootMode
+ @ stdcall IoAcquireCancelSpinLock(ptr)
+ @ stdcall IoAcquireRemoveLockEx(ptr ptr str long long)
+@@ -402,7 +402,7 @@
+ @ stdcall IoFreeWorkItem(ptr)
+ @ stdcall IoGetAttachedDevice(ptr)
+ @ stdcall IoGetAttachedDeviceReference(ptr)
+-@ stub IoGetBaseFileSystemDeviceObject
++@ stdcall IoGetBaseFileSystemDeviceObject(ptr)
+ @ stub IoGetBootDiskInformation
+ @ stdcall IoGetConfigurationInformation()
+ @ stdcall IoGetCurrentProcess()
+@@ -933,7 +933,7 @@
+ @ stub PsGetJobUIRestrictionsClass
+ @ stdcall PsGetProcessCreateTimeQuadPart(ptr)
+ @ stub PsGetProcessDebugPort
+-@ stub PsGetProcessExitProcessCalled
++@ stdcall PsGetProcessExitProcessCalled(ptr)
+ @ stdcall PsGetProcessExitStatus(ptr)
+ @ stub PsGetProcessExitTime
+ @ stdcall PsGetProcessId(ptr)
+@@ -1376,7 +1376,7 @@
+ @ stub SePrivilegeObjectAuditAlarm
+ @ stub SePublicDefaultDacl
+ @ stub SeQueryAuthenticationIdToken
+-@ stub SeQueryInformationToken
++@ stdcall SeQueryInformationToken(ptr long ptr)
+ @ stub SeQuerySecurityDescriptorInfo
+ @ stub SeQuerySessionIdToken
+ @ stub SeRegisterLogonSessionTerminatedRoutine

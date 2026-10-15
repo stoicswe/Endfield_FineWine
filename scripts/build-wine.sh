@@ -32,7 +32,7 @@ SRC_URL="https://media.codeweavers.com/pub/crossover/source/crossover-sources-${
 WINE_SRC="$BUILD_DIR/wine-src"          # extracted sources/wine
 WINE_BUILD="$BUILD_DIR/wine-build64"    # out-of-tree 64-bit build
 WINE_OUT="$BUILD_DIR/wine-out"
-MODULES="dlls/ntdll/ntdll.so dlls/kernel32/x86_64-windows/kernel32.dll dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe programs/lsass/x86_64-windows/lsass.exe programs/wineboot/x86_64-windows/wineboot.exe"
+MODULES="dlls/ntdll/ntdll.so dlls/kernel32/x86_64-windows/kernel32.dll dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe programs/lsass/x86_64-windows/lsass.exe programs/wineboot/x86_64-windows/wineboot.exe server/wineserver"
 BREW="$(command -v brew || echo /opt/homebrew/bin/brew)"
 export MACOSX_DEPLOYMENT_TARGET=10.15
 

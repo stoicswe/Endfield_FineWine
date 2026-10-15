@@ -1,0 +1,291 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: FineWine <noreply@localhost>
+Date: Thu, 15 Oct 2026 12:55:00 +0000
+Subject: [PATCH] ntoskrnl.exe: Align ACE-relevant implementations with current upstream.
+
+Updates the em-backports-era implementations to match the downstream's current
+upstream series: PsGetContextThread (3-arg with KPROCESSOR_MODE), PsReferencePrimaryToken,
+SeLocateProcessImageName, MmGetPhysicalMemoryRanges (allocated ranges, byte base), and
+FASTCALL guarded mutexes.
+
+Source: mary-ext/crossover-wine-endfield wine/upstream/0007,0008,0009,0026,0029,0031,0043.
+No effect on the "Tace" bug check here (kept for parity/correctness).
+---
+ dlls/ntoskrnl.exe/ntoskrnl.c        | ~
+ dlls/ntoskrnl.exe/sync.c            | ~
+ dlls/ntoskrnl.exe/ntoskrnl.exe.spec | ~
+
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -2791,9 +2791,32 @@
+  */
+ PACCESS_TOKEN WINAPI PsReferencePrimaryToken( PEPROCESS process )
+ {
+-    TRACE("%p -> %p\n", process, process->token);
+-    ObReferenceObject(process->token);
+-    return process->token;
++    NTSTATUS status;
++    HANDLE h, token;
++    PACCESS_TOKEN ret = NULL;
++
++    TRACE("%p\n", process);
++
++    if ((status = ObOpenObjectByPointer(process, 0, NULL, PROCESS_ALL_ACCESS, NULL, KernelMode, &h)))
++    {
++        WARN("Error opening process object, status %#lx.\n", status);
++        return NULL;
++    }
++
++    if ((status = NtOpenProcessToken(h, TOKEN_ALL_ACCESS, &token)))
++    {
++        NtClose(h);
++        return NULL;
++    }
++
++    if ((status = ObReferenceObjectByHandle(token, TOKEN_ALL_ACCESS, SeTokenObjectType,
++                                            KernelMode, &ret, NULL)))
++        ret = NULL;
++
++    NtClose(token);
++    NtClose(h);
++
++    return ret;
+ }
+ 
+ static void *create_thread_object( HANDLE handle )
+@@ -2911,16 +2934,25 @@
+ /*********************************************************************
+  *           PsGetContextThread    (NTOSKRNL.@)
+  */
+-NTSTATUS WINAPI PsGetContextThread(PETHREAD thread, CONTEXT *context)
++NTSTATUS WINAPI PsGetContextThread(PETHREAD thread, CONTEXT *context, KPROCESSOR_MODE mode)
+ {
+     NTSTATUS status;
+-    HANDLE handle, id = PsGetThreadId(thread);
+-
+-    if (!(handle = OpenThread(THREAD_ALL_ACCESS, FALSE, HandleToUlong(id))))
+-        return STATUS_NOT_FOUND;
+-
+-    status = NtGetContextThread(handle, context);
+-    NtClose(handle);
++    HANDLE h;
++
++    TRACE("%p %p %u\n", thread, context, mode);
++
++    if (mode == KernelMode)
++        return STATUS_UNSUCCESSFUL;
++
++    if ((status = ObOpenObjectByPointer(thread, 0, NULL, THREAD_ALL_ACCESS, NULL, KernelMode, &h)))
++    {
++        WARN("Error opening thread object, status %#lx.\n", status);
++        return status;
++    }
++
++    status = NtGetContextThread(h, context);
++    NtClose(h);
++
+     return status;
+ }
+ 
+@@ -3314,20 +3346,27 @@
+ 
+ PHYSICAL_MEMORY_RANGE *WINAPI MmGetPhysicalMemoryRanges(void)
+ {
+-    static volatile LONG once;
+-    static PHYSICAL_MEMORY_RANGE range;
+     SYSTEM_BASIC_INFORMATION info;
+-
+-    TRACE("\n");
+-
+-    if (!InterlockedCompareExchange(&once, 1, 0))
+-    {
+-        NtQuerySystemInformation(SystemBasicInformation, &info, sizeof(info), NULL);
+-        range.BaseAddress.QuadPart = info.MmLowestPhysicalPage;
+-        range.NumberOfBytes.QuadPart = info.MmNumberOfPhysicalPages * info.PageSize;
+-    }
+-
+-    return &range;
++    PHYSICAL_MEMORY_RANGE *ranges;
++    NTSTATUS status;
++
++    TRACE( "()\n" );
++
++    if ((status = NtQuerySystemInformation( SystemBasicInformation, &info, sizeof(info), NULL )))
++    {
++        WARN( "failed to query system information, status %#lx\n", status );
++        return NULL;
++    }
++
++    if (!(ranges = ExAllocatePool( NonPagedPool, 2 * sizeof(*ranges) )))
++        return NULL;
++
++    /* FIXME: Windows returns actual hardware ranges, we report the correct size but in one range */
++    ranges[0].BaseAddress.QuadPart = (ULONGLONG)info.MmLowestPhysicalPage * info.PageSize;
++    ranges[0].NumberOfBytes.QuadPart = (ULONGLONG)info.MmNumberOfPhysicalPages * info.PageSize;
++    memset( &ranges[1], 0, sizeof(ranges[1]) );
++
++    return ranges;
+ }
+ 
+ /***********************************************************************
+--- a/dlls/ntoskrnl.exe/sync.c
++++ b/dlls/ntoskrnl.exe/sync.c
+@@ -429,7 +429,8 @@
+ /***********************************************************************
+  *           KeInitializeGuardedMutex   (NTOSKRNL.EXE.@)
+  */
+-void WINAPI KeInitializeGuardedMutex(PKGUARDED_MUTEX mutex)
++DEFINE_FASTCALL1_WRAPPER(KeInitializeGuardedMutex)
++void FASTCALL KeInitializeGuardedMutex(PKGUARDED_MUTEX mutex)
+ {
+     TRACE("mutex %p.\n", mutex);
+     mutex->Count = FM_LOCK_BIT;
+@@ -441,7 +442,8 @@
+ /***********************************************************************
+  *           KeAcquireGuardedMutexUnsafe   (NTOSKRNL.EXE.@)
+  */
+-void WINAPI KeAcquireGuardedMutexUnsafe(PKGUARDED_MUTEX mutex)
++DEFINE_FASTCALL1_WRAPPER(KeAcquireGuardedMutexUnsafe)
++void FASTCALL KeAcquireGuardedMutexUnsafe(PKGUARDED_MUTEX mutex)
+ {
+     LONG count;
+ 
+@@ -455,7 +457,8 @@
+ /***********************************************************************
+  *           KeAcquireGuardedMutex   (NTOSKRNL.EXE.@)
+  */
+-void WINAPI KeAcquireGuardedMutex(PKGUARDED_MUTEX mutex)
++DEFINE_FASTCALL1_WRAPPER(KeAcquireGuardedMutex)
++void FASTCALL KeAcquireGuardedMutex(PKGUARDED_MUTEX mutex)
+ {
+     /* FIXME: Enter Guarded Region */
+     KeAcquireGuardedMutexUnsafe(mutex);
+@@ -482,7 +485,8 @@
+ /***********************************************************************
+  *           KeReleaseGuardedMutexUnsafe   (NTOSKRNL.EXE.@)
+  */
+-void WINAPI KeReleaseGuardedMutexUnsafe(PKGUARDED_MUTEX mutex)
++DEFINE_FASTCALL1_WRAPPER(KeReleaseGuardedMutexUnsafe)
++void FASTCALL KeReleaseGuardedMutexUnsafe(PKGUARDED_MUTEX mutex)
+ {
+     LONG count;
+ 
+@@ -496,7 +500,8 @@
+ /***********************************************************************
+  *           KeReleaseGuardedMutex   (NTOSKRNL.EXE.@)
+  */
+-void WINAPI KeReleaseGuardedMutex(PKGUARDED_MUTEX mutex)
++DEFINE_FASTCALL1_WRAPPER(KeReleaseGuardedMutex)
++void FASTCALL KeReleaseGuardedMutex(PKGUARDED_MUTEX mutex)
+ {
+     KeReleaseGuardedMutexUnsafe(mutex);
+     /* FIXME: Leave Guarded Region */
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -52,8 +52,8 @@
+ @ stdcall -fastcall IofCompleteRequest(ptr long)
+ @ stdcall -arch=!i386 KeAcquireInStackQueuedSpinLock(ptr ptr)
+ @ stdcall -fastcall KeAcquireInStackQueuedSpinLockAtDpcLevel(ptr ptr)
+-@ stdcall KeAcquireGuardedMutexUnsafe(ptr)
+-@ stdcall KeAcquireGuardedMutex(ptr)
++@ stdcall -fastcall KeAcquireGuardedMutexUnsafe(ptr)
++@ stdcall -fastcall KeAcquireGuardedMutex(ptr)
+ @ stdcall KeTryToAcquireGuardedMutex(ptr)
+ @ stdcall KeEnterGuardedRegion()
+ @ stdcall KeExpandKernelStackAndCallout(ptr ptr long)
+@@ -61,8 +61,8 @@
+ @ stdcall KeLeaveGuardedRegion()
+ @ stdcall -arch=!i386 KeReleaseInStackQueuedSpinLock(ptr)
+ @ stdcall -fastcall KeReleaseInStackQueuedSpinLockFromDpcLevel(ptr)
+-@ stdcall KeReleaseGuardedMutexUnsafe(ptr)
+-@ stdcall KeReleaseGuardedMutex(ptr)
++@ stdcall -fastcall KeReleaseGuardedMutexUnsafe(ptr)
++@ stdcall -fastcall KeReleaseGuardedMutex(ptr)
+ @ stub KeSetTimeUpdateNotifyRoutine
+ @ stub KefAcquireSpinLockAtDpcLevel
+ @ stub KefReleaseSpinLockFromDpcLevel
+@@ -591,7 +591,7 @@
+ @ stub KeInitializeInterrupt
+ @ stub KeInitializeMutant
+ @ stdcall KeInitializeMutex(ptr long)
+-@ stdcall KeInitializeGuardedMutex(ptr)
++@ stdcall -fastcall KeInitializeGuardedMutex(ptr)
+ @ stub KeInitializeQueue
+ @ stdcall KeInitializeSemaphore(ptr long long)
+ @ stdcall KeInitializeSpinLock(ptr) NTOSKRNL_KeInitializeSpinLock
+@@ -918,7 +918,7 @@
+ @ stdcall PsDereferencePrimaryToken(ptr)
+ @ stub PsDisableImpersonation
+ @ stub PsEstablishWin32Callouts
+-@ stdcall PsGetContextThread(ptr ptr)
++@ stdcall PsGetContextThread(ptr ptr long)
+ @ stdcall PsGetCurrentProcess() IoGetCurrentProcess
+ @ stdcall PsGetCurrentProcessId()
+ @ stdcall PsGetCurrentProcessSessionId()
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -4851,40 +4851,43 @@
+ {
+     ULONG len;
+     NTSTATUS status;
+-    HANDLE handle, id = PsGetProcessId(process);
++    HANDLE h;
+ 
+     TRACE("%p %p\n", process, image_name);
+ 
+     if (!image_name) return STATUS_INVALID_PARAMETER;
+ 
+-    if (!(handle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, HandleToUlong(id))))
+-        return STATUS_NOT_FOUND;
+-
+-    NtQueryInformationProcess(handle, ProcessImageFileNameWin32, *image_name, 0, &len);
+-
+-    len += sizeof(WCHAR);
+-
+-    *image_name = ExAllocatePool(PagedPool, len);
+-
+-    if (!*image_name)
+-    {
+-        NtClose(handle);
++    if ((status = ObOpenObjectByPointer(process, 0, NULL, PROCESS_ALL_ACCESS, NULL, KernelMode, &h)))
++    {
++        WARN("Error opening process object, status %#lx.\n", status);
++        return status;
++    }
++
++    status = NtQueryInformationProcess(h, ProcessImageFileName, NULL, 0, &len);
++    if (status != STATUS_INFO_LENGTH_MISMATCH)
++    {
++        NtClose(h);
++        return status;
++    }
++
++    len += sizeof(WCHAR) + sizeof(UNICODE_STRING);
++
++    if (!(*image_name = ExAllocatePool(PagedPool, len)))
++    {
++        NtClose(h);
+         return STATUS_NO_MEMORY;
+     }
+ 
+-    (*image_name)->MaximumLength = len;
+-
+-    if ((status = NtQueryInformationProcess(handle, ProcessImageFileNameWin32,
++    if ((status = NtQueryInformationProcess(h, ProcessImageFileName,
+                                             *image_name, len - sizeof(WCHAR), &len)))
+     {
+-        NtClose(handle);
++        ExFreePool(*image_name);
++        *image_name = NULL;
++        NtClose(h);
+         return status;
+     }
+ 
+-    TRACE("ret: %s\n", debugstr_us(*image_name));
+-
+-    NtClose(handle);
+-
++    NtClose(h);
+     return STATUS_SUCCESS;
+ }
+ 
