@@ -13,7 +13,13 @@ struct PayloadModule {
     let payloadSubpath: String    // relative to Resources/payload/
     let crossoverSubpath: String  // relative to Contents/SharedSupport/CrossOver/
     /// true when CrossOver ships no stock copy of this module (e.g. lsass.exe) and we add it.
-    let isNew: Bool = false
+    let isNew: Bool
+
+    init(payloadSubpath: String, crossoverSubpath: String, isNew: Bool = false) {
+        self.payloadSubpath = payloadSubpath
+        self.crossoverSubpath = crossoverSubpath
+        self.isNew = isNew
+    }
 }
 
 enum Payload {
