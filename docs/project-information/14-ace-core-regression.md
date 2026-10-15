@@ -857,3 +857,42 @@ cross-process. With this, every delivered Wine-side event mechanism has been exh
 The only callback family Wine still does not deliver is user-mode load-image notifications, but the
 cross-process Ob analogue (the closest match) did not help, so it is a weak lead. `Tace` remains a
 **cosmetic** kernel-component watchdog timeout: the user-mode ACE path keeps the game playable.
+
+#### Cross-process load-image notifications (`0019`) `[implemented; NEGATIVE — closes the callback hypothesis]`
+
+Implemented the last untried callback family:
+
+- `server/protocol.def`: `IRP_CALL_IMG` + `union irp_params.img` (image name carried in the IRP
+  input buffer via a new `create_iosb_buffer()` in `server/async.c`).
+- `server/mapping.c:add_process_view`: fires `notify_image_load()` on every `SEC_IMAGE` view.
+- `server/device.c`: `notify_image_load()` queues an `IRP_CALL_IMG` to each interested manager;
+  on `ob_register_callbacks` it also calls `replay_image_loads()` (`server/process.c`) so images
+  that were mapped **before** the manager registered are delivered too.
+- `ntoskrnl`: `dispatch_img` builds a `UNICODE_STRING` + `IMAGE_INFO` and invokes the
+  `PsSetLoadImageNotifyRoutineEx` callbacks; `PsSetLoadImageNotifyRoutineEx` registers the manager
+  with the server.
+
+Hardware result (launcher, `+ntoskrnl`, v1812):
+
+- **~2,960** `dispatch_img` notifications delivered across essentially every process — including
+  the launcher/game modules (`Games.exe`, `hgdownloadsdk.dll`, `libcurl.dll`, `ACE-CORE2024303.sys`,
+  `FLTMGR.SYS`, …) via the replay.
+- **`BBD0`/`BC10` are still never set, and `KeBugCheckEx 65636154` still fires.**
+
+**Conclusion — the callback hypothesis is closed.** Every Wine-deliverable kernel callback family
+now fires on hardware, and none signals the watchdog:
+
+| Mechanism | Delivered? | Signals `BBD0`/`BC10`? |
+|---|---|---|
+| Process/thread **create** notify (`0017`) | ✅ | ❌ |
+| `ObRegisterCallbacks` in-process (`0015`) | ✅ | ❌ |
+| `ObRegisterCallbacks` cross-process (`0018`) | ✅ (~18k) | ❌ |
+| Control **device** IRP (CREATE + IOCTLs) | ✅ | ❌ |
+| User-mode **load-image** notify + replay (`0019`) | ✅ (~2,960) | ❌ |
+| `KeSetTimer`/DPC, `ExNotifyCallback` | ACE never calls them | ❌ |
+
+`Tace` is therefore **not callback-driven** — it is an internal, almost certainly
+VMProtect-virtualized, timing/consistency watchdog inside `ACE-CORE*.sys` that cannot be satisfied
+by delivering kernel events to it. It remains **cosmetic**: the kernel component is non-functional
+but the user-mode ACE path keeps the game fully playable. `0019` is kept as a correctness feature
+(`PsSetLoadImageNotifyRoutineEx` now behaves like Windows for registered drivers), not a fix.

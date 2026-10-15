@@ -1,0 +1,328 @@
+diff --git a/server/protocol.def b/server/protocol.def
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -766,7 +766,8 @@
+     IRP_CALL_VOLUME,
+     IRP_CALL_FREE,
+     IRP_CALL_CANCEL,
+-    IRP_CALL_OB
++    IRP_CALL_OB,
++    IRP_CALL_IMG
+ };
+ 
+ union irp_params
+@@ -848,6 +849,16 @@
+         unsigned int     status;    /* NTSTATUS (post-operation only) */
+         int              __pad;
+     } ob;
++    struct
++    {
++        enum irp_type    type;      /* IRP_CALL_IMG */
++        unsigned int     id;        /* target process id */
++        unsigned int     image_charact; /* IMAGE_FILE_* characteristics */
++        unsigned int     map_size;  /* size of the mapped image */
++        unsigned int     machine;   /* IMAGE_FILE_MACHINE_* */
++        unsigned int     contains_code; /* image contains executable code */
++        unsigned int     name_len;  /* image name length (bytes) in the input buffer */
++    } img;
+ };
+ 
+ /* information about a PE image mapping, roughly equivalent to SECTION_IMAGE_INFORMATION */
+diff --git a/server/device.c b/server/device.c
+--- a/server/device.c
++++ b/server/device.c
+@@ -569,6 +569,7 @@
+     case IRP_CALL_FREE:
+     case IRP_CALL_CANCEL:
+     case IRP_CALL_OB:
++    case IRP_CALL_IMG:
+         break;
+     case IRP_CALL_CREATE:
+         irp->params.create.file    = alloc_handle( current->process, irp->file,
+@@ -935,8 +936,43 @@
+         }
+     }
+ }
++
++/* Queue a cross-process image-load notification to every interested manager.
++ * The image name is carried in the IRP input buffer. */
++void notify_image_load( unsigned int id, const void *name, data_size_t name_len,
++                        unsigned int image_charact, unsigned int map_size,
++                        unsigned int machine, unsigned int contains_code )
++{
++    struct device_manager *manager;
++    union irp_params params;
++    struct irp_call *irp;
++    struct iosb *iosb;
+ 
++    if (list_empty( &ob_managers )) return;
++    if (!(iosb = create_iosb_buffer( name, name_len ))) return;
+ 
++    memset( &params, 0, sizeof(params) );
++    params.img.type          = IRP_CALL_IMG;
++    params.img.id            = id;
++    params.img.image_charact = image_charact;
++    params.img.map_size      = map_size;
++    params.img.machine       = machine;
++    params.img.contains_code = contains_code;
++    params.img.name_len      = name_len;
++
++    LIST_FOR_EACH_ENTRY( manager, &ob_managers, struct device_manager, ob_entry )
++    {
++        if ((irp = create_irp( NULL, &params, NULL )))
++        {
++            irp->iosb = (struct iosb *)grab_object( iosb );
++            add_irp_to_queue( manager, irp, NULL );
++            release_object( irp );
++        }
++    }
++    release_object( iosb );
++}
++
++
+ /* create a device manager */
+ DECL_HANDLER(create_device_manager)
+ {
+@@ -959,6 +995,7 @@
+     if (manager)
+     {
+         set_ob_notifications( manager, 1 );
++        replay_image_loads();   /* deliver images mapped before this manager registered */
+         release_object( manager );
+     }
+ }
+diff --git a/server/async.c b/server/async.c
+--- a/server/async.c
++++ b/server/async.c
+@@ -880,6 +880,12 @@
+     }
+ 
+     return iosb;
++}
++
++/* allocate an iosb carrying input data (used by server-initiated IRPs) */
++struct iosb *create_iosb_buffer( const void *in_data, data_size_t in_size )
++{
++    return create_iosb( in_data, in_size, 0 );
+ }
+ 
+ /* create an async associated with iosb for async-based requests
+diff --git a/server/file.h b/server/file.h
+--- a/server/file.h
++++ b/server/file.h
+@@ -254,6 +254,7 @@
+ 
+ extern void free_async_queue( struct async_queue *queue );
+ extern struct async *create_async( struct fd *fd, struct thread *thread, const struct async_data *data, struct iosb *iosb );
++extern struct iosb *create_iosb_buffer( const void *in_data, data_size_t in_size );
+ extern struct async *create_request_async( struct fd *fd, unsigned int comp_flags, const struct async_data *data,
+                                            int is_system );
+ extern obj_handle_t async_handoff( struct async *async, data_size_t *result, int force_blocking );
+diff --git a/server/object.h b/server/object.h
+--- a/server/object.h
++++ b/server/object.h
+@@ -170,6 +170,9 @@
+ #define OBJ_NOTIFY_HANDLE_DUPLICATE  2
+ extern void notify_ob_operation( unsigned int object_type, unsigned int operation, int is_post,
+                                  unsigned int id, unsigned int access, unsigned int status );
++extern void notify_image_load( unsigned int id, const void *name, data_size_t name_len,
++                               unsigned int image_charact, unsigned int map_size,
++                               unsigned int machine, unsigned int contains_code );
+ /* grab/release_object can take any pointer, but you better make sure */
+ /* that the thing pointed to starts with a struct object... */
+ extern struct object *grab_object( void *obj );
+diff --git a/server/mapping.c b/server/mapping.c
+--- a/server/mapping.c
++++ b/server/mapping.c
+@@ -477,6 +477,10 @@
+ 
+     if (view->flags & SEC_IMAGE)
+     {
++        if (get_view_nt_name( view, &name ))
++            notify_image_load( get_process_id( process ), name.str, name.len,
++                               view->image.image_charact, view->image.map_size,
++                               view->image.machine, view->image.contains_code );
+         if (is_process_init_done( process ))
+         {
+             generate_dll_event( thread, DbgLoadDllStateChange, view );
+@@ -497,6 +501,23 @@
+     return 0;
+ }
+ 
++/* Replay every currently-mapped PE image of a process for cross-process
++ * load-image notification (imported by replay_image_loads()). */
++void notify_process_images( struct process *process )
++{
++    struct memory_view *view;
++    struct unicode_str name;
++
++    LIST_FOR_EACH_ENTRY( view, &process->views, struct memory_view, entry )
++    {
++        if (!(view->flags & SEC_IMAGE)) continue;
++        if (!get_view_nt_name( view, &name )) continue;
++        notify_image_load( get_process_id( process ), name.str, name.len,
++                           view->image.image_charact, view->image.map_size,
++                           view->image.machine, view->image.contains_code );
++    }
++}
++
+ static void free_memory_view( struct memory_view *view )
+ {
+     if (view->fd) release_object( view->fd );
+diff --git a/server/process.c b/server/process.c
+--- a/server/process.c
++++ b/server/process.c
+@@ -1116,6 +1116,15 @@
+     }
+ }
+ 
++/* replay every currently-mapped PE image to interested device managers */
++void replay_image_loads(void)
++{
++    struct process *process;
++
++    LIST_FOR_EACH_ENTRY( process, &process_list, struct process, entry )
++        notify_process_images( process );
++}
++
+ /* kill all processes being attached to a console renderer */
+ void kill_console_processes( struct thread *renderer, int exit_code )
+ {
+diff --git a/server/process.h b/server/process.h
+--- a/server/process.h
++++ b/server/process.h
+@@ -109,6 +109,10 @@
+ extern void debugger_detach( struct process *process, struct debug_obj *debug_obj );
+ extern int set_process_debug_flag( struct process *process, int flag );
+ 
++/* cross-process load-image notification helpers */
++extern void notify_process_images( struct process *process );
++extern void replay_image_loads(void);
++
+ extern void add_process_thread( struct process *process,
+                                 struct thread *thread );
+ extern void remove_process_thread( struct process *process,
+diff --git a/server/trace.c b/server/trace.c
+--- a/server/trace.c
++++ b/server/trace.c
+@@ -451,6 +451,11 @@
+                  prefix, data->ob.operation, data->ob.object_type, data->ob.id,
+                  data->ob.access, data->ob.is_post, data->ob.status );
+         break;
++    case IRP_CALL_IMG:
++        fprintf( stderr, "%s{IMG,id=%u,charact=%04x,size=%u,name_len=%u}",
++                 prefix, data->img.id, data->img.image_charact, data->img.map_size,
++                 data->img.name_len );
++        break;
+     }
+ }
+ 
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -750,7 +750,8 @@
+     IRP_CALL_VOLUME,
+     IRP_CALL_FREE,
+     IRP_CALL_CANCEL,
+-    IRP_CALL_OB
++    IRP_CALL_OB,
++    IRP_CALL_IMG
+ };
+ 
+ union irp_params
+@@ -832,6 +833,16 @@
+         unsigned int     status;
+         int              __pad;
+     } ob;
++    struct
++    {
++        enum irp_type    type;
++        unsigned int     id;
++        unsigned int     image_charact;
++        unsigned int     map_size;
++        unsigned int     machine;
++        unsigned int     contains_code;
++        unsigned int     name_len;
++    } img;
+ };
+ 
+ 
+@@ -7138,6 +7149,6 @@
+     struct ob_unregister_callbacks_reply ob_unregister_callbacks_reply;
+ };
+ 
+-#define SERVER_PROTOCOL_VERSION 1811
++#define SERVER_PROTOCOL_VERSION 1812
+ 
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.c b/dlls/ntoskrnl.exe/ntoskrnl.c
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -1018,6 +1018,42 @@
+     return STATUS_SUCCESS;
+ }
+ 
++/* cross-process image-load notification (see PsSetLoadImageNotifyRoutineEx) */
++static NTSTATUS dispatch_img( struct dispatch_context *context )
++{
++    static const WCHAR emptyW[] = {0};
++    UNICODE_STRING name;
++    IMAGE_INFO info;
++    HANDLE pid = UlongToHandle( context->params.img.id );
++    unsigned int i;
++
++    if (context->in_buff && context->in_size && context->params.img.name_len <= context->in_size)
++    {
++        name.Buffer = context->in_buff;
++        name.Length = context->params.img.name_len;
++        name.MaximumLength = context->params.img.name_len;
++    }
++    else
++    {
++        name.Buffer = (WCHAR *)emptyW;
++        name.Length = 0;
++        name.MaximumLength = 0;
++    }
++
++    memset( &info, 0, sizeof(info) );
++    info.ImageAddressingMode = IMAGE_ADDRESSING_MODE_32BIT;
++    info.ImageBase = NULL;
++    info.ImageSize = context->params.img.map_size;
++
++    TRACE( "img %s pid %u size %u\n", debugstr_us(&name), context->params.img.id,
++           context->params.img.map_size );
++
++    for (i = 0; i < load_image_notify_routine_count; i++)
++        load_image_notify_routines[i]( &name, pid, &info );
++
++    return STATUS_SUCCESS;
++}
++
+ typedef NTSTATUS (*dispatch_func)( struct dispatch_context *context );
+ 
+ static const dispatch_func dispatch_funcs[] =
+@@ -1032,7 +1068,8 @@
+     dispatch_volume,   /* IRP_CALL_VOLUME */
+     dispatch_free,     /* IRP_CALL_FREE */
+     dispatch_cancel,   /* IRP_CALL_CANCEL */
+-    dispatch_ob        /* IRP_CALL_OB */
++    dispatch_ob,       /* IRP_CALL_OB */
++    dispatch_img       /* IRP_CALL_IMG */
+ };
+ 
+ /* helper function to update service status */
+@@ -4406,6 +4443,14 @@
+ 
+     load_image_notify_routines[load_image_notify_routine_count++] = routine;
+ 
++    /* ask the server to forward image loads from other processes */
++    SERVER_START_REQ( ob_register_callbacks )
++    {
++        req->manager = wine_server_obj_handle( get_device_manager() );
++        wine_server_call( req );
++    }
++    SERVER_END_REQ;
++
+     return STATUS_SUCCESS;
+ }
+ 
