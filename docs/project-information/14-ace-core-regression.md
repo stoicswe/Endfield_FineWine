@@ -346,7 +346,6 @@ The whole series (31 patches) applies cleanly, and `ntoskrnl.exe`, `lsass.exe` a
 | 5 | `ace-core/0006` | `macos/0005` | Real `PsGetProcessExitStatus` (was a `@ stub`). |
 | 4 | `ace-core/0010` | `dwproton/0007` (`84407729bf`) | Keep section views mapped while a locked MDL uses them (see §13). |
 | 4 | `ace-core/0014` | `dwproton/0008` (`dac7007ad0`) | `PsGetContextThread` as a thunk around a helper. Without it ACE-CORE calls `KeBugCheckEx` before login. |
-
 **Shipped-module changes.** Because ACE-CORE needs `lsass.exe` (absent from stock CrossOver)
 and the patched `wineboot.exe`, the installers now carry five Wine modules. Updated:
 `scripts/build-wine.sh` (`MODULES`), `scripts/package.sh`, `scripts/apply-modules.sh`,
