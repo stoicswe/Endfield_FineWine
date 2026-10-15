@@ -27,25 +27,50 @@ bundle_id_of() {
     || defaults read "$1/Contents/Info" CFBundleIdentifier 2>/dev/null
 }
 
+# A real CrossOver install ships this payload. Reject anything else (a matching Info.plist is not enough).
+is_cx_app() {
+  [ -d "$1/Contents/SharedSupport/CrossOver/bin" ] \
+    && [ -x "$1/Contents/SharedSupport/CrossOver/bin/wine" ]
+}
+
+# Only accept installs under the trusted, non-user-writable root dirs. This stops a same-bundle-id
+# bundle sitting somewhere writable (Downloads, /tmp, a mounted image, iCloud, …) from being run.
+is_trusted_install() {
+  case "$1" in
+    /Applications/*|"$HOME"/Applications/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# A candidate from Spotlight/scan must be a trusted install, carry the right bundle id, and be a
+# real CrossOver tree.
+is_cx_candidate() {
+  is_trusted_install "$1" || return 1
+  [ "$(bundle_id_of "$1")" = "$BUNDLE_ID" ] || return 1
+  is_cx_app "$1"
+}
+
 # Find the patched CrossOver app. The filename is not reliable (it can be renamed), so match on the
-# bundle identifier: FINEWINE_CX_APP override -> generated-path hint -> Spotlight -> scan the usual
-# folders. This is also what lets a prebuilt copy of this app work on any machine.
+# bundle identifier: FINEWINE_CX_APP override -> generated-path hint -> Spotlight -> scan the trusted
+# roots. Spotlight results are filtered to trusted roots + a verified payload (never execute a bundle
+# from a writable location). This is also what lets a prebuilt copy work on any machine.
 resolve_cx_app() {
-  if [ -n "${FINEWINE_CX_APP:-}" ] && [ -d "${FINEWINE_CX_APP}" ]; then
+  # Break the stdin loop out of any inherited stdin (a double-clicked .app has none) and avoid globs.
+  local cand app oldifs
+  if [ -n "${FINEWINE_CX_APP:-}" ] && is_cx_app "${FINEWINE_CX_APP}"; then
     printf '%s' "$FINEWINE_CX_APP"; return
   fi
-  if [ -n "$CX_APP_HINT" ] && [ -d "$CX_APP_HINT/Contents/SharedSupport/CrossOver" ]; then
+  if [ -n "$CX_APP_HINT" ] && is_cx_app "$CX_APP_HINT"; then
     printf '%s' "$CX_APP_HINT"; return
   fi
   if command -v mdfind >/dev/null 2>&1; then
-    local hit
-    hit="$(mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null | head -n1)"
-    if [ -n "$hit" ] && [ -d "$hit" ]; then printf '%s' "$hit"; return; fi
+    while IFS= read -r cand; do
+      [ -n "$cand" ] || continue
+      if is_cx_candidate "$cand"; then printf '%s' "$cand"; return; fi
+    done < <(mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null)
   fi
-  local app
   for app in /Applications/*.app "$HOME"/Applications/*.app; do
-    [ -d "$app/Contents/SharedSupport/CrossOver" ] || continue
-    if [ "$(bundle_id_of "$app")" = "$BUNDLE_ID" ]; then printf '%s' "$app"; return; fi
+    if is_cx_candidate "$app"; then printf '%s' "$app"; return; fi
   done
 }
 

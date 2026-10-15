@@ -30,14 +30,22 @@ set -uo pipefail
 BUNDLE_ID="${BUNDLE_ID:-com.codeweavers.CrossOvEF}"
 bundle_id_of() { plutil -extract CFBundleIdentifier raw "$1/Contents/Info.plist" 2>/dev/null \
                  || defaults read "$1/Contents/Info" CFBundleIdentifier 2>/dev/null; }
+is_cx_app() { [ -d "$1/Contents/SharedSupport/CrossOver/bin" ] && [ -x "$1/Contents/SharedSupport/CrossOver/bin/wine" ]; }
+# Only trust installs under the non-user-writable roots, so a same-bundle-id bundle in a writable
+# location (Downloads, /tmp, a mounted image, …) is never run.
+is_trusted_install() { case "$1" in /Applications/*|"$HOME"/Applications/*) return 0 ;; *) return 1 ;; esac; }
+is_cx_candidate() { is_trusted_install "$1" || return 1; [ "$(bundle_id_of "$1")" = "$BUNDLE_ID" ] || return 1; is_cx_app "$1"; }
+
 APP="${APP:-}"
 if [ -z "$APP" ] && command -v mdfind >/dev/null 2>&1; then
-  APP="$(mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null | head -n1)"
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    if is_cx_candidate "$c"; then APP="$c"; break; fi
+  done < <(mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null)
 fi
 if [ -z "$APP" ]; then
   for c in /Applications/*.app "$HOME"/Applications/*.app; do
-    [ -d "$c/Contents/SharedSupport/CrossOver" ] || continue
-    if [ "$(bundle_id_of "$c")" = "$BUNDLE_ID" ]; then APP="$c"; break; fi
+    if is_cx_candidate "$c"; then APP="$c"; break; fi
   done
 fi
 if [ -z "$APP" ]; then

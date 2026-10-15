@@ -58,16 +58,22 @@ done
 
 bundle_id_of() { plutil -extract CFBundleIdentifier raw "$1/Contents/Info.plist" 2>/dev/null \
                  || defaults read "$1/Contents/Info" CFBundleIdentifier 2>/dev/null; }
+is_cx_app() { [ -d "$1/Contents/SharedSupport/CrossOver/bin" ] && [ -x "$1/Contents/SharedSupport/CrossOver/bin/wine" ]; }
+is_trusted_install() { case "$1" in /Applications/*|"$HOME"/Applications/*) return 0 ;; *) return 1 ;; esac; }
+is_cx_candidate() { is_trusted_install "$1" || return 1; [ "$(bundle_id_of "$1")" = "$BUNDLE_ID" ] || return 1; is_cx_app "$1"; }
 
 # Resolve the patched CrossOver app. Prefer matching the bundle identifier (the .app may be renamed),
-# via Spotlight then a scan; fall back to the well-known filenames.
+# via Spotlight then a scan; Spotlight hits are filtered to trusted install roots + a verified payload,
+# so a same-bundle-id bundle in a writable location is never selected. Falls back to the known filenames.
 if [ -z "$CX_APP" ] && command -v mdfind >/dev/null 2>&1; then
-  CX_APP="$(mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null | head -n1)"
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    if is_cx_candidate "$c"; then CX_APP="$c"; break; fi
+  done < <(mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null)
 fi
 if [ -z "$CX_APP" ]; then
   for app in /Applications/*.app "$HOME"/Applications/*.app; do
-    [ -d "$app/Contents/SharedSupport/CrossOver" ] || continue
-    if [ "$(bundle_id_of "$app")" = "$BUNDLE_ID" ]; then CX_APP="$app"; break; fi
+    if is_cx_candidate "$app"; then CX_APP="$app"; break; fi
   done
 fi
 if [ -z "$CX_APP" ]; then
