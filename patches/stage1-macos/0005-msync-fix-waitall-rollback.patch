@@ -1,0 +1,67 @@
+diff --git a/dlls/ntdll/unix/msync.c b/dlls/ntdll/unix/msync.c
+index ae46bf3..bf80179 100644
+--- a/dlls/ntdll/unix/msync.c
++++ b/dlls/ntdll/unix/msync.c
+@@ -969,11 +969,10 @@ NTSTATUS msync_wait_objs( const DWORD count, const int *objs, BOOLEAN wait_any,
+ 
+         while (1)
+         {
+-            BOOL abandoned;
++            /* Mutexes this attempt took over, and which of them were abandoned. */
++            ULONGLONG acquired, abandoned;
+ 
+ tryagain:
+-            abandoned = FALSE;
+-
+             /* First step: try to wait on each object in sequence. */
+ 
+             for (i = 0; i < count; i++)
+@@ -1032,6 +1031,7 @@ tryagain:
+             }
+ 
+             /* Yep, still signaled. Now quick, grab everything. */
++            acquired = abandoned = 0;
+             for (i = 0; i < count; i++)
+             {
+                 switch (((struct event *)objs_shm[i])->msync_type)
+@@ -1046,8 +1046,9 @@ tryagain:
+                         goto tooslow;
+                     if (__sync_val_compare_and_swap( &mutex->tid, tid, current_tid ) != tid)
+                         goto tooslow;
++                    acquired |= (ULONGLONG)1 << i;
+                     if (tid == ~0)
+-                        abandoned = TRUE;
++                        abandoned |= (ULONGLONG)1 << i;
+                     break;
+                 }
+                 case MSYNC_SEMAPHORE:
+@@ -1103,16 +1104,17 @@ tooslow:
+                 case MSYNC_MUTEX:
+                 {
+                     struct mutex *mutex = (struct mutex *)objs_shm[i];
+-                    /* HACK: This won't do the right thing with abandoned
+-                     * mutexes, but fixing it is probably more trouble than
+-                     * it's worth. */
+-                    __atomic_store_n( &mutex->tid, 0, __ATOMIC_SEQ_CST );
++                    /* Mutexes we already owned were left untouched. */
++                    if (!(acquired & ((ULONGLONG)1 << i))) break;
++                    __atomic_store_n( &mutex->tid, abandoned & ((ULONGLONG)1 << i) ? ~0 : 0, __ATOMIC_SEQ_CST );
++                    signal_all( mutex, objs[i] );
+                     break;
+                 }
+                 case MSYNC_SEMAPHORE:
+                 {
+                     struct semaphore *semaphore = (struct semaphore *)objs_shm[i];
+                     __sync_fetch_and_add( &semaphore->count, 1 );
++                    signal_all( semaphore, objs[i] );
+                     break;
+                 }
+                 case MSYNC_AUTO_EVENT:
+@@ -1120,6 +1122,7 @@ tooslow:
+                 {
+                     struct event *event = (struct event *)objs_shm[i];
+                     __atomic_store_n( &event->signaled, 1, __ATOMIC_SEQ_CST );
++                    signal_all( event, objs[i] );
+                     break;
+                 }
+                 default:

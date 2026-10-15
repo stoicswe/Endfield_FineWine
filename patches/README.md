@@ -21,6 +21,8 @@ Original to this project. The two Rosetta fixes live in `dlls/ntdll/unix/signal_
 
 - `0004-ntdll-don-t-close-the-msync-alert-index-on-thread-exit.patch`, in `dlls/ntdll/unix/thread.c`:
   - Skips closing `alert_fd` on thread exit under MSync: it holds a shared-memory index owned by the server. Closing it can close another thread's wineserver pipe and cause Unity's "SuspendThread loop failed" error.
+- `0005-msync-fix-waitall-rollback.patch`, in `dlls/ntdll/unix/msync.c`:
+  - When another thread wins an object partway through a WaitAll, the rollback now leaves recursively owned mutexes alone, restores abandoned mutexes as abandoned, and wakes waiters on every object it puts back. Test: `python3 tests/test-msync-waitall.py <wine-src>`.
 
 ## `stage2-dwproton/` — the ported dw-proton anti-cheat patches
 
@@ -56,7 +58,7 @@ Known residual: ACE also calls `ntoskrnl.exe.PsGetProcessExitStatus`, which is *
 
 ## Applying
 
-All 24 patches are unified diffs and apply cleanly with `git apply` in this order: `em-backports/*` (numeric) → `misc/*` (numeric) → `stage1-macos/*` (numeric). This is automated by [`../scripts/build-wine.sh apply`](../scripts/build-wine.sh). Expect to rebase if CrossOver's Wine base changes (the dw-proton set targets the `b816be489` snapshot; the latest lives baked into `dawn.wine/dawn-winery/wine-dwproton` branch `base`).
+All 25 patches are unified diffs and apply cleanly with `git apply` in this order: `em-backports/*` (numeric) → `misc/*` (numeric) → `stage1-macos/*` (numeric). This is automated by [`../scripts/build-wine.sh apply`](../scripts/build-wine.sh). Expect to rebase if CrossOver's Wine base changes (the dw-proton set targets the `b816be489` snapshot; the latest lives baked into `dawn.wine/dawn-winery/wine-dwproton` branch `base`).
 
 ## License / provenance
 
