@@ -1,0 +1,520 @@
+diff --git a/server/protocol.def b/server/protocol.def
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -765,7 +765,8 @@
+     IRP_CALL_IOCTL,
+     IRP_CALL_VOLUME,
+     IRP_CALL_FREE,
+-    IRP_CALL_CANCEL
++    IRP_CALL_CANCEL,
++    IRP_CALL_OB
+ };
+ 
+ union irp_params
+@@ -836,6 +837,17 @@
+         int              __pad;
+         client_ptr_t     irp;       /* opaque ptr for canceled irp */
+     } cancel;
++    struct
++    {
++        enum irp_type    type;      /* IRP_CALL_OB */
++        unsigned int     operation; /* OB operation (1=create, 2=duplicate) */
++        unsigned int     object_type;/* OB object type (1=process, 2=thread) */
++        unsigned int     id;        /* target pid or tid */
++        unsigned int     access;    /* requested/granted access rights */
++        unsigned int     is_post;   /* 0 = pre-operation, 1 = post-operation */
++        unsigned int     status;    /* NTSTATUS (post-operation only) */
++        int              __pad;
++    } ob;
+ };
+ 
+ /* information about a PE image mapping, roughly equivalent to SECTION_IMAGE_INFORMATION */
+@@ -4272,3 +4284,16 @@
+     data_size_t         runtime_size;   /* size of client runtime data */
+     VARARG(runtime,bytes);              /* client runtime data */
+ @END
++
++
++/* Register the manager for cross-process object handle-operation notifications.
++   Appended at the end so existing request numbers don't shift. */
++@REQ(ob_register_callbacks)
++    obj_handle_t manager;         /* handle to the device manager */
++@END
++
++
++/* Stop cross-process object handle-operation notifications for the manager */
++@REQ(ob_unregister_callbacks)
++    obj_handle_t manager;         /* handle to the device manager */
++@END
+diff --git a/server/device.c b/server/device.c
+--- a/server/device.c
++++ b/server/device.c
+@@ -92,6 +92,7 @@
+     struct object         *sync;           /* sync object for wait/signal */
+     struct list            devices;        /* list of devices */
+     struct list            requests;       /* list of pending irps across all devices */
++    struct list            ob_entry;       /* entry in the ob_managers list */
+     struct irp_call       *current_call;   /* call currently executed on client side */
+     struct wine_rb_tree    kernel_objects; /* map of objects that have client side pointer associated */
+ };
+@@ -100,6 +101,10 @@
+ static struct object *device_manager_get_sync( struct object *obj );
+ static void device_manager_destroy( struct object *obj );
+ 
++/* Device managers (driver hosts) that asked for cross-process object
++ * handle-operation notifications. */
++static struct list ob_managers = LIST_INIT(ob_managers);
++
+ static const struct object_ops device_manager_ops =
+ {
+     sizeof(struct device_manager),    /* size */
+@@ -563,6 +568,7 @@
+     case IRP_CALL_NONE:
+     case IRP_CALL_FREE:
+     case IRP_CALL_CANCEL:
++    case IRP_CALL_OB:
+         break;
+     case IRP_CALL_CREATE:
+         irp->params.create.file    = alloc_handle( current->process, irp->file,
+@@ -809,6 +815,8 @@
+         release_object( manager->current_call );
+         manager->current_call = NULL;
+     }
++
++    list_remove( &manager->ob_entry );
+ 
+     while (manager->kernel_objects.root)
+     {
+@@ -846,6 +854,7 @@
+         manager->current_call = NULL;
+         list_init( &manager->devices );
+         list_init( &manager->requests );
++        list_init( &manager->ob_entry );
+         wine_rb_init( &manager->kernel_objects, compare_kernel_object );
+ 
+         if (!(manager->sync = create_internal_sync( 1, 0 )))
+@@ -884,10 +893,50 @@
+         list_remove( &kernel_object->list_entry );
+         wine_rb_remove( &kernel_object->manager->kernel_objects, &kernel_object->rb_entry );
+         free( kernel_object );
++    }
++}
++
++
++/* add/remove a device manager from the cross-process ob notification list */
++static void set_ob_notifications( struct device_manager *manager, int enable )
++{
++    if (enable)
++    {
++        if (list_empty( &manager->ob_entry )) list_add_tail( &ob_managers, &manager->ob_entry );
+     }
++    else if (!list_empty( &manager->ob_entry )) list_remove( &manager->ob_entry );
+ }
+ 
++/* Queue an object handle-operation notification to every interested manager. */
++void notify_ob_operation( unsigned int object_type, unsigned int operation, int is_post,
++                          unsigned int id, unsigned int access, unsigned int status )
++{
++    struct device_manager *manager;
++    union irp_params params;
++    struct irp_call *irp;
+ 
++    if (list_empty( &ob_managers )) return;
++
++    memset( &params, 0, sizeof(params) );
++    params.ob.type        = IRP_CALL_OB;
++    params.ob.operation   = operation;
++    params.ob.object_type = object_type;
++    params.ob.id          = id;
++    params.ob.access      = access;
++    params.ob.is_post     = is_post;
++    params.ob.status      = status;
++
++    LIST_FOR_EACH_ENTRY( manager, &ob_managers, struct device_manager, ob_entry )
++    {
++        if ((irp = create_irp( NULL, &params, NULL )))
++        {
++            add_irp_to_queue( manager, irp, NULL );
++            release_object( irp );
++        }
++    }
++}
++
++
+ /* create a device manager */
+ DECL_HANDLER(create_device_manager)
+ {
+@@ -896,6 +945,34 @@
+     if (manager)
+     {
+         reply->handle = alloc_handle( current->process, manager, req->access, req->attributes );
++        release_object( manager );
++    }
++}
++
++
++/* register for cross-process object handle-operation notifications */
++DECL_HANDLER(ob_register_callbacks)
++{
++    struct device_manager *manager =
++        (struct device_manager *)get_handle_obj( current->process, req->manager, 0, &device_manager_ops );
++
++    if (manager)
++    {
++        set_ob_notifications( manager, 1 );
++        release_object( manager );
++    }
++}
++
++
++/* unregister cross-process object handle-operation notifications */
++DECL_HANDLER(ob_unregister_callbacks)
++{
++    struct device_manager *manager =
++        (struct device_manager *)get_handle_obj( current->process, req->manager, 0, &device_manager_ops );
++
++    if (manager)
++    {
++        set_ob_notifications( manager, 0 );
+         release_object( manager );
+     }
+ }
+diff --git a/server/object.h b/server/object.h
+--- a/server/object.h
++++ b/server/object.h
+@@ -161,6 +161,15 @@
+ extern void unlink_named_object( struct object *obj );
+ extern struct namespace *create_namespace( unsigned int hash_size );
+ extern void free_kernel_objects( struct object *obj );
++
++/* Cross-process object (process/thread) handle-operation notifications.
++ * The values must match the ones used by ntoskrnl.exe. */
++#define OBJ_NOTIFY_PROCESS           1
++#define OBJ_NOTIFY_THREAD            2
++#define OBJ_NOTIFY_HANDLE_CREATE     1
++#define OBJ_NOTIFY_HANDLE_DUPLICATE  2
++extern void notify_ob_operation( unsigned int object_type, unsigned int operation, int is_post,
++                                 unsigned int id, unsigned int access, unsigned int status );
+ /* grab/release_object can take any pointer, but you better make sure */
+ /* that the thing pointed to starts with a struct object... */
+ extern struct object *grab_object( void *obj );
+diff --git a/server/process.c b/server/process.c
+--- a/server/process.c
++++ b/server/process.c
+@@ -1664,6 +1664,9 @@
+     if (process)
+     {
+         reply->handle = alloc_handle( current->process, process, req->access, req->attributes );
++        if (reply->handle)
++            notify_ob_operation( OBJ_NOTIFY_PROCESS, OBJ_NOTIFY_HANDLE_CREATE, 0,
++                                 get_process_id( process ), req->access, STATUS_SUCCESS );
+         release_object( process );
+     }
+ }
+diff --git a/server/thread.c b/server/thread.c
+--- a/server/thread.c
++++ b/server/thread.c
+@@ -1830,6 +1830,9 @@
+     if (thread)
+     {
+         reply->handle = alloc_handle( current->process, thread, req->access, req->attributes );
++        if (reply->handle)
++            notify_ob_operation( OBJ_NOTIFY_THREAD, OBJ_NOTIFY_HANDLE_CREATE, 0,
++                                 get_thread_id( thread ), req->access, STATUS_SUCCESS );
+         release_object( thread );
+     }
+ }
+diff --git a/server/trace.c b/server/trace.c
+--- a/server/trace.c
++++ b/server/trace.c
+@@ -446,6 +446,11 @@
+         dump_uint64( ",irp=", &data->cancel.irp );
+         fputc( '}', stderr );
+         break;
++    case IRP_CALL_OB:
++        fprintf( stderr, "%s{OB,op=%08x,type=%u,id=%u,access=%08x,post=%u,status=%08x}",
++                 prefix, data->ob.operation, data->ob.object_type, data->ob.id,
++                 data->ob.access, data->ob.is_post, data->ob.status );
++        break;
+     }
+ }
+ 
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -749,7 +749,8 @@
+     IRP_CALL_IOCTL,
+     IRP_CALL_VOLUME,
+     IRP_CALL_FREE,
+-    IRP_CALL_CANCEL
++    IRP_CALL_CANCEL,
++    IRP_CALL_OB
+ };
+ 
+ union irp_params
+@@ -820,6 +821,17 @@
+         int              __pad;
+         client_ptr_t     irp;
+     } cancel;
++    struct
++    {
++        enum irp_type    type;
++        unsigned int     operation;
++        unsigned int     object_type;
++        unsigned int     id;
++        unsigned int     access;
++        unsigned int     is_post;
++        unsigned int     status;
++        int              __pad;
++    } ob;
+ };
+ 
+ 
+@@ -6161,6 +6173,31 @@
+ };
+ 
+ 
++/* Register the manager for cross-process object handle-operation notifications.
++   Appended at the end so existing request numbers don't shift. */
++struct ob_register_callbacks_request
++{
++    struct request_header __header;
++    obj_handle_t manager;
++};
++struct ob_register_callbacks_reply
++{
++    struct reply_header __header;
++};
++
++
++
++struct ob_unregister_callbacks_request
++{
++    struct request_header __header;
++    obj_handle_t manager;
++};
++struct ob_unregister_callbacks_reply
++{
++    struct reply_header __header;
++};
++
++
+ enum request
+ {
+     REQ_new_process,
+@@ -6469,6 +6506,8 @@
+     REQ_d3dkmt_object_open_name,
+     REQ_d3dkmt_mutex_acquire,
+     REQ_d3dkmt_mutex_release,
++    REQ_ob_register_callbacks,
++    REQ_ob_unregister_callbacks,
+     REQ_NB_REQUESTS
+ };
+ 
+@@ -6782,6 +6821,8 @@
+     struct d3dkmt_object_open_name_request d3dkmt_object_open_name_request;
+     struct d3dkmt_mutex_acquire_request d3dkmt_mutex_acquire_request;
+     struct d3dkmt_mutex_release_request d3dkmt_mutex_release_request;
++    struct ob_register_callbacks_request ob_register_callbacks_request;
++    struct ob_unregister_callbacks_request ob_unregister_callbacks_request;
+ };
+ union generic_reply
+ {
+@@ -7093,8 +7134,10 @@
+     struct d3dkmt_object_open_name_reply d3dkmt_object_open_name_reply;
+     struct d3dkmt_mutex_acquire_reply d3dkmt_mutex_acquire_reply;
+     struct d3dkmt_mutex_release_reply d3dkmt_mutex_release_reply;
++    struct ob_register_callbacks_reply ob_register_callbacks_reply;
++    struct ob_unregister_callbacks_reply ob_unregister_callbacks_reply;
+ };
+ 
+-#define SERVER_PROTOCOL_VERSION 1809
++#define SERVER_PROTOCOL_VERSION 1811
+ 
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
+diff --git a/server/request_handlers.h b/server/request_handlers.h
+--- a/server/request_handlers.h
++++ b/server/request_handlers.h
+@@ -313,6 +313,8 @@
+ DECL_HANDLER(d3dkmt_object_open_name);
+ DECL_HANDLER(d3dkmt_mutex_acquire);
+ DECL_HANDLER(d3dkmt_mutex_release);
++DECL_HANDLER(ob_register_callbacks);
++DECL_HANDLER(ob_unregister_callbacks);
+ 
+ typedef void (*req_handler)( const void *req, void *reply );
+ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+@@ -623,6 +625,8 @@
+     (req_handler)req_d3dkmt_object_open_name,
+     (req_handler)req_d3dkmt_mutex_acquire,
+     (req_handler)req_d3dkmt_mutex_release,
++    (req_handler)req_ob_register_callbacks,
++    (req_handler)req_ob_unregister_callbacks,
+ };
+ 
+ C_ASSERT( sizeof(abstime_t) == 8 );
+@@ -2374,3 +2378,7 @@
+ C_ASSERT( offsetof(struct d3dkmt_mutex_release_request, fence_value) == 24 );
+ C_ASSERT( offsetof(struct d3dkmt_mutex_release_request, runtime_size) == 32 );
+ C_ASSERT( sizeof(struct d3dkmt_mutex_release_request) == 40 );
++C_ASSERT( offsetof(struct ob_register_callbacks_request, manager) == 12 );
++C_ASSERT( sizeof(struct ob_register_callbacks_request) == 16 );
++C_ASSERT( offsetof(struct ob_unregister_callbacks_request, manager) == 12 );
++C_ASSERT( sizeof(struct ob_unregister_callbacks_request) == 16 );
+diff --git a/server/request_trace.h b/server/request_trace.h
+--- a/server/request_trace.h
++++ b/server/request_trace.h
+@@ -3507,6 +3507,16 @@
+     dump_uint64( ", fence_value=", &req->fence_value );
+     fprintf( stderr, ", runtime_size=%u", req->runtime_size );
+     dump_varargs_bytes( ", runtime=", cur_size );
++}
++
++static void dump_ob_register_callbacks_request( const struct ob_register_callbacks_request *req )
++{
++    fprintf( stderr, " manager=%04x", req->manager );
++}
++
++static void dump_ob_unregister_callbacks_request( const struct ob_unregister_callbacks_request *req )
++{
++    fprintf( stderr, " manager=%04x", req->manager );
+ }
+ 
+ typedef void (*dump_func)( const void *req );
+@@ -3819,6 +3829,8 @@
+     (dump_func)dump_d3dkmt_object_open_name_request,
+     (dump_func)dump_d3dkmt_mutex_acquire_request,
+     (dump_func)dump_d3dkmt_mutex_release_request,
++    (dump_func)dump_ob_register_callbacks_request,
++    (dump_func)dump_ob_unregister_callbacks_request,
+ };
+ 
+ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
+@@ -4129,6 +4141,8 @@
+     (dump_func)dump_d3dkmt_object_open_name_reply,
+     (dump_func)dump_d3dkmt_mutex_acquire_reply,
+     NULL,
++    NULL,
++    NULL,
+ };
+ 
+ static const char * const req_names[REQ_NB_REQUESTS] =
+@@ -4439,6 +4453,8 @@
+     "d3dkmt_object_open_name",
+     "d3dkmt_mutex_acquire",
+     "d3dkmt_mutex_release",
++    "ob_register_callbacks",
++    "ob_unregister_callbacks",
+ };
+ 
+ static const struct
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.c b/dlls/ntoskrnl.exe/ntoskrnl.c
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -76,7 +76,13 @@
+ /* ObRegisterCallbacks support. ACE-CORE registers process/thread
+  * handle-operation callbacks; Wine stubbed this out entirely, so the callbacks
+  * (and any event they signal) never fired. We store the registrations and
+- * invoke them from the handle-open paths. */
++ * invoke them from the handle-open paths, and ask the server to forward
++ * handle operations from other processes (see IRP_CALL_OB). */
++#define OBJ_NOTIFY_PROCESS           1
++#define OBJ_NOTIFY_THREAD            2
++#define OBJ_NOTIFY_HANDLE_CREATE     1
++#define OBJ_NOTIFY_HANDLE_DUPLICATE  2
++
+ struct ob_op_registration
+ {
+     ULONG_PTR group;
+@@ -966,6 +972,49 @@
+     EnterCriticalSection( &irp_completion_cs );
+     IoCancelIrp( irp );
+     LeaveCriticalSection( &irp_completion_cs );
++    return STATUS_SUCCESS;
++}
++
++/* cross-process object handle-operation notification (see ObRegisterCallbacks) */
++static NTSTATUS dispatch_ob( struct dispatch_context *context )
++{
++    POBJECT_TYPE type;
++    ACCESS_MASK access = context->params.ob.access;
++    void *object = NULL;
++    HANDLE handle;
++
++    if (context->params.ob.object_type == OBJ_NOTIFY_PROCESS)
++    {
++        if (!(handle = OpenProcess( PROCESS_ALL_ACCESS, FALSE, context->params.ob.id )))
++            return STATUS_INVALID_PARAMETER;
++        type = PsProcessType;
++    }
++    else
++    {
++        if (!(handle = OpenThread( THREAD_ALL_ACCESS, FALSE, context->params.ob.id )))
++            return STATUS_INVALID_PARAMETER;
++        type = PsThreadType;
++    }
++
++    if (kernel_object_from_handle( handle, type, &object ))
++    {
++        NtClose( handle );
++        return STATUS_INVALID_PARAMETER;
++    }
++    NtClose( handle );
++
++    TRACE( "ob %s %s id %u access %#x object %p\n",
++           context->params.ob.object_type == OBJ_NOTIFY_PROCESS ? "process" : "thread",
++           context->params.ob.is_post ? "post" : "pre", context->params.ob.id, context->params.ob.access,
++           object );
++
++    if (context->params.ob.is_post)
++        ob_call_post_operation_callbacks( type, context->params.ob.operation, object,
++                                          access, context->params.ob.status );
++    else
++        ob_call_pre_operation_callbacks( type, context->params.ob.operation, object, &access );
++
++    ObDereferenceObject( object );
+     return STATUS_SUCCESS;
+ }
+ 
+@@ -982,7 +1031,8 @@
+     dispatch_ioctl,    /* IRP_CALL_IOCTL */
+     dispatch_volume,   /* IRP_CALL_VOLUME */
+     dispatch_free,     /* IRP_CALL_FREE */
+-    dispatch_cancel    /* IRP_CALL_CANCEL */
++    dispatch_cancel,   /* IRP_CALL_CANCEL */
++    dispatch_ob        /* IRP_CALL_OB */
+ };
+ 
+ /* helper function to update service status */
+@@ -3834,6 +3884,14 @@
+ 
+     LeaveCriticalSection( &ob_callback_cs );
+ 
++    /* ask the server to forward handle operations from other processes */
++    SERVER_START_REQ( ob_register_callbacks )
++    {
++        req->manager = wine_server_obj_handle( get_device_manager() );
++        wine_server_call( req );
++    }
++    SERVER_END_REQ;
++
+     *handle = UlongToHandle( group );
+     return STATUS_SUCCESS;
+ }
+@@ -3856,6 +3914,16 @@
+     }
+     ob_op_registration_count = w;
+     LeaveCriticalSection( &ob_callback_cs );
++
++    if (!ob_op_registration_count)
++    {
++        SERVER_START_REQ( ob_unregister_callbacks )
++        {
++            req->manager = wine_server_obj_handle( get_device_manager() );
++            wine_server_call( req );
++        }
++        SERVER_END_REQ;
++    }
+ }
+ 
+ /***********************************************************************

@@ -794,3 +794,66 @@ host (analogous to the `get_kernel_obj_list` work in §12.2), not another `ntosk
 the bug check is cosmetic (gameplay is unaffected), `0015`/`0016` are kept as correctness/reference
 improvements — `ObRegisterCallbacks` no longer lies about success, and `IoThreadToProcess` exists —
 **not** as a fix for `Tace`.
+
+#### Device IRP path: already functional `[corrects the "no IRP" note above]`
+
+Re-read the launcher log (`+ntoskrnl`) for device IRPs to ACE's control device. Wine's server
+already routes user-mode opens of a `\??\`-symlinked device to the owning device manager:
+`server/device.c:device_open_file` queues an `IRP_CALL_CREATE`, and `ntoskrnl`'s
+`wine_ntoskrnl_main_loop` dispatches it (`dispatch_create`) plus subsequent `dispatch_ioctl`s to
+the driver's `MajorFunction` handlers.
+
+The log shows ACE's own driver-host threads (`02f0`, `0314` — the main loops of the two
+`winedevice` hosts whose `DriverEntry` ran on `02ec`/`0310`) receiving `dispatch_create` + several
+`dispatch_ioctl`s (`22c084`, `22c090`, `221c24`) on their devices (`0xA2D700`, `0xA2D460`)
+**before** the `Tace` bug check. So the **kernel↔user device handshake already works** — the
+device IRP path is **not** the missing piece.
+
+Also observed: ACE initializes 8 timer/DPC pairs (`KeInitializeTimerEx`/`KeInitializeDpc`, thread
+`0314`) but never arms them (`KeSetTimer` ×0); it never calls `ExNotifyCallback`; and no
+`KeSetEvent` ever targets the watchdog events. So none of the obvious in-driver signalling paths
+fire either.
+
+Net: the only unexplored Wine-side mechanism left is **cross-process Ob notifications** (a handle
+operation performed by a process *other than* the driver host), which needs wineserver-side
+routing. This is a **negative-leaning** lead: ACE's Ob callback already runs many times on the
+driver host's own handle references without signalling the events.
+
+#### Cross-process Ob notifications (server-side) `[implemented; still NEGATIVE]`
+
+Implemented the full wineserver-side routing on branch `2026.10.15_CrossProcessObCallbacks`:
+
+- `server/protocol.def`: new `IRP_CALL_OB` type + `union irp_params.ob`, and appended
+  `ob_register_callbacks` / `ob_unregister_callbacks` requests **at the end** so existing request
+  numbers don't shift (a mid-file insertion shifts every later `REQ_*` and crashes
+  not-rebuilt client modules — the reason the first attempt gave *"wineserver crashed"*).
+- `server/device.c`: an `ob_managers` list and `notify_ob_operation()`, which queues an
+  `IRP_CALL_OB` to every interested device manager.
+- `server/process.c:open_process` / `server/thread.c:open_thread`: queue a `HANDLE_CREATE`
+  notification whenever *any* process opens a process/thread handle.
+- `ntoskrnl`: `ObRegisterCallbacks` asks the server to forward; `dispatch_ob` resolves the
+  pid/tid and invokes the registered pre/post callbacks (from `0015`).
+
+Hardware result (launcher, `+ntoskrnl`, protocol v1811):
+
+- **Cross-process routing works**: **18,002** `dispatch_ob` invocations — ACE's Ob pre-op callback
+  runs for handle operations performed by *other* processes (top requesters: pids 1832, 1792, 60,
+  96, 120, 144, …).
+- **`BBD0`/`BC10` are still never `KeSetEvent`-ed, and `KeBugCheckEx 65636154` still fires** for
+  both drivers. The only driver-global events ever set are `A8D8`/`B968` (the already-signaled pair).
+
+**Conclusion:** the `Tace` watchdog is **not** an Ob/handle-operation watchdog — in-process *or*
+cross-process. With this, every delivered Wine-side event mechanism has been exhausted:
+
+| Mechanism | Delivered? | Signals `BBD0`/`BC10`? |
+|---|---|---|
+| Process/thread **create** notify (`0017`) | ✅ | ❌ |
+| `ObRegisterCallbacks` in-process (`0015`) | ✅ | ❌ |
+| `ObRegisterCallbacks` cross-process (server `IRP_CALL_OB`) | ✅ (18k×) | ❌ |
+| Control **device** IRP (CREATE + IOCTLs) | ✅ | ❌ |
+| `KeSetTimer`/DPC, `ExNotifyCallback` | ACE never calls them | ❌ |
+| User-mode **load-image** notify | ❌ (driver-only) | untested — weak candidate |
+
+The only callback family Wine still does not deliver is user-mode load-image notifications, but the
+cross-process Ob analogue (the closest match) did not help, so it is a weak lead. `Tace` remains a
+**cosmetic** kernel-component watchdog timeout: the user-mode ACE path keeps the game playable.
