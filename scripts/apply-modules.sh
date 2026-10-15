@@ -31,7 +31,7 @@ cleanup(){
 trap cleanup EXIT
 
 log "Checking modules in $MODULES"
-for f in ntdll.so kernel32.dll ntoskrnl.exe libMoltenVK.dylib CROSSOVER_VERSION SHA256SUMS; do
+for f in ntdll.so kernel32.dll ntoskrnl.exe lsass.exe wineboot.exe wineserver libMoltenVK.dylib CROSSOVER_VERSION SHA256SUMS; do
   [ -f "$MODULES/$f" ] || die "$MODULES/$f not found — run scripts/install-release.sh or follow README.md's source build steps"
 done
 ( cd "$MODULES" && shasum -a 256 -c -s SHA256SUMS ) || die "checksum mismatch in $MODULES"
@@ -106,17 +106,34 @@ cp -a "$SRC_APP" "$DEST_APP"
 CXR="$DEST_APP/Contents/SharedSupport/CrossOver"
 
 log "Installing patched Wine modules"
-swap(){ # module  path-under-lib/wine
+swap(){ # module  path-under-lib/wine  [allow-new]
   local dst="$CXR/lib/wine/$2"
-  [ -f "$dst" ] || die "Wine module missing: $dst"
-  cp "$dst" "$dst.cxorig"
+  # lsass.exe does not exist in stock CrossOver 26.3 (ACE-CORE needs it), so allow-new lets us add it.
+  if [ -f "$dst" ]; then
+    cp "$dst" "$dst.cxorig"
+  elif [ "${3:-}" != "allow-new" ]; then
+    die "Wine module missing: $dst"
+  fi
   cp "$MODULES/$1" "$dst"
   ok "$2"
 }
 swap ntdll.so     x86_64-unix/ntdll.so
 swap kernel32.dll x86_64-windows/kernel32.dll
 swap ntoskrnl.exe x86_64-windows/ntoskrnl.exe
+swap lsass.exe    x86_64-windows/lsass.exe    allow-new
+swap wineboot.exe x86_64-windows/wineboot.exe
 codesign --force --sign - "$CXR/lib/wine/x86_64-unix/ntdll.so"
+
+# The ACE-CORE driver opens kernel objects for every process token; stock CrossOver's server
+# refuses them (set_object_reference returns STATUS_INVALID_HANDLE). Our patched wineserver
+# allows token+directory kernel objects. CrossOver ships the same binary at two paths.
+for dst in "$CXR/bin/wineserver" "$CXR/CrossOver-Hosted Application/wineserver"; do
+  [ -f "$dst" ] || die "wineserver missing: $dst"
+  cp "$dst" "$dst.cxorig"
+  cp "$MODULES/wineserver" "$dst"
+  codesign --force --sign - "$dst"
+  ok "wineserver ($dst)"
+done
 
 if [ -n "$gptk_src" ]; then
   log "Installing GPTK D3DMetal"
@@ -184,6 +201,14 @@ done
 log "Removing bundle seal and quarantine"
 rm -rf "$DEST_APP/Contents/_CodeSignature" "$DEST_APP/Contents/CodeResources"
 xattr -dr com.apple.quarantine "$DEST_APP" 2>/dev/null || true
+
+# A double-clickable "Arknights Endfield.app" that launches the game directly (the Gryphline
+# launcher's Chromium renderer is unusable under Wine — see docs/project-information/15-*).
+if [ "${SKIP_LAUNCHER_APP:-0}" != "1" ]; then
+  log "Creating the double-clickable launcher app"
+  "$REPO/scripts/make-launcher-app.sh" --out-dir "$(dirname "$DEST_APP")" --cx-app "$DEST_APP" --force \
+    || warn "launcher app not created (non-fatal; run scripts/make-launcher-app.sh manually)"
+fi
 
 cat <<EOF
 

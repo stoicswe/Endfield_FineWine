@@ -1,0 +1,49 @@
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.c b/dlls/ntoskrnl.exe/ntoskrnl.c
+index a6d728d..d6e26dd 100644
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -2583,6 +2583,31 @@ ULONG WINAPI PsGetProcessSessionId( PEPROCESS process )
+     return process->session_id;
+ }
+ 
++/*********************************************************************
++ *           PsGetProcessExitStatus    (NTOSKRNL.@)
++ */
++NTSTATUS WINAPI PsGetProcessExitStatus( PEPROCESS process )
++{
++    NTSTATUS status = process->info.ExitStatus, ret = STATUS_SUCCESS;
++    PROCESS_BASIC_INFORMATION info;
++    HANDLE h;
++
++    /* The creation-time snapshot can be stale; refresh until exit,
++     * when the status becomes final. */
++    if (status == STATUS_PENDING
++        && !(ret = ObOpenObjectByPointer( process, OBJ_KERNEL_HANDLE, NULL, PROCESS_QUERY_LIMITED_INFORMATION,
++                                          NULL, KernelMode, &h )))
++    {
++        if (!(ret = NtQueryInformationProcess( h, ProcessBasicInformation, &info, sizeof(info), NULL )))
++            process->info.ExitStatus = status = info.ExitStatus;
++        NtClose( h );
++    }
++    if (ret) WARN( "Error querying process %p, status %#lx.\n", process, ret );
++
++    TRACE( "%p -> %#lx\n", process, status );
++    return status;
++}
++
+ /*********************************************************************
+  *           PsGetProcessCreateTimeQuadPart    (NTOSKRNL.@)
+  */
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+index 955750b..587f18e 100644
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -924,7 +924,7 @@
+ @ stdcall PsGetProcessCreateTimeQuadPart(ptr)
+ @ stub PsGetProcessDebugPort
+ @ stub PsGetProcessExitProcessCalled
+-@ stub PsGetProcessExitStatus
++@ stdcall PsGetProcessExitStatus(ptr)
+ @ stub PsGetProcessExitTime
+ @ stdcall PsGetProcessId(ptr)
+ @ stdcall PsGetProcessImageFileName(ptr)

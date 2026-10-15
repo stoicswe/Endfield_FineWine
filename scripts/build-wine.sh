@@ -16,7 +16,7 @@
 # Usage:
 #   scripts/build-wine.sh deps      # install Homebrew build deps
 #   scripts/build-wine.sh fetch     # download + extract CrossOver 26.3 wine source, init git
-#   scripts/build-wine.sh apply     # git apply all patches/ (em-backports -> misc -> macos fixes)
+#   scripts/build-wine.sh apply     # git apply all patches/ (em-backports -> misc -> ace-core -> macos fixes)
 #   scripts/build-wine.sh configure # run ./configure (64-bit)
 #   scripts/build-wine.sh build     # make -j
 #   scripts/build-wine.sh all       # deps -> fetch -> apply -> configure -> build
@@ -32,7 +32,7 @@ SRC_URL="https://media.codeweavers.com/pub/crossover/source/crossover-sources-${
 WINE_SRC="$BUILD_DIR/wine-src"          # extracted sources/wine
 WINE_BUILD="$BUILD_DIR/wine-build64"    # out-of-tree 64-bit build
 WINE_OUT="$BUILD_DIR/wine-out"
-MODULES="dlls/ntdll/ntdll.so dlls/kernel32/x86_64-windows/kernel32.dll dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe"
+MODULES="dlls/ntdll/ntdll.so dlls/kernel32/x86_64-windows/kernel32.dll dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe programs/lsass/x86_64-windows/lsass.exe programs/wineboot/x86_64-windows/wineboot.exe server/wineserver"
 BREW="$(command -v brew || echo /opt/homebrew/bin/brew)"
 export MACOSX_DEPLOYMENT_TARGET=10.15
 
@@ -60,13 +60,14 @@ cmd_fetch() {
 }
 
 cmd_apply() {
-  log "Applying patches (em-backports -> misc -> macOS)"
+  log "Applying patches (em-backports -> misc -> ace-core -> macOS)"
   [ -d "$WINE_SRC/.git" ] || { echo "run 'fetch' first"; exit 1; }
   local P="$REPO/patches"
   ( cd "$WINE_SRC"
     n=0
     for f in $(ls "$P"/stage2-dwproton/em-backports/*.patch | sort) \
              $(ls "$P"/stage2-dwproton/misc/*.patch | sort) \
+             $(ls "$P"/stage2-dwproton/ace-core/*.patch | sort) \
              $(ls "$P"/stage1-macos/*.patch | sort); do
       git apply "$f" || { echo "patch failed: $f"; exit 1; }
       n=$((n+1))

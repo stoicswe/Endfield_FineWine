@@ -144,6 +144,12 @@ jobs:
           path: dl/modules
           merge-multiple: true
 
+      - name: Download launcher app
+        uses: actions/download-artifact@v4
+        with:
+          name: launcher-app
+          path: dl/launcher
+
       - name: Assemble release assets
         shell: bash
         run: |
@@ -155,6 +161,9 @@ jobs:
           MOD="$(find dl/modules -name '*.tar.gz' | head -n1)"
           [ -n "$MOD" ] || { echo "::error::no modules tarball in the endfield-wine-modules artifact"; exit 1; }
           cp "$MOD" "release/endfield-wine-modules.tar.gz"
+          LAUNCHER="$(find dl/launcher -name '*.zip' | head -n1)"
+          [ -n "$LAUNCHER" ] || { echo "::error::no launcher app zip in the launcher-app artifact"; exit 1; }
+          cp "$LAUNCHER" "release/Arknights.Endfield.app.zip"
           ( cd release && sha256sum ./* > SHA256SUMS.txt && cat SHA256SUMS.txt )
           ls -lh release
 
@@ -195,6 +204,7 @@ jobs:
           fi
           gh release upload "$TAG" \
             release/FineWine.Patcher.app.zip \
+            release/Arknights.Endfield.app.zip \
             release/endfield-wine-modules.tar.gz \
             release/SHA256SUMS.txt --clobber
           gh release edit "$TAG" --title "$TITLE" --latest --notes-file notes.md
@@ -214,6 +224,6 @@ jobs:
             echo "|---|---|"
             echo "| Tag | \`$TAG\` |"
             echo "| Version | \`${{ needs.version.outputs.version }}\` |"
-            echo "| Assets | Patcher.app zip · modules tarball · SHA256SUMS.txt |"
+            echo "| Assets | Patcher.app zip · Arknights Endfield.app zip · modules tarball · SHA256SUMS.txt |"
             echo "| URL | ${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG |"
           } >> "$GITHUB_STEP_SUMMARY"

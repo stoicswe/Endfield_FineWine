@@ -1,0 +1,246 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Endfield_FineWine <noreply@github.com>
+Date: Thu, 15 Oct 2026 00:00:00 +0000
+Subject: [PATCH] ntoskrnl.exe: Implement the new kernel imports required by the
+ ACE-CORE anti-cheat driver.
+
+The late-2026 Endfield update replaced ACE-BASE.sys with a new
+ACE-CORE<version>.sys kernel driver that imports/requests the following
+ntoskrnl.exe exports, none of which exist in Wine (11.x) or the existing
+dw-proton backports:
+
+  PsGetCurrentThreadTeb, KeIpiGenericCall, KeTryToAcquireGuardedMutex,
+  KeSetSystemGroupAffinityThread, KeRevertToUserGroupAffinityThread,
+  KeGetProcessorNumberFromIndex, ObDereferenceObjectDeferDelete
+
+and also KeGetCurrentIrql (dw-proton carries a stub for it; FineWine did not).
+
+This adds faithful / semi-stub implementations and their spec exports so the
+loader no longer points the imports at an out-of-module Wine stub. It is
+necessary plumbing, not a proven fix: the new CORE driver is reported to abort
+in DriverEntry with KeBugCheckEx 0x65636157 even when it imports none of these,
+so further work (kernel-image check emulation) is still required.
+
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.c b/dlls/ntoskrnl.exe/ntoskrnl.c
+index a6d728d..b860174 100644
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -219,6 +219,17 @@ void WINAPI ObDereferenceObject( void *obj )
+     LeaveCriticalSection( &obref_cs );
+ }
+ 
++/***********************************************************************
++ *           ObDereferenceObjectDeferDelete   (NTOSKRNL.EXE.@)
++ */
++void WINAPI ObDereferenceObjectDeferDelete( void *obj )
++{
++    /* The documented behaviour queues deletion to a worker thread so it happens
++     * at PASSIVE_LEVEL; dereferencing directly is a faithful semi-stub. */
++    FIXME( "(%p): semi-stub, dereferencing directly.\n", obj );
++    ObDereferenceObject( obj );
++}
++
+ void ObReferenceObject( void *obj )
+ {
+     struct object_header *header = (struct object_header*)obj - 1;
+@@ -2845,6 +2856,19 @@ ULONG WINAPI KeQueryTimeIncrement(void)
+     return 10000;
+ }
+ 
++/***********************************************************************
++ *           KeIpiGenericCall   (NTOSKRNL.EXE.@)
++ */
++typedef ULONG_PTR (WINAPI *KIPI_BROADCAST_WORKER)(ULONG_PTR);
++
++ULONG_PTR WINAPI KeIpiGenericCall(KIPI_BROADCAST_WORKER function, ULONG_PTR context)
++{
++    /* Real Windows broadcasts the worker to every active processor and waits for
++     * all of them. Running it once, on the caller, is the safe semi-stub: the
++     * result is returned and no caller blocks on an IPI we cannot deliver. */
++    FIXME("(%p, %#Ix): semi-stub, running on the calling processor only.\n", function, context);
++    return function(context);
++}
+ 
+ /***********************************************************************
+  *           KeSetPriorityThread   (NTOSKRNL.EXE.@)
+@@ -2913,6 +2937,37 @@ void WINAPI KeRevertToUserAffinityThreadEx(KAFFINITY affinity)
+     thread->user_affinity = affinity;
+ }
+ 
++/***********************************************************************
++ *           KeSetSystemGroupAffinityThread   (NTOSKRNL.EXE.@)
++ */
++void WINAPI KeSetSystemGroupAffinityThread(PGROUP_AFFINITY affinity, PGROUP_AFFINITY previous)
++{
++    GROUP_AFFINITY old;
++
++    TRACE("affinity %p, previous %p.\n", affinity, previous);
++
++    memset(&old, 0, sizeof(old));
++    NtQueryInformationThread(GetCurrentThread(), ThreadGroupInformation,
++                             &old, sizeof(old), NULL);
++    if (previous) *previous = old;
++
++    if (affinity)
++        NtSetInformationThread(GetCurrentThread(), ThreadGroupInformation,
++                               affinity, sizeof(*affinity));
++}
++
++/***********************************************************************
++ *           KeRevertToUserGroupAffinityThread   (NTOSKRNL.EXE.@)
++ */
++void WINAPI KeRevertToUserGroupAffinityThread(PGROUP_AFFINITY previous)
++{
++    TRACE("previous %p.\n", previous);
++
++    if (previous)
++        NtSetInformationThread(GetCurrentThread(), ThreadGroupInformation,
++                               previous, sizeof(*previous));
++}
++
+ /***********************************************************************
+  *           KeRegisterBugCheckCallback   (NTOSKRNL.EXE.@)
+  */
+@@ -3400,6 +3455,14 @@ HANDLE WINAPI PsGetCurrentThreadId(void)
+     return KeGetCurrentThread()->id.UniqueThread;
+ }
+ 
++/***********************************************************************
++ *           PsGetCurrentThreadTeb   (NTOSKRNL.EXE.@)
++ */
++TEB *WINAPI PsGetCurrentThreadTeb(void)
++{
++    return NtCurrentTeb();
++}
++
+ 
+ /***********************************************************************
+  *           PsIsSystemThread   (NTOSKRNL.EXE.@)
+@@ -3674,6 +3737,24 @@ ULONG WINAPI KeGetCurrentProcessorNumberEx(PPROCESSOR_NUMBER process_number)
+     return cur_number;
+ }
+ 
++/***********************************************************************
++ *          KeGetProcessorNumberFromIndex   (NTOSKRNL.EXE.@)
++ */
++NTSTATUS WINAPI KeGetProcessorNumberFromIndex(ULONG index, PPROCESSOR_NUMBER number)
++{
++    ULONG count = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
++
++    TRACE("index %lu, number %p.\n", index, number);
++
++    if (!number) return STATUS_INVALID_PARAMETER;
++    if (index >= count) return STATUS_INVALID_PARAMETER;
++
++    number->Group = 0;
++    number->Reserved = 0;
++    number->Number = index;
++    return STATUS_SUCCESS;
++}
++
+ /***********************************************************************
+  *          KeQueryGroupAffinity   (NTOSKRNL.EXE.@)
+  */
+@@ -4873,6 +4954,12 @@ void WINAPI KeLowerIrql(KIRQL new)
+     FIXME("new %u: stub.\n", new);
+ }
+ 
++KIRQL WINAPI KeGetCurrentIrql(void)
++{
++    FIXME("stub.\n");
++    return 0; /* PASSIVE_LEVEL */
++}
++
+ #endif
+ 
+ typedef void (WINAPI *PETW_CLASSIC_CALLBACK)(
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+index 955750b..82cea5a 100644
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -54,6 +54,7 @@
+ @ stdcall -fastcall KeAcquireInStackQueuedSpinLockAtDpcLevel(ptr ptr)
+ @ stdcall KeAcquireGuardedMutexUnsafe(ptr)
+ @ stdcall KeAcquireGuardedMutex(ptr)
++@ stdcall KeTryToAcquireGuardedMutex(ptr)
+ @ stdcall KeEnterGuardedRegion()
+ @ stdcall KeExpandKernelStackAndCallout(ptr ptr long)
+ @ stdcall KeExpandKernelStackAndCalloutEx(ptr ptr long long ptr)
+@@ -566,6 +567,8 @@
+ @ stdcall KeFlushQueuedDpcs()
+ @ stdcall KeGetCurrentProcessorNumber() NtGetCurrentProcessorNumber
+ @ stdcall KeGetCurrentProcessorNumberEx(ptr)
++@ stdcall KeGetCurrentIrql()
++@ stdcall KeGetProcessorNumberFromIndex(long ptr)
+ @ stdcall KeGetCurrentThread()
+ @ stub KeGetPreviousMode
+ @ stub KeGetRecommendedSharedDataAlignment
+@@ -648,6 +651,7 @@
+ @ stub KeRestoreFloatingPointState
+ @ stdcall KeRevertToUserAffinityThread()
+ @ stdcall KeRevertToUserAffinityThreadEx(long)
++@ stdcall KeRevertToUserGroupAffinityThread(ptr)
+ @ stub KeRundownQueue
+ @ stub KeSaveFloatingPointState
+ @ stub KeSaveStateForHibernate
+@@ -664,6 +668,7 @@
+ @ stub KeSetProfileIrql
+ @ stdcall KeSetSystemAffinityThread(long)
+ @ stdcall KeSetSystemAffinityThreadEx(long)
++@ stdcall KeSetSystemGroupAffinityThread(ptr ptr)
+ @ stdcall KeSetTargetProcessorDpc(ptr long)
+ @ stdcall KeSetTargetProcessorDpcEx(ptr ptr)
+ @ stub KeSetTimeIncrement
+@@ -687,6 +692,7 @@
+ @ stub KiDeliverApc
+ @ stub KiDispatchInterrupt
+ @ stub KiEnableTimerWatchdog
++@ stdcall KeIpiGenericCall(ptr long)
+ @ stub KiIpiServiceRoutine
+ @ stub KiUnexpectedInterrupt
+ @ stdcall LdrAccessResource(long ptr ptr ptr)
+@@ -855,6 +861,7 @@
+ @ stub ObCreateObject
+ @ stub ObCreateObjectType
+ @ stdcall ObDereferenceObject(ptr)
++@ stdcall ObDereferenceObjectDeferDelete(ptr)
+ @ stub ObDereferenceSecurityDescriptor
+ @ stub ObFindHandleForObject
+ @ stdcall ObGetFilterVersion()
+@@ -915,6 +922,7 @@
+ @ stdcall PsGetCurrentProcessSessionId()
+ @ stdcall PsGetCurrentThread() KeGetCurrentThread
+ @ stdcall PsGetCurrentThreadId()
++@ stdcall PsGetCurrentThreadTeb()
+ @ stub PsGetCurrentThreadPreviousMode
+ @ stub PsGetCurrentThreadStackBase
+ @ stub PsGetCurrentThreadStackLimit
+diff --git a/dlls/ntoskrnl.exe/sync.c b/dlls/ntoskrnl.exe/sync.c
+index 4674a3a..abbbc44 100644
+--- a/dlls/ntoskrnl.exe/sync.c
++++ b/dlls/ntoskrnl.exe/sync.c
+@@ -461,6 +461,24 @@ void WINAPI KeAcquireGuardedMutex(PKGUARDED_MUTEX mutex)
+     KeAcquireGuardedMutexUnsafe(mutex);
+ }
+ 
++/***********************************************************************
++ *           KeTryToAcquireGuardedMutex   (NTOSKRNL.EXE.@)
++ */
++BOOLEAN WINAPI KeTryToAcquireGuardedMutex(PKGUARDED_MUTEX mutex)
++{
++    LONG count;
++
++    TRACE("mutex %p.\n", mutex);
++
++    count = InterlockedDecrement( &mutex->Count );
++    if (count >= 0)
++        return TRUE;
++
++    /* couldn't acquire, restore the count and report failure */
++    InterlockedIncrement( &mutex->Count );
++    return FALSE;
++}
++
+ /***********************************************************************
+  *           KeReleaseGuardedMutexUnsafe   (NTOSKRNL.EXE.@)
+  */

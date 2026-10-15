@@ -188,7 +188,16 @@ swap(){ # src  dst-rel
 }
 swap "$B/dlls/ntdll/ntdll.so"                           "lib/wine/x86_64-unix/ntdll.so"        # Rosetta NOP + priv-instr fixes, NtDelayExecution QPC
 swap "$B/dlls/kernel32/x86_64-windows/kernel32.dll"     "lib/wine/x86_64-windows/kernel32.dll" # KiUser*Dispatcher int3 spoof
-swap "$B/dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe" "lib/wine/x86_64-windows/ntoskrnl.exe" # ntoskrnl em-backports
+swap "$B/dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe" "lib/wine/x86_64-windows/ntoskrnl.exe" # ntoskrnl em-backports + ACE-CORE DriverInit/lsass support
+swap "$B/programs/lsass/x86_64-windows/lsass.exe"       "lib/wine/x86_64-windows/lsass.exe"     # new: ACE-CORE requires a running lsass.exe
+swap "$B/programs/wineboot/x86_64-windows/wineboot.exe" "lib/wine/x86_64-windows/wineboot.exe"  # starts the lsass.exe stub at boot
+# ACE-CORE opens kernel objects for each process token; stock CrossOver's server refuses them
+# (set_object_reference fails with STATUS_INVALID_HANDLE). Our server allows token+directory
+# kernel objects. CrossOver ships the same binary at two paths; replace both.
+swap "$B/server/wineserver"                             "bin/wineserver"
+swap "$B/server/wineserver"                             "CrossOver-Hosted Application/wineserver"
+codesign --force --sign - "$CXR/bin/wineserver" 2>/dev/null || true
+codesign --force --sign - "$CXR/CrossOver-Hosted Application/wineserver" 2>/dev/null || true
 
 # CRITICAL: CrossOver's ntdll dlopens cxcompatdb.so (which applies the CX_GRAPHICS_BACKEND
 # choice per process). cxcompatdb.so needs @rpath/libgnutls.30.dylib from lib64/, and dyld
@@ -598,6 +607,15 @@ if [ "${MOD_CHAIN_REVERT:-0}" = "1" ]; then
   mod_chain_revert
 elif [ "${MOD_CHAIN:-0}" = "1" ]; then
   mod_chain_apply
+fi
+
+# ---------------------------------------------------------------- 8. direct-launch app
+# The Gryphline launcher's Chromium renderer is unusable under Wine (docs/project-information/15-*),
+# so ship a double-clickable app that launches the game directly.
+if [ "$DO_APP_PATCH" = "1" ] && [ "${SKIP_LAUNCHER_APP:-0}" != "1" ]; then
+  log "Creating the double-clickable launcher app"
+  "$REPO/scripts/make-launcher-app.sh" --out-dir "$(dirname "$DEST_APP")" --cx-app "$DEST_APP" --force \
+    || warn "launcher app not created (non-fatal; run scripts/make-launcher-app.sh manually)"
 fi
 
 cat <<EOF

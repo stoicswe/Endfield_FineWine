@@ -18,6 +18,8 @@
 | Doc | What it covers |
 |---|---|
 | [13-working-solution.md](13-working-solution.md) | ✅ **Start here.** The two Rosetta fixes, the full patch set, the deploy, and the graphics/rpath lessons learned after it worked. |
+| [14-ace-core-regression.md](14-ace-core-regression.md) | **Root cause found (Oct 2026).** The new `ACE-CORE*.sys` driver bugchecked (`0x65636157`) on the `DriverInit` return address not being a kernel address, and required a running `lsass.exe`. Analysis, prior art, and the **downstream fix to port** (mary-ext's `dwproton/0004` + `macos/0007`). |
+| [15-launcher-qtwebengine-crash.md](15-launcher-qtwebengine-crash.md) | ⚠️ **UNRESOLVED.** The Gryphline launcher's Chromium renderer (`QtWebEngineProcess.exe`) crashes under Wine (`0xe0000008`). Instrumented Wine syscalls show **no failing call** → not a targeted patch. Workaround: `scripts/launch-endfield.sh`. |
 | [10-milestone-1-results.md](10-milestone-1-results.md) | The real failure signature captured on stock CrossOver (the stage-1 protector loop) — the observation everything else was gated on. |
 | [11-linux-vs-macos-comparison.md](11-linux-vs-macos-comparison.md) | The Linux-vs-macOS log comparison: why the dw-proton patches were necessary-but-not-sufficient, and the macOS-specific stage-1 fault. |
 | [12-stage1-protector-fault.md](12-stage1-protector-fault.md) | The stage-1 `EndfieldBase.dll` fault: hypotheses, experiments, root cause (Rosetta rejects a plain NOP). ✅ solved. |

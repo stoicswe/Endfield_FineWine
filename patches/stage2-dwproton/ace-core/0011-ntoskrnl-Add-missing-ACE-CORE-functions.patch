@@ -1,0 +1,163 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: FineWine <noreply@localhost>
+Date: Thu, 15 Oct 2026 12:35:00 +0000
+Subject: [PATCH] ntoskrnl.exe: Add the remaining kobject/process functions
+ ACE-CORE may call.
+
+Ports the downstream's remaining non-test ntoskrnl pieces that this base still
+has as stubs/missing: FsRtlGetFileSize, PsGetProcessPeb, PsDereferencePrimaryToken
+and a KdChangeOption stub.
+
+Sources: wine/upstream/0001,0004,0021,0027 from mary-ext/crossover-wine-endfield.
+---
+ dlls/ntoskrnl.exe/ntoskrnl.c        | 40 +++++++++++++++++++++++++++
+ dlls/ntoskrnl.exe/ntoskrnl.exe.spec |  4 ++--
+ include/ddk/ntifs.h                 |  2 ++
+ include/ddk/ntddk.h                 |  1 +
+ 4 files changed, 45 insertions(+), 2 deletions(-)
+
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -2530,6 +2530,31 @@
+ }
+ 
+ /***********************************************************************
++ *           FsRtlGetFileSize   (NTOSKRNL.EXE.@)
++ */
++NTSTATUS WINAPI FsRtlGetFileSize( PFILE_OBJECT file_obj, PLARGE_INTEGER file_size )
++{
++    FILE_STANDARD_INFORMATION info;
++    IO_STATUS_BLOCK iosb;
++    NTSTATUS status;
++    HANDLE handle;
++
++    TRACE( "file_obj %p, file_size %p\n", file_obj, file_size );
++
++    status = ObOpenObjectByPointer( file_obj, 0, NULL, 0, IoFileObjectType, KernelMode, &handle );
++    if (status) return status;
++
++    status = NtQueryInformationFile( handle, &iosb, &info, sizeof(info), FileStandardInformation );
++    NtClose( handle );
++    if (!status)
++    {
++        if (info.Directory) return STATUS_FILE_IS_A_DIRECTORY;
++        file_size->QuadPart = info.EndOfFile.QuadPart;
++    }
++    return status;
++}
++
++/***********************************************************************
+ *           FsRtlIsNameInExpression   (NTOSKRNL.EXE.@)
+ */
+ BOOLEAN WINAPI FsRtlIsNameInExpression(PUNICODE_STRING expression, PUNICODE_STRING name,
+@@ -2664,6 +2689,15 @@
+ }
+ 
+ /*********************************************************************
++ *           PsGetProcessPeb    (NTOSKRNL.@)
++ */
++PEB *WINAPI PsGetProcessPeb(PEPROCESS process)
++{
++    TRACE( "%p -> %p\n", process, process->info.PebBaseAddress );
++    return process->info.PebBaseAddress;
++}
++
++/*********************************************************************
+  *           PsGetProcessInheritedFromUniqueProcessId  (NTOSKRNL.@)
+  */
+ HANDLE WINAPI PsGetProcessInheritedFromUniqueProcessId( PEPROCESS process )
+@@ -2723,6 +2757,15 @@
+ {
+     TRACE("%p -> %s\n", process, debugstr_an(process->imageName, sizeof(process->imageName)));
+     return process->imageName;
++}
++
++/*********************************************************************
++ *           PsDereferencePrimaryToken    (NTOSKRNL.@)
++ */
++void WINAPI PsDereferencePrimaryToken( PACCESS_TOKEN token )
++{
++    TRACE("%p\n", token);
++    ObDereferenceObject(token);
+ }
+ 
+ /*********************************************************************
+@@ -5117,6 +5160,13 @@
+     FIXME("apc_state %p stub.\n", apc_state);
+ }
+ 
++NTSTATUS WINAPI KdChangeOption(ULONG option, ULONG in_size, PVOID in_buffer,
++                               ULONG out_size, PVOID out_buffer, PULONG ret_size)
++{
++    FIXME( "stub: %lu %lu %p %lu %p %p\n", option, in_size, in_buffer, out_size, out_buffer, ret_size );
++    return STATUS_DEBUGGER_INACTIVE;
++}
++
+ NTSTATUS WINAPI KeCapturePersistentThreadState(CONTEXT *context, PKTHREAD thread, ULONG code,
+                                                ULONG param1, ULONG param2, ULONG param3, ULONG param4, void *addr)
+ {
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -238,7 +238,7 @@
+ @ stub FsRtlFastUnlockSingle
+ @ stub FsRtlFindInTunnelCache
+ @ stub FsRtlFreeFileLock
+-@ stub FsRtlGetFileSize
++@ stdcall FsRtlGetFileSize(ptr ptr)
+ @ stub FsRtlGetNextFileLock
+ @ stub FsRtlGetNextLargeMcbEntry
+ @ stub FsRtlGetNextMcbEntry
+@@ -529,6 +529,7 @@
+ @ stub IoWriteTransferCount
+ @ extern KdDebuggerEnabled
+ @ stub KdDebuggerNotPresent
++@ stdcall KdChangeOption(long long ptr long ptr ptr)
+ @ stdcall KdDisableDebugger()
+ @ stdcall KdEnableDebugger()
+ @ stub KdEnteredDebugger
+@@ -914,7 +915,7 @@
+ @ stub PsCreateSystemProcess
+ @ stdcall PsCreateSystemThread(ptr long ptr long ptr ptr ptr)
+ @ stub PsDereferenceImpersonationToken
+-@ stub PsDereferencePrimaryToken
++@ stdcall PsDereferencePrimaryToken(ptr)
+ @ stub PsDisableImpersonation
+ @ stub PsEstablishWin32Callouts
+ @ stdcall PsGetContextThread(ptr ptr)
+@@ -939,7 +940,7 @@
+ @ stdcall PsGetProcessImageFileName(ptr)
+ @ stdcall PsGetProcessInheritedFromUniqueProcessId(ptr)
+ @ stub PsGetProcessJob
+-@ stub PsGetProcessPeb
++@ stdcall PsGetProcessPeb(ptr)
+ @ stub PsGetProcessPriorityClass
+ @ stdcall PsGetProcessSectionBaseAddress(ptr)
+ @ stub PsGetProcessSecurityPort
+--- a/include/ddk/ntifs.h
++++ b/include/ddk/ntifs.h
+@@ -203,6 +203,7 @@
+ #define COMPRESSION_FORMAT_MASK         0x00ff
+ #define COMPRESSION_ENGINE_MASK         0xff00
+ 
++NTSTATUS WINAPI FsRtlGetFileSize(PFILE_OBJECT, PLARGE_INTEGER);
+ BOOLEAN WINAPI FsRtlIsNameInExpression(PUNICODE_STRING, PUNICODE_STRING, BOOLEAN, PWCH);
+ DEVICE_OBJECT * WINAPI IoGetAttachedDevice(DEVICE_OBJECT*);
+ PEPROCESS WINAPI IoGetRequestorProcess(IRP*);
+@@ -210,6 +211,7 @@
+ void WINAPI KeUnstackDetachProcess(KAPC_STATE*);
+ NTSTATUS WINAPI ObOpenObjectByPointer(void*,ULONG,PACCESS_STATE,ACCESS_MASK,POBJECT_TYPE,KPROCESSOR_MODE,HANDLE*);
+ NTSTATUS WINAPI ObQueryNameString(PVOID,POBJECT_NAME_INFORMATION,ULONG,PULONG);
++void WINAPI PsDereferencePrimaryToken(PACCESS_TOKEN);
+ BOOLEAN WINAPI PsIsSystemThread(PETHREAD);
+ NTSTATUS WINAPI PsLookupProcessByProcessId(HANDLE,PEPROCESS*);
+ NTSTATUS WINAPI PsLookupThreadByThreadId(HANDLE,PETHREAD*);
+--- a/include/ddk/ntddk.h
++++ b/include/ddk/ntddk.h
+@@ -289,6 +289,7 @@
+ void      WINAPI KeSetTargetProcessorDpc(PRKDPC,CCHAR);
+ BOOLEAN   WINAPI MmIsAddressValid(void *);
+ HANDLE    WINAPI PsGetProcessId(PEPROCESS);
++PEB *     WINAPI PsGetProcessPeb(PEPROCESS);
+ void *    WINAPI PsGetProcessSectionBaseAddress(PEPROCESS);
+ HANDLE    WINAPI PsGetThreadId(PETHREAD);
+ HANDLE    WINAPI PsGetThreadProcessId(PETHREAD);

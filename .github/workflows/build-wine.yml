@@ -397,3 +397,56 @@ jobs:
           > from these artifacts, attach the exact `crossover-sources-${{ env.CX_VER }}` tarball +
           > this repo's patches (see `patcher-app/README.md`).
           EOF
+
+  launcher-app:
+    name: Arknights Endfield.app (launcher alias)
+    runs-on: ${{ inputs.runner || 'xcode-27' }}
+    if: ${{ inputs.build_patcher_app != false }}
+    timeout-minutes: 10
+    env:
+      CX_VER: ${{ inputs.cx_version || '26.3.0' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Short SHA
+        run: echo "SHORT_SHA=${GITHUB_SHA::8}" >> "$GITHUB_ENV"
+
+      # A tiny shell-script .app that opens the Gryphline launcher via the direct `wine --cx-app`
+      # path (which stays up where the CrossOver GUI's Start button crashes it — docs/15).
+      # Built --portable so it resolves the patched CrossOver app at launch on the user's machine.
+      - name: Build the portable launcher app
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ./scripts/make-launcher-app.sh --portable --out-dir dist --force
+          codesign --verify --verbose "dist/Arknights Endfield.app"
+
+      - name: Package launcher app zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          ditto -c -k --sequesterRsrc --keepParent \
+            "dist/Arknights Endfield.app" \
+            "dist/finewine-launcher-${{ env.CX_VER }}-${{ env.SHORT_SHA }}.zip"
+          ls -lh dist
+
+      - name: Upload launcher app
+        uses: actions/upload-artifact@v4
+        with:
+          name: launcher-app
+          path: dist/finewine-launcher-${{ env.CX_VER }}-${{ env.SHORT_SHA }}.zip
+          retention-days: 14
+
+      - name: Write job summary
+        shell: bash
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Arknights Endfield.app (launcher alias)
+
+          | | |
+          |---|---|
+          | Purpose | Double-click to open the Gryphline launcher via the direct wine path |
+          | Artifact | `launcher-app` — finewine-launcher-${{ env.CX_VER }}-${{ env.SHORT_SHA }}.zip |
+          | Signing | ad-hoc (right-click → Open on first launch) |
+          EOF

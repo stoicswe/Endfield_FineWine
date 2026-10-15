@@ -1,0 +1,210 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: FineWine <noreply@localhost>
+Date: Thu, 15 Oct 2026 12:30:00 +0000
+Subject: [PATCH] ntoskrnl.exe: Implement MDL functions and keep section views
+ mapped.
+
+ACE-CORE locks an MDL over a section view, maps it with
+MmMapLockedPagesSpecifyCache and writes through the returned address.  The stock
+CrossOver stubs return NULL from MmMapLockedPagesSpecifyCache (and do nothing in
+MmProbeAndLockPages/MmUnlockPages/MmUnmapLockedPages/MmBuildMdlForNonPagedPool),
+so ACE dereferences NULL and reports "an exception occurred when the game
+security component was running" (1-1812-1020).
+
+Ports the upstream MDL implementations (MmProbeAndLockPages/MmUnlockPages,
+MmMapLockedPagesSpecifyCache/MmUnmapLockedPages, MmBuildMdlForNonPagedPool) plus
+dwproton's section-view retention: ZwUnmapViewOfSection defers unmapping a view
+while a locked MDL still maps it, so ACE's write through the mapped view no
+longer takes an unhandled access violation.
+
+Sources: wine/upstream/0037,0039,0040,0042 and wine/dwproton/0007 from
+mary-ext/crossover-wine-endfield.
+---
+ dlls/ntoskrnl.exe/ntoskrnl.c        | 90 ++++++++++++++++++++++++++++++++++++-
+ dlls/ntoskrnl.exe/ntoskrnl.exe.spec |  2 +-
+ 2 files changed, 91 insertions(+), 1 deletion(-)
+
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -1215,6 +1215,88 @@
+ }
+ 
+ 
++/* dirty way to postpone drivers from unmapping sections while a locked MDL still uses it */
++struct mapped_view
++{
++    struct list entry;
++    MDL *mdl;
++    void *pending_unmap;
++};
++
++/* i dont really know other ways to do this.. */
++static struct list mapped_views = LIST_INIT( mapped_views );
++DECLARE_CRITICAL_SECTION(mapped_views_cs);
++static struct mapped_view *find_mapped_view( const void *addr )
++{
++    struct mapped_view *view;
++
++    LIST_FOR_EACH_ENTRY( view, &mapped_views, struct mapped_view, entry )
++        if ((const char *)addr >= (char *)view->mdl->MappedSystemVa &&
++            (const char *)addr < (char *)view->mdl->MappedSystemVa + view->mdl->ByteCount)
++            return view;
++    return NULL;
++}
++
++static void add_mapped_view( MDL *mdl )
++{
++    struct mapped_view *view;
++
++    if (!(mdl->MdlFlags & MDL_PAGES_LOCKED) || !(view = malloc( sizeof(*view) ))) return;
++    view->mdl = mdl;
++    view->pending_unmap = NULL;
++
++    EnterCriticalSection( &mapped_views_cs );
++    list_add_tail( &mapped_views, &view->entry );
++    LeaveCriticalSection( &mapped_views_cs );
++}
++
++static void remove_mapped_view( MDL *mdl )
++{
++    struct mapped_view *view, *other;
++    void *unmap = NULL;
++
++    EnterCriticalSection( &mapped_views_cs );
++    LIST_FOR_EACH_ENTRY( view, &mapped_views, struct mapped_view, entry )
++    {
++        if (view->mdl != mdl) continue;
++        unmap = view->pending_unmap;
++        list_remove( &view->entry );
++        free( view );
++        /* another MDL may still map the same view */
++        if (unmap && (other = find_mapped_view( unmap )))
++        {
++            other->pending_unmap = unmap;
++            unmap = NULL;
++        }
++        break;
++    }
++    LeaveCriticalSection( &mapped_views_cs );
++
++    if (unmap) NtUnmapViewOfSection( GetCurrentProcess(), unmap );
++}
++
++/***********************************************************************
++ *           ZwUnmapViewOfSection  (NTOSKRNL.EXE.@)
++ */
++NTSTATUS WINAPI ZwUnmapViewOfSection( HANDLE process, void *addr )
++{
++    /* surely upstreamable........... */
++    struct mapped_view *view = NULL;
++
++    TRACE( "process %p, addr %p\n", process, addr );
++
++    if (process == GetCurrentProcess())
++    {
++        EnterCriticalSection( &mapped_views_cs );
++        if ((view = find_mapped_view( addr ))) view->pending_unmap = addr;
++        LeaveCriticalSection( &mapped_views_cs );
++    }
++    if (view) return STATUS_SUCCESS;
++
++    return NtUnmapViewOfSection( process, addr );
++}
++
++
+ /***********************************************************************
+  *           IoAllocateMdl  (NTOSKRNL.EXE.@)
+  */
+@@ -1258,6 +1340,7 @@
+ void WINAPI IoFreeMdl(PMDL mdl)
+ {
+     TRACE("%p\n", mdl);
++    remove_mapped_view( mdl );
+     HeapFree(GetProcessHeap(), 0, mdl);
+ }
+ 
+@@ -3111,7 +3194,10 @@
+  */
+ void WINAPI MmBuildMdlForNonPagedPool(MDL *mdl)
+ {
+-    FIXME("stub: %p\n", mdl);
++    TRACE("%p\n", mdl);
++
++    mdl->MdlFlags |= MDL_SOURCE_IS_NONPAGED_POOL;
++    mdl->MappedSystemVa = (char *)mdl->StartVa + mdl->ByteOffset;
+ }
+ 
+ /***********************************************************************
+@@ -3218,8 +3304,11 @@
+ {
+     TRACE( "%p %u\n", mdl, mode );
+ 
++    if (mdl->MdlFlags & MDL_MAPPED_TO_SYSTEM_VA) return mdl->MappedSystemVa;
++
+     mdl->MdlFlags |= MDL_MAPPED_TO_SYSTEM_VA;
+     mdl->MappedSystemVa = (char *)mdl->StartVa + mdl->ByteOffset;
++    add_mapped_view( mdl );
+     return mdl->MappedSystemVa;
+ }
+ 
+@@ -3229,9 +3318,12 @@
+ PVOID WINAPI  MmMapLockedPagesSpecifyCache(PMDLX MemoryDescriptorList, KPROCESSOR_MODE AccessMode, MEMORY_CACHING_TYPE CacheType,
+                                            PVOID BaseAddress, ULONG BugCheckOnFailure, MM_PAGE_PRIORITY Priority)
+ {
+-    FIXME("(%p, %u, %u, %p, %lu, %u): stub\n", MemoryDescriptorList, AccessMode, CacheType, BaseAddress, BugCheckOnFailure, Priority);
+-
+-    return NULL;
++    TRACE("(%p, %u, %u, %p, %lu, %u)\n", MemoryDescriptorList, AccessMode, CacheType,
++          BaseAddress, BugCheckOnFailure, Priority);
++
++    if (BaseAddress) FIXME("requested base address %p ignored\n", BaseAddress);
++
++    return MmMapLockedPages( MemoryDescriptorList, AccessMode );
+ }
+ 
+ /***********************************************************************
+@@ -3239,7 +3331,10 @@
+  */
+ void WINAPI MmUnmapLockedPages( void *base, MDL *mdl )
+ {
+-    FIXME( "(%p %p_\n", base, mdl );
++    TRACE( "%p %p\n", base, mdl );
++
++    remove_mapped_view( mdl );
++    mdl->MdlFlags &= ~MDL_MAPPED_TO_SYSTEM_VA;
+ }
+ 
+ /***********************************************************************
+@@ -3265,7 +3360,9 @@
+  */
+ void WINAPI MmProbeAndLockPages(PMDLX MemoryDescriptorList, KPROCESSOR_MODE AccessMode, LOCK_OPERATION Operation)
+ {
+-    FIXME("(%p, %u, %u): stub\n", MemoryDescriptorList, AccessMode, Operation);
++    TRACE("(%p, %u, %u)\n", MemoryDescriptorList, AccessMode, Operation);
++
++    MemoryDescriptorList->MdlFlags |= MDL_PAGES_LOCKED;
+ }
+ 
+ 
+@@ -3283,7 +3380,9 @@
+  */
+ void WINAPI  MmUnlockPages(PMDLX MemoryDescriptorList)
+ {
+-    FIXME("(%p): stub\n", MemoryDescriptorList);
++    TRACE("(%p)\n", MemoryDescriptorList);
++
++    MemoryDescriptorList->MdlFlags &= ~MDL_PAGES_LOCKED;
+ }
+ 
+ 
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -1558,7 +1558,7 @@
+ @ stdcall -private ZwUnloadKey(ptr) NtUnloadKey
+ @ stdcall -private ZwUnlockFile(long ptr ptr ptr ptr) NtUnlockFile
+ @ stdcall -private ZwUnlockVirtualMemory(long ptr ptr long) NtUnlockVirtualMemory
+-@ stdcall ZwUnmapViewOfSection(long ptr) NtUnmapViewOfSection
++@ stdcall ZwUnmapViewOfSection(long ptr)
+ @ stdcall -private ZwWaitForMultipleObjects(long ptr long long ptr) NtWaitForMultipleObjects
+ @ stdcall ZwWaitForSingleObject(long long ptr) NtWaitForSingleObject
+ @ stdcall ZwWriteFile(long long ptr ptr ptr ptr long ptr ptr) NtWriteFile

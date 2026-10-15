@@ -48,7 +48,7 @@ Notes:
 ./scripts/swap-into-crossover.sh
 ```
 
-This copies `/Applications/CrossOver.app` into a staging folder, swaps in the 3 patched modules (plus GPTK4's D3DMetal if `GPTK_DIR` points at it — see [graphics-performance.md](graphics-performance.md)), re-seals the whole bundle with an ad-hoc signature, verifies it, and moves it into place as `/Applications/CrossOver_Endfield_Patch.app`. Then run the game through `CrossOver_Endfield_Patch.app` (step 5).
+This copies `/Applications/CrossOver.app` into a staging folder, swaps in the patched modules (plus GPTK4's D3DMetal if `GPTK_DIR` points at it — see [graphics-performance.md](graphics-performance.md)), re-seals the whole bundle with an ad-hoc signature, verifies it, and moves it into place as `/Applications/CrossOver_Endfield_Patch.app`. It also creates a double-clickable **`Arknights Endfield.app`** beside it that launches the game directly (step 5).
 
 ## 3. Deploy into CrossOver — manual
 
@@ -103,9 +103,17 @@ Prefer the GUI for the bottle too? Create a *Windows 11 64-bit* bottle named `Ar
 
 ## 5. Run the game
 
-**From the Gryphline launcher (recommended):** open **`CrossOver_Endfield_Patch`** — not the stock `CrossOver`, whose unpatched Wine fails the anti-cheat — select the **Arknights Endfield** bottle, double-click **GRYPHLINK**, then use the **dropdown next to the Start button → "Launch with DirectX 11"**. That item starts the game with `-force-d3d11`; the plain **Start** button launches the game's default Vulkan renderer, which is experimental and needs a newer MoltenVK than CrossOver ships (see [graphics-performance.md](graphics-performance.md#experimental-the-vulkan-renderer)).
+**Double-click `Arknights Endfield.app`.** The installer creates it next to the patched CrossOver
+(`/Applications`, if that's where you put `CrossOver_Endfield_Patch.app`); you can also (re)create
+it any time with `./scripts/make-launcher-app.sh`. It **opens the Gryphline launcher**
+(`Launcher.exe`) through the *direct* wine path — install, update and start the game from there.
 
-**Or start `Endfield.exe` directly** (the game has its own login screen; both commands add `-force-d3d11`):
+> **Why an alias at all?** The launcher's Chromium web UI crashes when started from the CrossOver
+> app's bottle **Start** button, but it stays up when started via the direct `wine --cx-app` path
+> this app uses — [docs/15](project-information/15-launcher-qtwebengine-crash.md).
+
+**Or start the game directly** (once it's installed — the game has its own login screen), which
+skips the launcher entirely and adds `-force-d3d11`:
 
 ```bash
 # Easy launcher script (handles wineserver cleanup, graphics args, debug logging):
@@ -117,7 +125,8 @@ CXR="/Applications/CrossOver_Endfield_Patch.app/Contents/SharedSupport/CrossOver
   --cx-app "C:/Program Files/GRYPHLINK/games/Arknights Endfield/Endfield.exe" -force-d3d11
 ```
 
-Or launch `CrossOver_Endfield_Patch.app` from Finder and start Endfield from its bottle as usual. It should reach the login screen.
+To make the alias point at the game instead of the launcher:
+`./scripts/make-launcher-app.sh --target "C:/Program Files/GRYPHLINK/games/Arknights Endfield/Endfield.exe" --gfxargs "-force-d3d11"`.
 
 ### Debug logging
 

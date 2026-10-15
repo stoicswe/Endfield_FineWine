@@ -1,0 +1,154 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mary <pastaunforgiven@gmail.com>
+Date: Thu, 15 Oct 2026 09:18:24 +0700
+Subject: [PATCH] lsass: Add a stub and start it from wineboot.
+
+ACE requires a running lsass.exe during DriverInit. Wine 11.17+'s
+demand-start lsass service does not ensure this.
+
+Adapted from dwproton commits 96082b1f99 and a000117363 by shxrrydw.
+Omit csrss (unused by ACE) and the session 0 move (requires server
+patches not included here).
+---
+ configure                    |  3 +++
+ configure.ac                 |  2 ++
+ programs/lsass/Makefile.in   |  6 ++++++
+ programs/lsass/main.c        | 32 ++++++++++++++++++++++++++++++++
+ programs/wineboot/wineboot.c | 17 +++++++++++++++++
+ 5 files changed, 60 insertions(+)
+ create mode 100644 programs/lsass/Makefile.in
+ create mode 100644 programs/lsass/main.c
+
+diff --git a/configure b/configure
+index 26e224a..0a2a7fe 100755
+--- a/configure
++++ b/configure
+@@ -1713,6 +1713,7 @@ enable_iexplore
+ enable_ipconfig
+ enable_klist
+ enable_lodctr
++enable_lsass
+ enable_makecab
+ enable_mofcomp
+ enable_mshta
+@@ -22432,6 +22433,7 @@ else
+ fi
+ 
+ enable_conhost=${enable_conhost:-$HOST_ARCH}
++enable_lsass=${enable_lsass:-$HOST_ARCH}
+ enable_plugplay=${enable_plugplay:-$HOST_ARCH}
+ enable_rpcss=${enable_rpcss:-$HOST_ARCH}
+ enable_services=${enable_services:-$HOST_ARCH}
+@@ -23594,6 +23596,7 @@ wine_fn_config_makefile programs/iexplore enable_iexplore
+ wine_fn_config_makefile programs/ipconfig enable_ipconfig
+ wine_fn_config_makefile programs/klist enable_klist
+ wine_fn_config_makefile programs/lodctr enable_lodctr
++wine_fn_config_makefile programs/lsass enable_lsass
+ wine_fn_config_makefile programs/makecab enable_makecab
+ wine_fn_config_makefile programs/mofcomp enable_mofcomp
+ wine_fn_config_makefile programs/mshta enable_mshta
+diff --git a/configure.ac b/configure.ac
+index bf8e3c0..22cd40d 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -2425,6 +2425,7 @@ fi
+ 
+ dnl Disable some programs for other PE archs
+ enable_conhost=${enable_conhost:-$HOST_ARCH}
++enable_lsass=${enable_lsass:-$HOST_ARCH}
+ enable_plugplay=${enable_plugplay:-$HOST_ARCH}
+ enable_rpcss=${enable_rpcss:-$HOST_ARCH}
+ enable_services=${enable_services:-$HOST_ARCH}
+@@ -3591,6 +3592,7 @@ WINE_CONFIG_MAKEFILE(programs/iexplore)
+ WINE_CONFIG_MAKEFILE(programs/ipconfig)
+ WINE_CONFIG_MAKEFILE(programs/klist)
+ WINE_CONFIG_MAKEFILE(programs/lodctr)
++WINE_CONFIG_MAKEFILE(programs/lsass)
+ WINE_CONFIG_MAKEFILE(programs/makecab)
+ WINE_CONFIG_MAKEFILE(programs/mofcomp)
+ WINE_CONFIG_MAKEFILE(programs/mshta)
+diff --git a/programs/lsass/Makefile.in b/programs/lsass/Makefile.in
+new file mode 100644
+index 0000000..28ac021
+--- /dev/null
++++ b/programs/lsass/Makefile.in
+@@ -0,0 +1,6 @@
++MODULE    = lsass.exe
++
++EXTRADLLFLAGS = -mwindows
++
++SOURCES = \
++	main.c
+diff --git a/programs/lsass/main.c b/programs/lsass/main.c
+new file mode 100644
+index 0000000..6e945b5
+--- /dev/null
++++ b/programs/lsass/main.c
+@@ -0,0 +1,32 @@
++/*
++ * lsass.exe
++ *
++ * Copyright 2026 bluechxin
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#include <windows.h>
++#include <winternl.h>
++
++int __cdecl main( int argc, char *argv[] )
++{
++    HANDLE exit_event = NULL;
++
++    NtSetInformationProcess( GetCurrentProcess(), ProcessWineMakeProcessSystem,
++                             &exit_event, sizeof(exit_event) );
++    if (exit_event) WaitForSingleObject( exit_event, INFINITE );
++    return 0;
++}
+diff --git a/programs/wineboot/wineboot.c b/programs/wineboot/wineboot.c
+index 5e702a5..242aecf 100644
+--- a/programs/wineboot/wineboot.c
++++ b/programs/wineboot/wineboot.c
+@@ -1424,6 +1424,22 @@ static int ProcessWindowsFileProtection(void)
+     return 1;
+ }
+ 
++static void start_lsass_process(void)
++{
++    STARTUPINFOW si = { sizeof(si) };
++    PROCESS_INFORMATION pi;
++
++    /* Set lpApplicationName to find the builtin even without a file in system32. */
++    if (!CreateProcessW( L"C:\\windows\\system32\\lsass.exe", NULL, NULL, NULL, FALSE,
++                         DETACHED_PROCESS, NULL, NULL, &si, &pi ))
++    {
++        WINE_ERR( "Couldn't start lsass.exe: error %lu\n", GetLastError() );
++        return;
++    }
++    CloseHandle( pi.hThread );
++    CloseHandle( pi.hProcess );
++}
++
+ static BOOL start_services_process(void)
+ {
+     static const WCHAR svcctl_started_event[] = SVCCTL_STARTED_EVENT;
+@@ -1960,6 +1976,7 @@ int __cdecl main( int argc, char *argv[] )
+     {
+         ProcessRunKeys( HKEY_LOCAL_MACHINE, L"RunServices", FALSE, FALSE );
+         start_services_process();
++        start_lsass_process();
+     }
+ 
+     if (init || update) update_wineprefix( update );

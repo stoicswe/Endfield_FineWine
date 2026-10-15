@@ -3,6 +3,9 @@
 All sources fetched/consulted during research, grouped by topic. Confidence and caveats are in the per-subsystem docs. Sites marked ⚠️ blocked automated fetching (Anubis proof-of-work wall or HTTP 403) — use a browser.
 
 ## ACE anti-cheat & Endfield
+- Endfield_FineWine issue #43 (Oct-2026 `ACE-CORE` regression) — <https://github.com/stoicswe/Endfield_FineWine/issues/43>
+- ⭐ `mary-ext/crossover-wine-endfield` (downstream fork; has the ACE-CORE fix) — <https://github.com/mary-ext/crossover-wine-endfield>
+- dwproton `_dw` commit `09a9cb034e` (`DriverInit` return-address kernel bits; fixes the ACE-CORE bugcheck) — <https://dawn.wine/dawn-winery/wine-dwproton/commit/09a9cb034e50048e3ebeef6faf92ada4fe6c21ef.patch> · next commits `593daa15ba`, `4acd1acf8a`, `84407729bf`, `dac7007ad0`
 - GE-Proton issue #433 (the fix identification) — <https://github.com/GloriousEggroll/proton-ge-custom/issues/433>
 - dw-proton fix commit `b816be489…` — <https://dawn.wine/dawn-winery/dwproton/commit/b816be489049a10453b470c6a12dcf552ea41773.patch>
 - PCGamingWiki: Anti-Cheat Expert — <https://www.pcgamingwiki.com/wiki/Anti-Cheat_Expert>
@@ -20,6 +23,13 @@ All sources fetched/consulted during research, grouped by topic. Confidence and 
 - Wine-fork proxy mirror (used to read current sources) — <https://github.com/NelloKudo/wine-dwproton>
 - Historical `patches/wine/` tree mirror — <https://github.com/TomerGamerTV/dwproton>
 - `Etaash-mathamsetty/wine-ntoskrnl` — <https://github.com/Etaash-mathamsetty/wine-ntoskrnl>
+- Valve Proton issue #9331 (ACE `KeTryToAcquireGuardedMutex` family) — <https://github.com/ValveSoftware/Proton/issues/9331>
+- Wine MR 2044 (guarded-mutex implementations) — <https://gitlab.winehq.org/wine/wine/-/merge_requests/2044>
+- Wine bug 49224 (Denuvo `KeGenericCallDpc` family) — <https://bugs.winehq.org/show_bug.cgi?id=49224>
+- dw-proton issue #30 (Endfield `PsGetProcessExitStatus`) — <https://dawn.wine/dawn-winery/dwproton/issues/30> (Anubis-walled)
+- xia0ji233: "某FPS游戏反作弊分析" (2026-03-05) — RE of a "Neac"-generation ACE kernel driver — <https://xia0ji233.github.io/2026/03/05/Game7/index.html>
+- `LaggyTMD/nte-driver-analysis` (Tencent ACE driver roles) — <https://github.com/LaggyTMD/nte-driver-analysis>
+- `crystalidea/qt6windows7` (Qt6/Chromium backport; documents Chromium's `0xE0000008` = shared-memory OOM, "the first paint kills the renderer" without a working GPU) — <https://github.com/crystalidea/qt6windows7>
 - wine-staging `ntdll-Hide_Wine_Exports` — <https://github.com/wine-staging/wine-staging/blob/master/patches/ntdll-Hide_Wine_Exports/0001-ntdll-Add-support-for-hiding-wine-version-informatio.patch>
 - wine-staging ntoskrnl stubs — <https://github.com/wine-compholio/wine-staging/tree/master/patches/ntoskrnl-Stubs>
 - Wine `dlls/ntdll/version.c` — <https://github.com/wine-mirror/wine/blob/master/dlls/ntdll/version.c>
