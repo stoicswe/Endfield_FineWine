@@ -285,7 +285,9 @@ struct CrossOverInfo {
         version = plist["CFBundleShortVersionString"] as? String
         bundleIdentifier = plist["CFBundleIdentifier"] as? String
         let cxr = url.appendingPathComponent("Contents/SharedSupport/CrossOver")
-        hasWineModules = Payload.modules.allSatisfy {
+        // `isNew` modules (e.g. lsass.exe) are added by us and are absent from stock CrossOver,
+        // so only the modules CrossOver already ships decide whether this looks like a CrossOver app.
+        hasWineModules = Payload.modules.filter { !$0.isNew }.allSatisfy {
             FileManager.default.fileExists(atPath: cxr.appendingPathComponent($0.crossoverSubpath).path)
         }
     }
