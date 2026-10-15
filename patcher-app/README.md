@@ -6,7 +6,8 @@ A minimal macOS app that turns a copy of **CrossOver 26.3** into the patched bui
 
 1. Copies your `CrossOver.app` into a staging folder (the original is never touched).
 2. Swaps in the pre-built patched modules bundled inside the app:
-   * the three Wine modules — `ntdll.so`, `kernel32.dll`, `ntoskrnl.exe`
+   * the Wine modules — `ntdll.so`, `kernel32.dll`, `ntoskrnl.exe`, `lsass.exe`, `wineboot.exe`
+     (`lsass.exe` is added: stock CrossOver has none, and the new ACE-CORE driver requires it)
    * `lib64/libMoltenVK.dylib` (built by [`scripts/build-moltenvk.sh`](../scripts/build-moltenvk.sh))
 
    keeping `.cxorig` backups.
@@ -132,7 +133,7 @@ third-party image libraries), centering the artwork on a transparent square with
 ## Licensing (important if you distribute the built app)
 
 - **The app itself** (Swift sources, UI, this directory): [MIT](../LICENSE).
-- **The bundled Wine modules** (`ntdll.so`, `kernel32.dll`, `ntoskrnl.exe`): **LGPL-2.1-or-later** —
+- **The bundled Wine modules** (`ntdll.so`, `kernel32.dll`, `ntoskrnl.exe`, `lsass.exe`, `wineboot.exe`): **LGPL-2.1-or-later** —
   they are Wine, built from CodeWeavers' freely published
   [CrossOver 26.3 Wine source](https://www.codeweavers.com/crossover/source) with this repo's
   [patches](../patches/) applied (which include the

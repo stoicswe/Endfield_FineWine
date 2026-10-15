@@ -31,6 +31,14 @@ The Endfield-relevant subset of dw-proton's fix commit `b816be489`, from the `da
 - `misc/0011…` — `NtDelayExecution` relative-wait via QueryPerformanceCounter (ACE is timing-sensitive).
 - `misc/0008…` — wintrust winex11/winewayland bypass. **macOS-irrelevant** (targets `winex11.drv`); applies cleanly, does nothing on `winemac.drv`; kept for completeness.
 - `em-backports/0001-0017…` — the `ntoskrnl.exe` functions ACE calls (`KeAcquireGuardedMutex`, `PsGetProcessImageFileName`, `MmGetPhysicalMemoryRanges`, …). `0010` (`PsGetProcessImageFileName`) is the exact WineHQ-bug-59411 Linux blocker.
+- `ace-core/` — **new (Oct 2026): support for the new `ACE-CORE<version>.sys` anti-cheat driver** that replaced `ACE-BASE.sys` and made the game stop launching (`KeBugCheckEx 0x65636157`). Ported from the downstream fork [`mary-ext/crossover-wine-endfield`](https://github.com/mary-ext/crossover-wine-endfield), which solved it. Full analysis: [../docs/project-information/14-ace-core-regression.md](../docs/project-information/14-ace-core-regression.md).
+  - `0001` — the new `ntoskrnl.exe` imports CORE requests but Wine lacks: `PsGetCurrentThreadTeb`, `KeIpiGenericCall`, `KeTryToAcquireGuardedMutex`, `KeSetSystemGroupAffinityThread`, `KeRevertToUserGroupAffinityThread`, `KeGetProcessorNumberFromIndex`, `ObDereferenceObjectDeferDelete`, plus a `KeGetCurrentIrql` stub. (⚠️ necessary plumbing, **not** the bugcheck fix on its own.)
+  - `0002` — update the driver security cookie once relocation has happened.
+  - `0003` — **the bugcheck fix:** call `DriverInit` with bits 48–63 of the return address set (`0xFFFF800000000000`), so ACE-CORE's "called by the kernel?" check passes. Ported from dwproton `09a9cb034e`.
+  - `0004` — `MmCopyMemory` stub (+ `MM_COPY_ADDRESS` in `wdm.h`). dwproton `593daa15ba`.
+  - `0005` — pass only the bare service name in `DriverExtension->ServiceKeyName` / to `DriverInit`. dwproton `4acd1acf8a`.
+  - `0006` — implement `PsGetProcessExitStatus` (was a `@ stub`). macos/0005 downstream.
+  - `0007` — add an `lsass.exe` stub and start it from `wineboot` (ACE-CORE scans the process list for `lsass.exe` and fails `DriverInit` without one). macos/0007 downstream. **Shipping this also swaps `lsass.exe` + `wineboot.exe`** — see `scripts/{build-wine,package,apply-modules,swap-into-crossover}.sh` and the patcher payload.
 
 ## `moltenvk/`
 
@@ -56,7 +64,7 @@ Known residual: ACE also calls `ntoskrnl.exe.PsGetProcessExitStatus`, which is *
 
 ## Applying
 
-All 24 patches are unified diffs and apply cleanly with `git apply` in this order: `em-backports/*` (numeric) → `misc/*` (numeric) → `stage1-macos/*` (numeric). This is automated by [`../scripts/build-wine.sh apply`](../scripts/build-wine.sh). Expect to rebase if CrossOver's Wine base changes (the dw-proton set targets the `b816be489` snapshot; the latest lives baked into `dawn.wine/dawn-winery/wine-dwproton` branch `base`).
+All 31 patches are unified diffs and apply cleanly with `git apply` in this order: `em-backports/*` (numeric) → `misc/*` (numeric) → `ace-core/*` (numeric) → `stage1-macos/*` (numeric). This is automated by [`../scripts/build-wine.sh apply`](../scripts/build-wine.sh). Expect to rebase if CrossOver's Wine base changes (the dw-proton set targets the `b816be489` snapshot; the latest lives baked into `dawn.wine/dawn-winery/wine-dwproton` branch `base`).
 
 ## License / provenance
 

@@ -12,6 +12,8 @@ struct PatchError: LocalizedError {
 struct PayloadModule {
     let payloadSubpath: String    // relative to Resources/payload/
     let crossoverSubpath: String  // relative to Contents/SharedSupport/CrossOver/
+    /// true when CrossOver ships no stock copy of this module (e.g. lsass.exe) and we add it.
+    let isNew: Bool = false
 }
 
 enum Payload {
@@ -22,9 +24,15 @@ enum Payload {
         // KiUser*Dispatcher int3 spoof
         PayloadModule(payloadSubpath: "x86_64-windows/kernel32.dll",
                       crossoverSubpath: "lib/wine/x86_64-windows/kernel32.dll"),
-        // ntoskrnl.exe em-backports
+        // ntoskrnl.exe em-backports + ACE-CORE DriverInit/return-address fix
         PayloadModule(payloadSubpath: "x86_64-windows/ntoskrnl.exe",
                       crossoverSubpath: "lib/wine/x86_64-windows/ntoskrnl.exe"),
+        // ACE-CORE scans the process list for lsass.exe; stock CrossOver 26.3 ships none, so add it.
+        PayloadModule(payloadSubpath: "x86_64-windows/lsass.exe",
+                      crossoverSubpath: "lib/wine/x86_64-windows/lsass.exe", isNew: true),
+        // Patched wineboot.exe starts the lsass.exe stub at boot.
+        PayloadModule(payloadSubpath: "x86_64-windows/wineboot.exe",
+                      crossoverSubpath: "lib/wine/x86_64-windows/wineboot.exe"),
         // Patched MoltenVK (Vulkan/DXVK/vkd3d paths; replaces CrossOver's bundled copy).
         // Built by scripts/build-moltenvk.sh and baked into the payload by build-app.sh.
         PayloadModule(payloadSubpath: "lib64/libMoltenVK.dylib",
@@ -538,16 +546,17 @@ final class PatcherEngine: ObservableObject {
             guard fm.fileExists(atPath: src.path) else {
                 throw PatchError("The bundled payload is missing \(module.payloadSubpath).")
             }
-            guard fm.fileExists(atPath: dst.path) else {
+            if fm.fileExists(atPath: dst.path) {
+                // Move the stock module aside under the same backup name the shell script uses, so
+                // the payload lands as a fresh file rather than overwriting a signed one in place.
+                let backup = dst.appendingPathExtension("cxorig")
+                if fm.fileExists(atPath: backup.path) {
+                    try fm.removeItem(at: dst)
+                } else {
+                    try fm.moveItem(at: dst, to: backup)
+                }
+            } else if !module.isNew {
                 throw PatchError("\(module.crossoverSubpath) not found in the copied app — is this really CrossOver \(CrossOverInfo.expectedVersion)?")
-            }
-            // Move the stock module aside under the same backup name the shell script uses, so
-            // the payload lands as a fresh file rather than overwriting a signed one in place.
-            let backup = dst.appendingPathExtension("cxorig")
-            if fm.fileExists(atPath: backup.path) {
-                try fm.removeItem(at: dst)
-            } else {
-                try fm.moveItem(at: dst, to: backup)
             }
             try fm.copyItem(at: src, to: dst)
             // Only the Mach-O modules (ntdll.so, libMoltenVK.dylib) need a signature of their

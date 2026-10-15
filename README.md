@@ -75,7 +75,7 @@ Full requirements, a manual (auditable) deployment, the bottle/Gryphline setup, 
 
 Curious about how this works under the hood without cluttering up the setup guide? Read **[docs/technical.md](docs/technical.md)** for the full architectural deep dive, including:
 - **Two novel Rosetta 2 CPU bug fixes:** skipping multi-byte `0F 1F` NOP exception loops and fixing privileged `mov cr3` opcode classification in `signal_x86_64.c`.
-- **dw-proton anti-cheat port:** 17 `ntoskrnl.exe` kernel backports, `KiUser*Dispatcher` int3 spoofer, and high-resolution QPC timing loops.
+- **dw-proton anti-cheat port:** 17 `ntoskrnl.exe` kernel backports, `KiUser*Dispatcher` int3 spoofer, and high-resolution QPC timing loops. A further `ace-core/` set adds the 7 new `ntoskrnl.exe` imports the late-2026 `ACE-CORE*.sys` driver requests, **calls `DriverInit` with kernel return-address bits so ACE-CORE's entry check passes**, and ships an `lsass.exe` stub (see [docs/14](docs/project-information/14-ace-core-regression.md)).
 - **Surgical module swap & dynamic linking:** why only 3 Wine modules are swapped and how `@loader_path/../../../lib64` rpath is injected so D3DMetal can load.
 - **Graphics translation mechanics:** DXMT (`-force-d3d11`) is its own D3D11→Metal path; GPTK4/D3DMetal changes do not alter DXMT rendering.
 - Complete subsystem research and milestone reports in [docs/](docs/).

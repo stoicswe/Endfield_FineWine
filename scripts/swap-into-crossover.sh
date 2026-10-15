@@ -188,7 +188,9 @@ swap(){ # src  dst-rel
 }
 swap "$B/dlls/ntdll/ntdll.so"                           "lib/wine/x86_64-unix/ntdll.so"        # Rosetta NOP + priv-instr fixes, NtDelayExecution QPC
 swap "$B/dlls/kernel32/x86_64-windows/kernel32.dll"     "lib/wine/x86_64-windows/kernel32.dll" # KiUser*Dispatcher int3 spoof
-swap "$B/dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe" "lib/wine/x86_64-windows/ntoskrnl.exe" # ntoskrnl em-backports
+swap "$B/dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe" "lib/wine/x86_64-windows/ntoskrnl.exe" # ntoskrnl em-backports + ACE-CORE DriverInit/lsass support
+swap "$B/programs/lsass/x86_64-windows/lsass.exe"       "lib/wine/x86_64-windows/lsass.exe"     # new: ACE-CORE requires a running lsass.exe
+swap "$B/programs/wineboot/x86_64-windows/wineboot.exe" "lib/wine/x86_64-windows/wineboot.exe"  # starts the lsass.exe stub at boot
 
 # CRITICAL: CrossOver's ntdll dlopens cxcompatdb.so (which applies the CX_GRAPHICS_BACKEND
 # choice per process). cxcompatdb.so needs @rpath/libgnutls.30.dylib from lib64/, and dyld
