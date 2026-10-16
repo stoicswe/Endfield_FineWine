@@ -86,8 +86,15 @@ alert() { osascript -e "display alert \"Arknights: Endfield\" message \"$1\"" >/
 [ -x "$CXBIN/wine" ] || { alert "wine not found under $CX_APP"; exit 1; }
 [ -d "$BP" ] || { alert "Bottle '$BOTTLE' not found. Create it first (scripts/create-bottle.sh)."; exit 1; }
 
-# Clean stale Wine/ACE state so the anti-cheat starts fresh.
-WINEPREFIX="$BP" CX_ROOT="$CXR" "$CXBIN/wineserver" -k >/dev/null 2>&1 || true
+# Clean stale Wine/ACE state so the anti-cheat starts fresh. CrossOver 26 ships a single
+# `wineserver`; CrossOver 27 (incl. ARM) ships `wineserver-arm64` / `wineserver-x86`.
+WS="$CXBIN/wineserver"
+if [ ! -x "$WS" ]; then
+  for cand in "$CXBIN"/wineserver-*; do
+    [ -x "$cand" ] && WS="$cand" && break
+  done
+fi
+[ -x "$WS" ] && WINEPREFIX="$BP" CX_ROOT="$CXR" "$WS" -k >/dev/null 2>&1 || true
 sleep 1
 
 OUT="$HOME/endfield-debug/launcher-$(date +%Y%m%d-%H%M%S)"

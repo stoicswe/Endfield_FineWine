@@ -40,6 +40,34 @@ MoltenVK **is** bundled (it is Apache-2.0), since the game's Vulkan/DXVK/vkd3d p
 **End users need no developer tools** — the `lib64` rpath is baked into the payload at app-build
 time, so at patch time the app only uses `codesign`, `ditto` and `xattr`, which ship with macOS.
 
+## CrossOver variants: x64 and ARM (experimental)
+
+One patcher handles both CrossOver products. It **detects the variant from the selected app's
+layout** and installs the matching payload — the x64 path is never affected by the ARM payload
+and vice-versa:
+
+| | x64 | ARM |
+|---|---|---|
+| app | CrossOver 26.x | CrossOver ARM (27 preview) |
+| host Wine | x86_64 under Rosetta 2 | **native aarch64, no Rosetta** |
+| Wine tree | `lib/wine/x86_64-unix` | `lib/wine/aarch64-unix` (+ `x86_64-windows` PE for the game) |
+| host libs | `lib64/…` | `lib/aarch64/…` |
+| ntdll rpath | `@loader_path/../../../lib64` | `@loader_path/../../../lib/aarch64` |
+| D3DMetal | `lib64/apple_gptk` | `lib/apple_gptk` |
+| payload | `Resources/payload/` | `Resources/payload/arm/` |
+
+Detection is structural: an app carrying `lib/wine/aarch64-unix/ntdll.so` is the ARM variant,
+otherwise an app with `lib/wine/x86_64-unix/ntdll.so` + `lib64/libMoltenVK.dylib` is x64.
+Selecting an unrecognized app disables patching.
+
+The **ARM variant is experimental**: the load-bearing `#ifdef __x86_64__` dispatcher spoof is
+absent on the aarch64 unix side, so whether it gets past ACE is the open question — it is *not*
+expected to behave like x64. ARM modules are built by a **separate pipeline**,
+[`scripts/build-wine-arm.sh`](../scripts/build-wine-arm.sh), so the known-good x64 build is
+untouched; the app simply reports "no ARM payload" until one is built and staged. The pipeline
+prefers the **CrossOver ARM source** (`CX_ARM_VER=…`) so the module ABI matches the app; until
+CodeWeavers publishes preview sources it falls back to upstream Wine (experimental ABI).
+
 ## Mod framework (EFMI) — optional second phase
 
 A separate **Mod Framework** window — menu bar **Tools → Mod Framework (EFMI)…** — hosts an
@@ -123,6 +151,16 @@ Requires the Xcode Command Line Tools only (no Xcode):
 open "patcher-app/build/FineWine Patcher.app"
 ```
 
+To also bundle the experimental ARM payload (optional), build it with the separate pipeline
+first; `build-app.sh` stages `build/wine-arm-payload` automatically when it exists:
+
+```bash
+# aarch64 MoltenVK (optional) and the ARM Wine modules
+MVK_ARCH=aarch64 ./scripts/build-moltenvk.sh all
+CX_ARM_VER=<crossover-arm-version> ./scripts/build-wine-arm.sh all   # or ARM_SRC_DIR/ARM_SRC_TARBALL
+./patcher-app/scripts/build-app.sh
+```
+
 `PAYLOAD_DIR` overrides where the Wine modules come from (the `build/wine-build64` tree layout or
 a flat directory with the three files); `MOLTENVK_DIR` overrides where `libMoltenVK.dylib` comes
 from (default `build/moltenvk-out`, or a copy inside `PAYLOAD_DIR`). `CODESIGN_ID` sets a real
@@ -180,6 +218,7 @@ Sources/FineWinePatcher/
   LicensesView.swift              the Licenses window + component metadata
 Tests/FineWinePatcherTests/
   ModChainTests.swift             the mod-chain ini-editing rules (swift test)
+  VariantTests.swift              x64-vs-ARM detection + the per-variant path table (swift test)
 Resources/licenses/               license texts bundled into the app
 Resources/AppIcon.icns            the app icon (committed; regenerate with make-appicon.sh)
 Resources/appicon/                the icon source art
