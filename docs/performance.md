@@ -8,7 +8,7 @@
 ## Frame Rate & Quality Settings
 
 > **Optimal DX11 setup:** **DXMT (`CX_GRAPHICS_BACKEND=dxmt`) + `-force-d3d11`**. DXMT is independent of the D3DMetal/GPTK payload, so GPTK4 is not required for this path.
-> TAAU is the recommended first upscaler on DXMT; avoid NVIDIA DLSS, which can produce a black screen.
+> TAAU is the recommended first upscaler on stock DXMT. DLSS upscaling works through MetalFX when DXMT includes the [NGX resource-parameter fix](technical.md#dlss-under-dxmt-stock-and-patched-builds).
 
 | Mac Tier | Configuration | Expected FPS |
 |---|---|---|
@@ -18,7 +18,7 @@
 | MacBook Air (any chip) | ❌ **Not recommended** — see below | — |
 
 > [!WARNING]
-> **Do NOT enable NVIDIA DLSS** in the in-game settings when using DXMT — it causes a complete black screen / broken 3D rendering. Use **TAAU** or **AMD FSR3** instead.
+> **CrossOver 26.3's bundled DXMT 0.80 needs an NGX fix for DLSS.** Use **TAAU** or **AMD FSR3** on that build. With the fix proposed in [3Shain/dxmt#235](https://github.com/3Shain/dxmt/pull/235), Endfield can use DLSS upscaling via MetalFX. FineWine 1.2.3 alone does not install this DXMT fix.
 
 > [!IMPORTANT]
 > **GPTK4 note:** GPTK4 upgrades the separate D3DMetal backend. It is not loaded by DXMT, so it should not be expected to change DXMT FPS or shader translation behaviour.

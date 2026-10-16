@@ -36,11 +36,11 @@ Upstream MoltenVK doesn't have two extensions CodeWeavers added to CrossOver's c
 
 CrossOver → select the **Arknights Endfield** bottle → **Advanced Settings → Graphics**:
 
-- **D3DMetal** *(recommended)* — DirectX 11/12 → Metal. With GPTK4, DX12 → Metal 4 is fastest, and it's the only path with **DLSS-via-MetalFX** frame generation. Force the game into **DirectX 12** mode for the full benefit.
-- **DXMT** — good for DirectX 11 titles; also supports the DLSS/MetalFX toggle.
+- **D3DMetal** — DirectX 11/12 → Metal, with DLSS upscaling served by MetalFX. GPTK updates replace this backend's D3DMetal payload.
+- **DXMT** — DirectX 11 → Metal; supports DLSS upscaling through MetalFX when its NGX resource-parameter fix is present (see below).
 - **DXVK** — DirectX 10/11 → Vulkan → MoltenVK (fallback; extra hop, no DLSS).
 
-Enable **MSync**. Enable **DLSS (MetalFX)** only for the D3DMetal backend; with DXMT, leave NVIDIA DLSS disabled and use the in-game **TAAU** or AMD FSR3 upscaler instead. [`scripts/create-bottle.sh`](../scripts/create-bottle.sh) can set the backend and backend-specific toggle (the `cxbottle.conf` keys are listed in [06-graphics-and-gptk.md → Selecting a backend](06-graphics-and-gptk.md#selecting-a-backend-in-crossover-26)). AVX2 (from Rosetta 2 on macOS 15+, not from GPTK) needs no setting: CrossOver's `wine` wrapper already exports `ROSETTA_ADVERTISE_AVX=1`.
+Enable **MSync**. For DLSS upscaling, enable **DLSS (MetalFX)** with D3DMetal or a DXMT build containing the [NGX resource-parameter fix](technical.md#dlss-under-dxmt-stock-and-patched-builds). With CrossOver 26.3's stock DXMT 0.80, use **TAAU** or **AMD FSR3** until that fix is included; FineWine 1.2.3 preserves the source app's DXMT modules. [`scripts/create-bottle.sh`](../scripts/create-bottle.sh) can set the backend and backend-specific toggle (the `cxbottle.conf` keys are listed in [06-graphics-and-gptk.md → Selecting a backend](06-graphics-and-gptk.md#selecting-a-backend-in-crossover-26)). AVX2 (from Rosetta 2 on macOS 15+, not from GPTK) needs no setting: CrossOver's `wine` wrapper already exports `ROSETTA_ADVERTISE_AVX=1`.
 
 ## Installing GPTK4 (optional)
 

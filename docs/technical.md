@@ -95,7 +95,7 @@ Our scripts (`swap-into-crossover.sh` and `PatcherEngine.swift`) bake `@loader_p
 | **CrossOver Backend** | `dxmt` (`CX_GRAPHICS_BACKEND=dxmt`) |
 | **Launch Flag** | `-force-d3d11` |
 | **GPTK Patch** | v4 (Game Porting Toolkit 4) — **highly recommended** |
-| **Upscaling** | **TAAU** or **AMD FSR3** |
+| **Upscaling** | **TAAU** or **AMD FSR3** on stock DXMT; **DLSS via MetalFX** with the NGX fix below |
 | **Mods (EFMI)** | ✅ Loads and works |
 
 > [!IMPORTANT]
@@ -122,15 +122,16 @@ Metal Framework / Apple Silicon GPU
 | **DXVK** | `-force-d3d11` | ⚠️ Partial | ❌ Fails | 🔴 Slow | Heavy shader compilation stutter, EFMI won't load |
 | **DirectX 12** | N/A | ❌ Broken | ❌ N/A | N/A | `Cannot load DXIL conversion library` — white screen |
 
-### ⚠️ Critical: NVIDIA DLSS Causes Black Screen
+### DLSS under DXMT: stock and patched builds
 
-> **Do NOT enable NVIDIA DLSS in the in-game graphics settings.**
->
-> Selecting NVIDIA DLSS as the upscaling method completely breaks 3D rendering under DXMT, resulting in a full black screen. This is because DLSS requires actual NVIDIA hardware tensor cores — the MetalFX "spoof" that D3DMetal provides is not available through the DXMT code path.
->
-> **Safe upscaling options:**
-> - **TAAU** (Temporal Anti-Aliasing Upscaling) — built into the engine, zero external dependencies
-> - **AMD FSR3** (FidelityFX Super Resolution 3) — shader-based, works on any GPU
+DXMT's `nvngx.dll` already implements DLSS upscaling through **MetalFX Temporal**. In CrossOver 26.3's bundled DXMT 0.80, Endfield hits a parameter-conversion bug: the game stores input textures through `SetVoidPointer`, while `NVSDK_NGX_D3D11_EvaluateFeature` retrieves them as `ID3D11Resource *`. The missing conversion in `castable()` makes that lookup fail, producing `NGX: missing evaluation parameter Color` and a black scene.
+
+[3Shain/dxmt#235](https://github.com/3Shain/dxmt/pull/235) proposes the resource-pointer conversions, preserving the original pointer. It addresses [3Shain/dxmt#233](https://github.com/3Shain/dxmt/issues/233), reported by LANCYPANCY; windlandneko supplied the PR and an Endfield A/B gameplay test on DXMT 0.80. See [FineWine #48](https://github.com/stoicswe/Endfield_FineWine/issues/48) for the discussion and test details.
+
+- **Stock CrossOver 26.3 / DXMT 0.80:** use **TAAU** or **AMD FSR3**. FineWine 1.2.3 updates Wine and MoltenVK while retaining the source CrossOver app's DXMT modules, so installing that release alone leaves this bug in place.
+- **DXMT with the NGX fix:** DLSS upscaling has been tested working in Endfield's D3D11 path. Enable the bottle's **DLSS (MetalFX)** toggle (`DXMT_ENABLE_NVEXT=1`) and select DLSS in the game's graphics settings.
+
+For a stock installation, follow the upstream PR and CrossOver release notes for inclusion of the fix. GPTK updates affect the separate D3DMetal backend; this DXMT fix belongs in `nvngx.dll`.
 
 ### Why DXMT + `-force-d3d11` Wins
 
@@ -147,7 +148,7 @@ Metal Framework / Apple Silicon GPU
 | **RAM Usage** | ~16 GB | ~8–12 GB (fluctuates) |
 | **Max Settings FPS** | Playable but lower | **120 fps** |
 | **Shader Stutters** | Occasional | Occasional (less frequent) |
-| **Upscaling** | DLSS spoof (MetalFX) | TAAU / FSR3 only |
+| **Upscaling** | DLSS via MetalFX | TAAU / FSR3; DLSS via MetalFX with the NGX fix |
 | **Mod Support** | ✅ | ✅ |
 | **CPU Cores Used** | ~4 cores | ~4 cores |
 

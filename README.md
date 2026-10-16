@@ -23,7 +23,7 @@ Tested on an Apple **M4 Pro** (MacBook Pro 12-core, 24 GB), macOS 27.0, CrossOve
 > [!IMPORTANT]
 > **GPTK4 is not a DXMT dependency.** DXMT has its own D3D11→Metal implementation and does not load D3DMetal. GPTK4 only changes the separate D3DMetal path; keep it optional when using `CX_GRAPHICS_BACKEND=dxmt`.
 >
-> **⚠️ Do NOT enable NVIDIA DLSS** in the graphics settings — it causes a black screen under DXMT. Use **TAAU** first (or AMD FSR3 if you prefer its image) for upscaling.
+> **DLSS on DXMT depends on the installed DXMT build.** CrossOver 26.3's bundled DXMT 0.80 has an NGX resource-parameter bug that causes a black screen in Endfield; use **TAAU** or **AMD FSR3** with that build. DXMT with the fix proposed in [3Shain/dxmt#235](https://github.com/3Shain/dxmt/pull/235) can run DLSS upscaling through MetalFX. FineWine 1.2.3 does not ship that DXMT fix. See [DLSS compatibility](docs/technical.md#dlss-under-dxmt-stock-and-patched-builds).
 
 ➜ See **[docs/performance.md](docs/performance.md)** for the full breakdown: per-chip FPS targets, thermal behaviour, swap pressure, and optimisation tips.
 
@@ -67,7 +67,8 @@ open /Applications/CrossOver_Endfield_Patch.app   # 4. run the game — NOT the 
                                                  #    GPTK4 is optional for DXMT; it upgrades the separate D3DMetal backend
                                                  #    Set bottle backend to DXMT (CX_GRAPHICS_BACKEND=dxmt)
                                                  #    in the launcher: dropdown next to Start -> "Launch with DirectX 11"
-                                                 #    or add -force-d3d11 flag. Do NOT use NVIDIA DLSS — use TAAU or FSR3.
+                                                 #    or add -force-d3d11 flag. Stock DXMT: use TAAU or FSR3.
+                                                 #    DLSS needs the DXMT NGX fix; see the compatibility note above.
 ```
 
 Full requirements, a manual (auditable) deployment, the bottle/Gryphline setup, and launch options: **[docs/installation.md](docs/installation.md)**.
