@@ -24,6 +24,9 @@ Original to this project. The two Rosetta fixes live in `dlls/ntdll/unix/signal_
 - `0005-msync-fix-waitall-rollback.patch`, in `dlls/ntdll/unix/msync.c`:
   - When another thread wins an object partway through a WaitAll, the rollback now leaves recursively owned mutexes alone, restores abandoned mutexes as abandoned, and wakes waiters on every object it puts back. Test: `python3 tests/test-msync-waitall.py <wine-src>`.
 
+- `0007-ntdll-replace-stale-ntdll-symlink-in-winetemp-dir.patch`, in `dlls/ntdll/unix/loader.c`:
+  - CW HACK 22144 re-execs each process through a link to the loader in `$TMPDIR/winetemp-<loader inode>-…/`, next to an `ntdll.so` symlink. The folder is keyed on the loader's inode, which survives renaming or moving the app, but the symlink was only created once, so after a rename every process fails with `could not load ntdll.so`. The symlink is now replaced atomically each time.
+
 ## `stage2-dwproton/` — the ported dw-proton anti-cheat patches
 
 The Endfield-relevant subset of dw-proton's fix commit `b816be489`, from the `dawn-winery/dwproton-mirror` (fetched by [`../scripts/fetch-dwproton-patches.sh`](../scripts/fetch-dwproton-patches.sh)). Analysis: [../docs/02-dwproton-ace-patches.md](../docs/02-dwproton-ace-patches.md).
