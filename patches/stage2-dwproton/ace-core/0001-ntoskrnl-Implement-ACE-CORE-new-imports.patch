@@ -219,7 +219,7 @@ diff --git a/dlls/ntoskrnl.exe/sync.c b/dlls/ntoskrnl.exe/sync.c
 index 4674a3a..abbbc44 100644
 --- a/dlls/ntoskrnl.exe/sync.c
 +++ b/dlls/ntoskrnl.exe/sync.c
-@@ -461,6 +461,24 @@ void WINAPI KeAcquireGuardedMutex(PKGUARDED_MUTEX mutex)
+@@ -461,6 +461,20 @@ void WINAPI KeAcquireGuardedMutex(PKGUARDED_MUTEX mutex)
      KeAcquireGuardedMutexUnsafe(mutex);
  }
  
@@ -228,17 +228,13 @@ index 4674a3a..abbbc44 100644
 + */
 +BOOLEAN WINAPI KeTryToAcquireGuardedMutex(PKGUARDED_MUTEX mutex)
 +{
-+    LONG count;
-+
 +    TRACE("mutex %p.\n", mutex);
 +
-+    count = InterlockedDecrement( &mutex->Count );
-+    if (count >= 0)
-+        return TRUE;
-+
-+    /* couldn't acquire, restore the count and report failure */
-+    InterlockedIncrement( &mutex->Count );
-+    return FALSE;
++    /* Acquire only when free (FM_LOCK_BIT -> 0), atomically. A decrement-then-restore
++     * transiently leaves Count decremented, so a concurrent release can signal the
++     * event for a waiter that never waited (and the next real waiter then passes
++     * while the lock is still held). */
++    return InterlockedCompareExchange( &mutex->Count, 0, FM_LOCK_BIT ) == FM_LOCK_BIT;
 +}
 +
  /***********************************************************************

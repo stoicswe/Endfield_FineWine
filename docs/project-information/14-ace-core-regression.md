@@ -250,9 +250,12 @@ is `ace-core/0003` (see §11), not this.
 What `0001` implements:
 
 - `dlls/ntoskrnl.exe/sync.c`
-  - `KeTryToAcquireGuardedMutex(PKGUARDED_MUTEX)` → non-blocking acquire:
-    `InterlockedDecrement`; success if the result is ≥ 0, otherwise restore the count and
-    return `FALSE`. (Cf. Wine MR 2044.)
+  - `KeTryToAcquireGuardedMutex(PKGUARDED_MUTEX)` → non-blocking acquire via a single
+    `InterlockedCompareExchange(&mutex->Count, 0, FM_LOCK_BIT)`: it succeeds only when the
+    mutex was free and otherwise leaves `Count` untouched. (The original
+    `InterlockedDecrement` + restore version transiently left `Count` decremented on failure,
+    so a concurrent release could signal the mutex event for a waiter that never waited — the
+    next real waiter then passed while the lock was still held. Cf. Wine MR 2044.)
 - `dlls/ntoskrnl.exe/ntoskrnl.c`
   - `PsGetCurrentThreadTeb(void)` → `return NtCurrentTeb();` (the caller's own TEB; avoids
     needing a new `teb` field on Wine's `struct _KTHREAD`).
