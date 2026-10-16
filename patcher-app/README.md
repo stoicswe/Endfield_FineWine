@@ -75,6 +75,17 @@ itself (FEX for i386/x86_64 emulation; Brendan Shanks, wine-devel, Aug 2026), so
 long-term source for the ARM pipeline is **upstream Wine 11.17+ / master**, not a CrossOver-only
 tree — `scripts/build-wine-arm.sh check` against the newest Wine you can as those MRs land.
 
+**FEX is not a separate layer on macOS.** CrossOver's x86/x86_64 emulation is not a standalone
+`FEXLoader` (the Linux model): FEXCore is compiled *into* Wine's own modules — `xtajit64.dll`
+(`aarch64-windows` PE, ~3.8 MB, carries `FEXJIT`/`fex-emu`) plus the Wine-side unixlibs
+`libwow64fex.so` / `libarm64ecfex.so` that service FEX's host callbacks (mmap, JIT, TSO control).
+Upstream Wine's `dlls/xtajit64` is only a stub (`x64 emulation not implemented`), so a plain
+upstream Wine build has **no** x86 emulation at all — the emulator exists only in CrossOver's
+build. The ARM payload therefore does **not** build or bundle FEX: the patched modules run *on
+top of* the FEX-embedded `xtajit64.dll` already inside your CrossOver app. Building/vendoring FEX
+separately only makes sense if we ever ship a **full ARM Wine engine** (like the Sikarugir path),
+where `xtajit64`/`wow64` would have to be built with FEX embedded.
+
 `scripts/build-wine-arm.sh check` reports how far the (CrossOver-26.3-era) `patches/` series gets
 against whatever source you point it at. Against **upstream Wine 11.17** (CrossOver ARM preview's
 base) it is a rebase project, not a drop-in: ~20 of 44 patches apply (16 clean + 4 with `-F3`
