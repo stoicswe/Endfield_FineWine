@@ -68,6 +68,13 @@ untouched; the app simply reports "no ARM payload" until one is built and staged
 prefers the **CrossOver ARM source** (`CX_ARM_VER=…`) so the module ABI matches the app; until
 CodeWeavers publishes preview sources it falls back to upstream Wine (experimental ABI).
 
+**There is no public CrossOver ARM source tarball** — only `crossover-sources-26.3.0.tar.gz`
+(the x64 base) is published, and every preview version string 404s on
+`media.codeweavers.com`. CodeWeavers is **upstreaming the native-ARM64 Wine support to Wine**
+itself (FEX for i386/x86_64 emulation; Brendan Shanks, wine-devel, Aug 2026), so the correct
+long-term source for the ARM pipeline is **upstream Wine 11.17+ / master**, not a CrossOver-only
+tree — `scripts/build-wine-arm.sh check` against the newest Wine you can as those MRs land.
+
 `scripts/build-wine-arm.sh check` reports how far the (CrossOver-26.3-era) `patches/` series gets
 against whatever source you point it at. Against **upstream Wine 11.17** (CrossOver ARM preview's
 base) it is a rebase project, not a drop-in: ~20 of 44 patches apply (16 clean + 4 with `-F3`

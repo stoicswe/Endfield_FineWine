@@ -30,6 +30,15 @@
 # `crossover-sources-<version>.tar.gz` the moment it exists is the intended path (no other change
 # is needed then — the same patches/ are applied unchanged).
 #
+# SOURCE NOTE (2026-10): there is no public CrossOver ARM source tarball — only
+# crossover-sources-26.3.0.tar.gz (the x64 base) is published, and preview version strings 404.
+# Per CodeWeavers (Brendan Shanks, wine-devel, Aug 2026) the native-ARM64 Wine support
+# (FEX for i386/x86_64 emulation, x18 ABI, 4K pages, PAGEZERO/TSO) is being **upstreamed to
+# Wine**, so upstream Wine master/11.17+ is the correct long-term source for this pipeline rather
+# than a CrossOver-only tree. Run `scripts/build-wine-arm.sh check` against the newest Wine you
+# can as the ARM64 MRs land — the rebase surface shrinks as the base converges. Re-check
+# media.codeweavers.com/pub/crossover/source/ for the 27/28 tarball once CrossOver 27 ships.
+#
 # Usage:
 #   scripts/build-wine-arm.sh deps       # Homebrew build deps
 #   scripts/build-wine-arm.sh fetch      # obtain + extract the source, init git
