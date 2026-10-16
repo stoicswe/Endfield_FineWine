@@ -6,17 +6,25 @@
 #   scripts/build-moltenvk.sh <step>   # fetch | apply | deps | build
 #
 # Env: MVK_TAG (default v1.4.2, the patch target),
+#      MVK_ARCH (default x86_64 — CrossOver 26.x loads the x86_64 build; the ARM/aarch64
+#               pipeline sets MVK_ARCH=aarch64),
 #      BUILD_DIR (default <repo>/build)
 # Needs full Xcode; set DEVELOPER_DIR if xcode-select points at the Command Line Tools.
 
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 MVK_TAG="${MVK_TAG:-v1.4.2}"
+MVK_ARCH="${MVK_ARCH:-x86_64}"
 BUILD_DIR="${BUILD_DIR:-$REPO/build}"
 MVK_SRC="$BUILD_DIR/moltenvk-src"
 SPVC_SRC="$BUILD_DIR/spirv-cross-src"      # patched, linked into MoltenVK's External/
 VKH_SRC="$BUILD_DIR/vulkan-headers-src"
-MVK_OUT="$BUILD_DIR/moltenvk-out"
+# Keep the x86_64 output path stable (build/moltenvk-out); suffix only non-default arches.
+if [ "$MVK_ARCH" = "x86_64" ]; then
+  MVK_OUT="${MVK_OUT:-$BUILD_DIR/moltenvk-out}"
+else
+  MVK_OUT="${MVK_OUT:-$BUILD_DIR/moltenvk-out-$MVK_ARCH}"
+fi
 P="$REPO/patches/moltenvk"
 
 log(){ printf '\n\033[1m==> %s\033[0m\n' "$*"; }
@@ -47,9 +55,9 @@ cmd_deps() {
   log "Building MoltenVK's external dependencies"
   [ -d "$MVK_SRC/.git" ] || { echo "run 'fetch' first"; exit 1; }
   # Use local roots so fetchDependencies preserves the patches.
-  # CrossOver only loads x86_64; override the default universal build.
-  local xcconfig="$BUILD_DIR/moltenvk-x86_64.xcconfig"
-  echo "ARCHS = x86_64" > "$xcconfig"
+  # CrossOver 26.x only loads x86_64; the ARM pipeline builds aarch64.
+  local xcconfig="$BUILD_DIR/moltenvk-$MVK_ARCH.xcconfig"
+  echo "ARCHS = $MVK_ARCH" > "$xcconfig"
   ( cd "$MVK_SRC" && XCODE_XCCONFIG_FILE="$xcconfig" ./fetchDependencies --macos \
       --spirv-cross-root "$SPVC_SRC" --v-headers-root "$VKH_SRC" ) \
     > "$BUILD_DIR/moltenvk-deps.log" 2>&1 || { echo "fetchDependencies failed — see $BUILD_DIR/moltenvk-deps.log"; exit 1; }
@@ -60,10 +68,13 @@ cmd_build() {
   xcodebuild -version >/dev/null 2>&1 \
     || { echo "xcodebuild needs full Xcode; set DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer"; exit 1; }
   ( cd "$MVK_SRC" && xcodebuild build -project MoltenVKPackaging.xcodeproj \
-      -scheme "MoltenVK Package (macOS only)" -destination generic/platform=macOS ARCHS=x86_64 ) \
+      -scheme "MoltenVK Package (macOS only)" -destination generic/platform=macOS ARCHS="$MVK_ARCH" ) \
     > "$BUILD_DIR/moltenvk-build.log" 2>&1 || { echo "MoltenVK build failed — see $BUILD_DIR/moltenvk-build.log"; exit 1; }
   local dylib="$MVK_SRC/Package/Release/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib"
-  file -b "$dylib" | grep -q "shared library x86_64" || { echo "no x86_64 $dylib"; exit 1; }
+  # `file` prints "arm64" for an aarch64 Mach-O; accept either spelling.
+  local archpat="$MVK_ARCH"
+  [ "$MVK_ARCH" = "aarch64" ] && archpat="arm64|aarch64"
+  file -b "$dylib" | grep -Eq "$archpat" || { echo "no $MVK_ARCH $dylib"; exit 1; }
   rm -rf "$MVK_OUT"; mkdir -p "$MVK_OUT"
   cp "$dylib" "$MVK_OUT/" && cp "$MVK_SRC/LICENSE" "$MVK_OUT/LICENSE.MoltenVK" || exit 1
   echo "https://github.com/KhronosGroup/MoltenVK/tree/$(git -C "$MVK_SRC" rev-parse HEAD)" > "$MVK_OUT/SOURCE_URL"

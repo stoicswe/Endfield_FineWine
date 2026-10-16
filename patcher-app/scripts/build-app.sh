@@ -13,6 +13,9 @@
 #                            a flat directory holding ntdll.so/kernel32.dll/ntoskrnl.exe also works)
 #   MOLTENVK_DIR            where to find the built libMoltenVK.dylib
 #                           (default: <repo>/build/moltenvk-out; a copy inside PAYLOAD_DIR also works)
+#   ARM_PAYLOAD_DIR         optional ARM (aarch64) payload built by scripts/build-wine-arm.sh
+#                           (default: <repo>/build/wine-arm-payload). Absent -> x64-only build;
+#                           the ARM payload is never required and never affects the x64 path.
 #   VERSION                 CFBundleShortVersionString baked into Info.plist (default: 1.1.0;
 #                           the release workflow sets this to the release branch version)
 #   CODESIGN_ID             signing identity (default "-" = ad-hoc; set your "Developer ID
@@ -186,6 +189,35 @@ else
     codesign --force --sign "$CODESIGN_ID" "$f" 2>/dev/null || true
   done
   ok "payload staged: ntdll.so, kernel32.dll, ntoskrnl.exe, lsass.exe, wineboot.exe, libMoltenVK.dylib"
+fi
+
+# ---------------------------------------------------------------- 3b. ARM payload (experimental)
+# The ARM (aarch64, no-Rosetta) payload is built by a SEPARATE pipeline
+# (scripts/build-wine-arm.sh) so the x64 path stays untouched, and staged into payload/arm/.
+# It is optional: with no ARM payload the app still builds and patches x64 exactly as before,
+# and simply reports that the ARM payload is missing when an ARM CrossOver is selected.
+ARM_PAYLOAD_DIR="${ARM_PAYLOAD_DIR:-$REPO/build/wine-arm-payload}"
+if [ -d "$ARM_PAYLOAD_DIR" ]; then
+  P_ARM="$APP/Contents/Resources/payload/arm"
+  mkdir -p "$P_ARM"
+  # ditto to preserve any symlinks/permissions in the payload tree.
+  ditto "$ARM_PAYLOAD_DIR/" "$P_ARM/"
+  NT_ARM="$P_ARM/aarch64-unix/ntdll.so"
+  if [ -f "$NT_ARM" ] && otool -l "$NT_ARM" >/dev/null 2>&1; then
+    if ! otool -l "$NT_ARM" | grep -A2 LC_RPATH | grep -q 'lib/aarch64'; then
+      install_name_tool -add_rpath "@loader_path/../../../lib/aarch64" "$NT_ARM"
+    fi
+    otool -l "$NT_ARM" | grep -A2 LC_RPATH | grep -q 'lib/aarch64' \
+      || { echo "ERROR: could not add the lib/aarch64 rpath to the ARM ntdll.so"; exit 1; }
+    ok "ARM ntdll.so LC_RPATH -> lib/aarch64"
+  fi
+  # Ad-hoc sign the Mach-O halves (aarch64 ntdll.so, aarch64 libMoltenVK.dylib).
+  while IFS= read -r f; do
+    case "$f" in *.so|*.dylib) codesign --force --sign "$CODESIGN_ID" "$f" 2>/dev/null || true ;; esac
+  done < <(find "$P_ARM" -type f)
+  ok "ARM payload staged from $ARM_PAYLOAD_DIR ($(find "$P_ARM" -type f | wc -l | tr -d ' ') files)"
+else
+  warn "no ARM payload at $ARM_PAYLOAD_DIR — building x64-only (build it with scripts/build-wine-arm.sh)"
 fi
 
 # ---------------------------------------------------------------- 4. sign

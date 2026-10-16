@@ -13,7 +13,10 @@ struct ContentView: View {
     @State private var gptkAutoSelected = false
     @State private var createLauncher = true
 
-    private let payloadReady = Payload.isComplete
+    /// The variant of the currently selected CrossOver (`nil` = unrecognized layout).
+    private var selectedVariant: CrossOverVariant? { crossover?.variant }
+    /// Whether the payload for the selected variant is bundled in this build.
+    private var payloadReady: Bool { selectedVariant.map { Payload.isComplete(for: $0) } ?? false }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -35,14 +38,14 @@ struct ContentView: View {
         .sheet(isPresented: $showLicenses) { LicensesView() }
         .confirmationDialog("CrossOver version mismatch", isPresented: $showVersionWarning, titleVisibility: .visible) {
             Button("Patch Anyway", role: .destructive) {
-                if let destination = pendingDestination, let cx = crossover {
-                    engine.patch(source: cx.url, destination: destination, gptk: selectedGPTK, createLauncher: createLauncher)
+                if let destination = pendingDestination, let cx = crossover, let variant = cx.variant {
+                    engine.patch(source: cx.url, variant: variant, destination: destination, gptk: selectedGPTK, createLauncher: createLauncher)
                 }
                 pendingDestination = nil
             }
             Button("Cancel", role: .cancel) { pendingDestination = nil }
         } message: {
-            Text("This CrossOver reports version \(crossover?.version ?? "unknown"), but the bundled modules are built against CrossOver \(CrossOverInfo.expectedVersion)'s Wine ABI. Patching a different version will almost certainly not work.")
+            Text("This CrossOver reports version \(crossover?.version ?? "unknown"), but the bundled modules are built against CrossOver \(selectedVariant?.expectedVersion ?? CrossOverVariant.x64.expectedVersion)'s Wine ABI. Patching a different version will almost certainly not work.")
         }
         .onAppear {
             detectDefaultCrossOver()
@@ -56,7 +59,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("FineWine Patcher")
                 .font(.title2.weight(.semibold))
-            Text("Creates a patched copy of CrossOver \(CrossOverInfo.expectedVersion) so Arknights: Endfield runs on Apple Silicon.")
+            Text("Creates a patched copy of CrossOver so Arknights: Endfield runs on Apple Silicon — for the x64 and ARM (aarch64) CrossOver builds.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -157,25 +160,38 @@ struct ContentView: View {
 
     @ViewBuilder
     private func statusLine(for cx: CrossOverInfo) -> some View {
-        if !cx.hasWineModules {
-            Label("No Wine modules found — not a CrossOver app?", systemImage: "xmark.circle.fill")
+        if cx.variant == nil || !cx.hasWineModules {
+            Label("Unrecognized CrossOver layout — expected x64 (26.3) or ARM (aarch64) Wine modules",
+                  systemImage: "xmark.circle.fill")
                 .font(.caption).foregroundStyle(.red)
+        } else if cx.variant == .arm {
+            Label("ARM (aarch64) · version \(cx.version ?? "?") · experimental", systemImage: "cpu")
+                .font(.caption).foregroundStyle(.orange)
         } else if cx.isExpectedVersion {
-            Label("Version \(cx.version ?? "?")", systemImage: "checkmark.seal.fill")
+            Label("x64 · version \(cx.version ?? "?")", systemImage: "checkmark.seal.fill")
                 .font(.caption).foregroundStyle(.green)
         } else {
-            Label("Version \(cx.version ?? "unknown") — expected \(CrossOverInfo.expectedVersion) (Wine ABI must match)",
+            Label("x64 · version \(cx.version ?? "unknown") — expected \(CrossOverVariant.x64.expectedVersion) (Wine ABI must match)",
                   systemImage: "exclamationmark.triangle.fill")
                 .font(.caption).foregroundStyle(.orange)
         }
     }
 
     private var payloadMissingBox: some View {
-        Label("This build of the patcher has no module payload (Wine + MoltenVK) — rebuild it with patcher-app/scripts/build-app.sh after scripts/build-wine.sh all and scripts/build-moltenvk.sh all.",
+        Label(payloadMissingMessage,
               systemImage: "exclamationmark.triangle.fill")
             .font(.caption)
             .foregroundStyle(.orange)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var payloadMissingMessage: String {
+        switch selectedVariant {
+        case .arm:
+            return "This build has no ARM (aarch64) module payload. Build it with patcher-app/scripts/build-wine-arm.sh, then restage with build-app.sh. The x64 payload is unaffected."
+        default:
+            return "This build of the patcher has no module payload (Wine + MoltenVK) — rebuild it with patcher-app/scripts/build-app.sh after scripts/build-wine.sh all and scripts/build-moltenvk.sh all."
+        }
     }
 
     private var launcherBox: some View {
@@ -215,7 +231,7 @@ struct ContentView: View {
                         NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
                 }
-                Text("Important: in the game's launcher settings, set the rendering API to DirectX 11 — Vulkan and DirectX 12 do not work under CrossOver \(CrossOverInfo.expectedVersion). Re-check after game updates.")
+                Text("Important: in the game's launcher settings, set the rendering API to DirectX 11 — Vulkan and DirectX 12 do not work under CrossOver. Re-check after game updates.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -233,7 +249,7 @@ struct ContentView: View {
                     NSWorkspace.shared.open(URL(string: "https://www.codeweavers.com/store")!)
                 }
             }
-            Text("Unofficial software — not affiliated with CodeWeavers, Gryphline/Hypergryph, Tencent, or Apple. Requires your own licensed copy of CrossOver \(CrossOverInfo.expectedVersion) and your own copy of the game.")
+            Text("Unofficial software — not affiliated with CodeWeavers, Gryphline/Hypergryph, Tencent, or Apple. Requires your own licensed copy of CrossOver and your own copy of the game.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -244,9 +260,15 @@ struct ContentView: View {
 
     private func detectDefaultCrossOver() {
         guard crossover == nil else { return }
-        let standard = URL(fileURLWithPath: "/Applications/CrossOver.app")
-        if FileManager.default.fileExists(atPath: standard.path) {
-            select(standard)
+        // Prefer the first well-known install that looks like a patchable CrossOver (x64 or ARM).
+        let candidates = [
+            "/Applications/CrossOver.app",
+            "/Applications/CrossOver ARM Preview.app",
+        ].map { URL(fileURLWithPath: $0) }
+        if let match = candidates.first(where: {
+            FileManager.default.fileExists(atPath: $0.path) && CrossOverInfo(url: $0).variant != nil
+        }) {
+            select(match)
         }
     }
 
@@ -279,8 +301,9 @@ struct ContentView: View {
         panel.showsTagField = false
         guard panel.runModal() == .OK, let destination = panel.url else { return }
 
+        guard let variant = cx.variant else { return }
         if cx.isExpectedVersion {
-            engine.patch(source: cx.url, destination: destination, gptk: selectedGPTK, createLauncher: createLauncher)
+            engine.patch(source: cx.url, variant: variant, destination: destination, gptk: selectedGPTK, createLauncher: createLauncher)
         } else {
             pendingDestination = destination
             showVersionWarning = true
