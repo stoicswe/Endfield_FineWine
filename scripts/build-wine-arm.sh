@@ -7,10 +7,10 @@
 # `Resources/payload/arm/` tree, which scripts/build-app.sh stages when present:
 #
 #   aarch64-unix/ntdll.so                (patched aarch64 unix ntdll — the host side)
-#   x86_64-windows/kernel32.dll          (x86_64 PE, as Endfield/ACE are emulated x86_64)
+#   x86_64-windows/kernel32.dll          (x86_64 PE — the emulated x86_64 game process)
 #   x86_64-windows/ntoskrnl.exe
-#   x86_64-windows/lsass.exe
-#   x86_64-windows/wineboot.exe
+#   aarch64-windows/lsass.exe            (host-arch programs: wineboot + the lsass stub it starts)
+#   aarch64-windows/wineboot.exe
 #   lib/aarch64/libMoltenVK.dylib        (patched aarch64 MoltenVK, if built)
 #
 # The ARM variant is EXPERIMENTAL: the load-bearing `#ifdef __x86_64__` dispatcher spoof is
@@ -34,6 +34,7 @@
 #   scripts/build-wine-arm.sh deps       # Homebrew build deps
 #   scripts/build-wine-arm.sh fetch      # obtain + extract the source, init git
 #   scripts/build-wine-arm.sh apply      # git apply all patches/ (same series as x64)
+#   scripts/build-wine-arm.sh check      # non-destructive: report how far patches/ get (clean/fuzz/fail)
 #   scripts/build-wine-arm.sh configure  # configure aarch64 host + x86_64 PE
 #   scripts/build-wine-arm.sh build      # make the modules into build/wine-arm-payload
 #   scripts/build-wine-arm.sh all        # deps -> fetch -> apply -> configure -> build
@@ -64,10 +65,15 @@ log(){ printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 use_bison(){ export PATH="$("$BREW" --prefix bison)/bin:$PATH"; }  # Wine needs bison >= 3.0
 
 cmd_deps() {
-  log "Installing Homebrew build dependencies (arm64 toolchain + x86_64 mingw for the PE modules)"
+  log "Installing Homebrew build dependencies"
   # bison >= 3, pkgconf, ccache as on the x64 pipeline. mingw-w64 supplies the x86_64 PE
-  # cross-compiler for kernel32/ntoskrnl/lsass/wineboot.
+  # cross-compiler for the emulated game's kernel32/ntoskrnl. The aarch64-windows host programs
+  # (wineboot/lsass) need an aarch64 PE toolchain — Wine upstream expects llvm-mingw
+  # (aarch64-w64-mingw32-*); install it separately (it is not a Homebrew formula).
   "$BREW" install bison pkgconf ccache mingw-w64 || exit 1
+  command -v aarch64-w64-mingw32-gcc >/dev/null 2>&1 \
+    || command -v aarch64-w64-mingw32-clang >/dev/null 2>&1 \
+    || echo "  ! no aarch64 PE toolchain found (need llvm-mingw's aarch64-w64-mingw32-*) — building aarch64-windows wineboot/lsass will fail"
 }
 
 fetch_source() {
@@ -135,6 +141,38 @@ cmd_apply() {
     echo "applied $n patches" ) || exit 1
 }
 
+# Non-destructive applicability report against the fetched source: how much of patches/ applies
+# cleanly (git apply), how much only with -F3 fuzz (mechanical line drift), and what genuinely
+# conflicts (needs rebasing). Restores the tree afterwards. Run this first — it tells you how far
+# the CrossOver-26.3-era series is from the source you pointed the pipeline at, before a long build.
+cmd_check() {
+  log "Checking patch applicability against $WINE_SRC"
+  [ -d "$WINE_SRC" ] || { echo "run 'fetch' first"; exit 1; }
+  [ -d "$WINE_SRC/.git" ] || { echo "source is not a git repo — cannot check non-destructively"; exit 1; }
+  local P="$REPO/patches"
+  ( cd "$WINE_SRC"
+    git reset -q --hard && git clean -qfd && git clean -qfdx
+    local clean=0 fuzz=0 fail=0 f b
+    for f in $(ls "$P"/stage2-dwproton/em-backports/*.patch | sort) \
+             $(ls "$P"/stage2-dwproton/misc/*.patch | sort) \
+             $(ls "$P"/stage2-dwproton/ace-core/*.patch | sort) \
+             $(ls "$P"/stage1-macos/*.patch | sort); do
+      b="$(basename "$f")"
+      if git apply "$f" 2>/dev/null; then
+        clean=$((clean+1))
+      elif patch -p1 --forward --batch --fuzz=3 < "$f" >/dev/null 2>&1; then
+        fuzz=$((fuzz+1)); printf '  fuzz  %s\n' "$b"
+      else
+        fail=$((fail+1)); printf '  FAIL  %s\n' "$b"
+      fi
+    done
+    echo "-----"
+    echo "clean=$clean  fuzz=$fuzz  failed=$fail  (of $((clean+fuzz+fail)))"
+    git reset -q --hard && git clean -qfd
+    echo "working tree restored"
+  )
+}
+
 cmd_configure() {
   log "Configuring aarch64 host + x86_64 PE ($ARM_WINE_ARCHS)"
   [ -d "$WINE_SRC" ] || { echo "run 'fetch' first"; exit 1; }
@@ -165,22 +203,25 @@ cmd_build() {
   local targets="dlls/ntdll/ntdll.so \
     dlls/kernel32/x86_64-windows/kernel32.dll \
     dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe \
-    programs/lsass/x86_64-windows/lsass.exe \
-    programs/wineboot/x86_64-windows/wineboot.exe"
+    programs/lsass/aarch64-windows/lsass.exe \
+    programs/wineboot/aarch64-windows/wineboot.exe"
   # shellcheck disable=SC2086
   ( cd "$WINE_BUILD" && make -j"$JOBS" $targets ) 2>&1 | tee "$BUILD_DIR/build-arm.log"
   [ "${PIPESTATUS[0]}" = 0 ] || { echo "make failed — see $BUILD_DIR/build-arm.log"; exit 1; }
 
   rm -rf "$WINE_OUT" "$PAYLOAD_OUT"
-  mkdir -p "$WINE_OUT" "$PAYLOAD_OUT/aarch64-unix" "$PAYLOAD_OUT/x86_64-windows" "$PAYLOAD_OUT/lib/aarch64"
+  mkdir -p "$WINE_OUT" "$PAYLOAD_OUT/aarch64-unix" "$PAYLOAD_OUT/x86_64-windows" \
+           "$PAYLOAD_OUT/aarch64-windows" "$PAYLOAD_OUT/lib/aarch64"
   # Locate each module (paths shift between Wine trees) and copy into the payload shape.
+  # kernel32/ntoskrnl are x86_64 PE (the emulated game process); wineboot/lsass are the
+  # host-arch aarch64-windows programs.
   find_module() { find "$WINE_BUILD" -type f -path "*$1" 2>/dev/null | head -1; }
   local pair
   for pair in "dlls/ntdll/ntdll.so:aarch64-unix/ntdll.so" \
               "x86_64-windows/kernel32.dll:x86_64-windows/kernel32.dll" \
               "x86_64-windows/ntoskrnl.exe:x86_64-windows/ntoskrnl.exe" \
-              "x86_64-windows/lsass.exe:x86_64-windows/lsass.exe" \
-              "x86_64-windows/wineboot.exe:x86_64-windows/wineboot.exe"; do
+              "aarch64-windows/lsass.exe:aarch64-windows/lsass.exe" \
+              "aarch64-windows/wineboot.exe:aarch64-windows/wineboot.exe"; do
     local src dst
     src="$(find_module "${pair%%:*}")"; dst="${pair##*:}"
     [ -n "$src" ] || { echo "ERROR: could not find ${pair%%:*} in the build tree"; exit 1; }
@@ -219,7 +260,7 @@ cmd_build() {
 }
 
 case "${1:-all}" in
-  deps|fetch|apply|configure|build) "cmd_$1" ;;
+  deps|fetch|apply|configure|build|check) "cmd_$1" ;;
   all) cmd_deps; cmd_fetch; cmd_apply; cmd_configure; cmd_build ;;
-  *) echo "usage: $0 [all|deps|fetch|apply|configure|build]"; exit 1 ;;
+  *) echo "usage: $0 [all|deps|fetch|apply|configure|build|check]"; exit 1 ;;
 esac

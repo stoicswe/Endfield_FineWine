@@ -44,7 +44,8 @@ final class VariantTests: XCTestCase {
         "lib/wine/aarch64-unix/ntdll.so",
         "lib/wine/x86_64-windows/kernel32.dll",
         "lib/wine/x86_64-windows/ntoskrnl.exe",
-        "lib/wine/x86_64-windows/wineboot.exe",
+        "lib/wine/aarch64-windows/lsass.exe",
+        "lib/wine/aarch64-windows/wineboot.exe",
         "lib/aarch64/libMoltenVK.dylib",
     ]
 
@@ -105,15 +106,18 @@ final class VariantTests: XCTestCase {
         XCTAssertEqual(CrossOverVariant.x64.modules.first?.crossoverSubpath, "lib/wine/x86_64-unix/ntdll.so")
         XCTAssertTrue(CrossOverVariant.x64.modules.contains { $0.crossoverSubpath == "lib64/libMoltenVK.dylib" })
 
-        // ARM: aarch64 unix ntdll + x86_64 PE modules + aarch64 MoltenVK.
+        // ARM: aarch64 unix ntdll; x86_64 PE for the emulated game process; aarch64-windows
+        // host programs (wineboot/lsass); aarch64 MoltenVK.
         let arm = CrossOverVariant.arm.modules
         XCTAssertTrue(arm.contains { $0.crossoverSubpath == "lib/wine/aarch64-unix/ntdll.so" })
         XCTAssertTrue(arm.contains { $0.crossoverSubpath == "lib/wine/x86_64-windows/kernel32.dll" })
+        XCTAssertTrue(arm.contains { $0.crossoverSubpath == "lib/wine/aarch64-windows/lsass.exe" })
+        XCTAssertTrue(arm.contains { $0.crossoverSubpath == "lib/wine/aarch64-windows/wineboot.exe" })
         XCTAssertTrue(arm.contains { $0.crossoverSubpath == "lib/aarch64/libMoltenVK.dylib" })
         // No x86_64 unix ntdll and no lib64 on the ARM path.
         XCTAssertFalse(arm.contains { $0.crossoverSubpath.contains("lib64") })
         XCTAssertFalse(arm.contains { $0.crossoverSubpath == "lib/wine/x86_64-unix/ntdll.so" })
-        // lsass.exe is the only module we add that stock CrossOver lacks.
-        XCTAssertEqual(arm.filter(\.isNew).map(\.crossoverSubpath), ["lib/wine/x86_64-windows/lsass.exe"])
+        // Stock Wine 11.17 ships lsass.exe, so nothing on the ARM path is "new".
+        XCTAssertTrue(arm.filter(\.isNew).isEmpty)
     }
 }

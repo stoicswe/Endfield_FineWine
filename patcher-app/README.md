@@ -50,7 +50,7 @@ and vice-versa:
 |---|---|---|
 | app | CrossOver 26.x | CrossOver ARM (27 preview) |
 | host Wine | x86_64 under Rosetta 2 | **native aarch64, no Rosetta** |
-| Wine tree | `lib/wine/x86_64-unix` | `lib/wine/aarch64-unix` (+ `x86_64-windows` PE for the game) |
+| Wine tree | `lib/wine/x86_64-unix` | `lib/wine/aarch64-unix` host · `x86_64-windows` game PE · `aarch64-windows` wineboot/lsass |
 | host libs | `lib64/…` | `lib/aarch64/…` |
 | ntdll rpath | `@loader_path/../../../lib64` | `@loader_path/../../../lib/aarch64` |
 | D3DMetal | `lib64/apple_gptk` | `lib/apple_gptk` |
@@ -67,6 +67,13 @@ expected to behave like x64. ARM modules are built by a **separate pipeline**,
 untouched; the app simply reports "no ARM payload" until one is built and staged. The pipeline
 prefers the **CrossOver ARM source** (`CX_ARM_VER=…`) so the module ABI matches the app; until
 CodeWeavers publishes preview sources it falls back to upstream Wine (experimental ABI).
+
+`scripts/build-wine-arm.sh check` reports how far the (CrossOver-26.3-era) `patches/` series gets
+against whatever source you point it at. Against **upstream Wine 11.17** (CrossOver ARM preview's
+base) it is a rebase project, not a drop-in: ~20 of 44 patches apply (16 clean + 4 with `-F3`
+fuzz), the rest need rebasing, and the `msync` patches cannot apply at all because
+`dlls/ntdll/unix/msync.c` is a CrossOver-only file — so the real CrossOver ARM sources are
+required for a faithful build.
 
 ## Mod framework (EFMI) — optional second phase
 
