@@ -24,6 +24,9 @@ Original to this project. The two Rosetta fixes live in `dlls/ntdll/unix/signal_
 - `0005-msync-fix-waitall-rollback.patch`, in `dlls/ntdll/unix/msync.c`:
   - When another thread wins an object partway through a WaitAll, the rollback now leaves recursively owned mutexes alone, restores abandoned mutexes as abandoned, and wakes waiters on every object it puts back. Test: `python3 tests/test-msync-waitall.py <wine-src>`.
 
+- `0006-msync-server-one-waiter-node-per-thread.patch`, in `server/msync.c`:
+  - A multi-object wait that returns early (an object became available while the client spun) leaves its registration in the wineserver until the object is signaled. On a rarely signaled object, such as a quit event, every lost race added another node for the same thread: the node pool ran out, the server printed a warning on every allocation and grew by about 1 MB/s. `add_tid()` now skips a thread that is already on the list, so each object holds at most one node per thread, and the warning prints once. The client is unchanged. Test: `tests/fixtures/msync-wait-stress.c` (build and run instructions in the file).
+
 ## `stage2-dwproton/` — the ported dw-proton anti-cheat patches
 
 The Endfield-relevant subset of dw-proton's fix commit `b816be489`, from the `dawn-winery/dwproton-mirror` (fetched by [`../scripts/fetch-dwproton-patches.sh`](../scripts/fetch-dwproton-patches.sh)). Analysis: [../docs/02-dwproton-ace-patches.md](../docs/02-dwproton-ace-patches.md).

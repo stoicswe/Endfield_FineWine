@@ -1,0 +1,40 @@
+diff --git a/server/msync.c b/server/msync.c
+index eecf9b3..440a865 100644
+--- a/server/msync.c
++++ b/server/msync.c
+@@ -177,7 +177,14 @@ static inline struct tid_node *pool_alloc(void)
+ {
+     if (pool->count == 0)
+     {
+-        fprintf( stderr, "msync: warn: node memory pool exhausted\n" );
++        static int warned;
++
++        /* Once: it used to print on every allocation past the pool. */
++        if (!warned)
++        {
++            warned = 1;
++            fprintf( stderr, "msync: warn: node memory pool exhausted\n" );
++        }
+         return malloc( sizeof(struct tid_node) );
+     }
+     return pool->free_nodes[--pool->count];
+@@ -225,9 +232,18 @@ static inline struct tid_list *get_tid_list( unsigned int shm_idx )
+ 
+ static inline void add_tid( unsigned int shm_idx, int tid )
+ {
+-    struct tid_node *new_node;
++    struct tid_node *new_node, *node;
+     struct tid_list *list = get_tid_list( shm_idx );
+ 
++    /* Endfield_FineWine: a multi-object wait that returns early (an object became available
++     * while the client spun) leaves its registration here, and nothing removes it until the
++     * object is signaled. On an object that is rarely signaled (a quit event, say) each lost
++     * race added another node for the same thread, without bound: the pool ran out and the
++     * wineserver grew by megabytes a second. One node per thread is enough to wake it, so
++     * don't add a second. The client is unchanged, so waits behave exactly as before. */
++    for (node = list->head; node; node = node->next)
++        if (node->tid == tid) return;
++
+     new_node = pool_alloc();
+     new_node->tid = tid;
+ 
