@@ -712,6 +712,33 @@ final class PatcherEngine: ObservableObject {
         return Data(SHA256.hash(data: data))
     }
 
+    /// Content hash of a module with any embedded code signature removed. The Mach-O modules
+    /// (ntdll.so, libMoltenVK.dylib) are ad-hoc re-signed after the swap; because codesign's
+    /// ad-hoc signature bytes differ across macOS/codesign versions, comparing the signed file
+    /// directly would report a false mismatch. Stripping the signature makes the comparison
+    /// depend only on the actual code. PE modules carry no embedded signature and are hashed
+    /// as-is. Falls back to a plain hash if the signature can't be removed.
+    private nonisolated static func contentHash(_ url: URL) -> Data? {
+        guard let raw = try? Data(contentsOf: url, options: .alwaysMapped) else { return nil }
+        guard url.pathExtension == "so" || url.pathExtension == "dylib" else {
+            return Data(SHA256.hash(data: raw))
+        }
+        let fm = FileManager.default
+        // codesign --remove-signature needs a writable file, so strip it from a temp copy.
+        // The file name itself is irrelevant here (we never sign), so a unique name is fine.
+        let tmp = fm.temporaryDirectory
+            .appendingPathComponent("fw-content-\(UUID().uuidString)-\(url.lastPathComponent)")
+        defer { try? fm.removeItem(at: tmp) }
+        do {
+            try fm.copyItem(at: url, to: tmp)
+            _ = try? run("/usr/bin/codesign", ["--remove-signature", tmp.path])
+            let stripped = try Data(contentsOf: tmp, options: .alwaysMapped)
+            return Data(SHA256.hash(data: stripped))
+        } catch {
+            return Data(SHA256.hash(data: raw))
+        }
+    }
+
     private nonisolated static func codesignVerifies(_ path: String, deep: Bool) -> Bool {
         var args = ["--verify"]
         if deep { args += ["--deep", "--strict"] }
@@ -760,7 +787,13 @@ final class PatcherEngine: ObservableObject {
         for module in Payload.modules {
             let src = payloadDir.appendingPathComponent(module.payloadSubpath)
             let dst = cxr.appendingPathComponent(module.crossoverSubpath)
-            guard let a = fileSize(src), let b = fileSize(dst), a == b else {
+            // Compare module *content*, not raw bytes. The Mach-O modules are re-signed
+            // (ad-hoc) after the swap, and ad-hoc signatures are not byte-identical across
+            // codesign versions (the CI build runner's macOS vs. the user's), so a raw
+            // size/hash comparison fails even when the swap is perfectly fine.
+            // contentHash() strips the embedded signature first, so it is stable across
+            // codesign versions.
+            guard let a = contentHash(src), let b = contentHash(dst), a == b else {
                 throw PatchError("\(module.crossoverSubpath) does not match the bundled payload after the swap.")
             }
         }
@@ -894,10 +927,6 @@ final class PatcherEngine: ObservableObject {
             try fm.removeItem(at: cpbz2)
             try fm.moveItem(at: tmpCpbz2, to: cpbz2)
         }
-    }
-
-    private nonisolated static func fileSize(_ url: URL) -> UInt64? {
-        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? UInt64) ?? nil
     }
 
     @discardableResult
