@@ -26,6 +26,8 @@ Original to this project. The two Rosetta fixes live in `dlls/ntdll/unix/signal_
 
 - `0006-msync-server-one-waiter-node-per-thread.patch`, in `server/msync.c`:
   - A multi-object wait that returns early (an object became available while the client spun) leaves its registration in the wineserver until the object is signaled. On a rarely signaled object, such as a quit event, every lost race added another node for the same thread: the node pool ran out, the server printed a warning on every allocation and grew by about 1 MB/s. `add_tid()` now skips a thread that is already on the list, so each object holds at most one node per thread, and the warning prints once. The client is unchanged. Test: `tests/fixtures/msync-wait-stress.c` (build and run instructions in the file).
+- `0007-ntdll-replace-stale-ntdll-symlink-in-winetemp-dir.patch`, in `dlls/ntdll/unix/loader.c`:
+  - CW HACK 22144 re-execs each process through a link to the loader in `$TMPDIR/winetemp-<loader inode>-…/`, next to an `ntdll.so` symlink. The folder is keyed on the loader's inode, which survives renaming or moving the app, but the symlink was only created once, so after a rename every process fails with `could not load ntdll.so`. The symlink is now replaced atomically each time.
 
 ## `stage2-dwproton/` — the ported dw-proton anti-cheat patches
 
