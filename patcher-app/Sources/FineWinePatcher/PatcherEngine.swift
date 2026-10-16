@@ -415,7 +415,7 @@ final class PatcherEngine: ObservableObject {
         return "com.codeweavers.CrossOvEF"
     }
 
-    private static func stepLabels(includingGPTK: Bool) -> [String] {
+    private static func stepLabels(includingGPTK: Bool, includingLauncher: Bool) -> [String] {
         var labels = [
             "Copying CrossOver",
             "Installing the patched modules",
@@ -426,8 +426,8 @@ final class PatcherEngine: ObservableObject {
             "Re-sealing the bundle",
             "Verifying",
             "Moving the patched app into place",
-            "Creating the direct launcher app",
         ]
+        if includingLauncher { labels.append("Creating the direct launcher app") }
         return labels
     }
 
@@ -437,7 +437,7 @@ final class PatcherEngine: ObservableObject {
         errorMessage = nil
     }
 
-    func patch(source: URL, destination: URL, gptk: GPTKSource? = nil) {
+    func patch(source: URL, destination: URL, gptk: GPTKSource? = nil, createLauncher: Bool = true) {
         guard !isRunning else { return }
         guard let payloadDir = Payload.directory, Payload.isComplete else {
             errorMessage = "This build of the patcher does not include the module payload (Wine + MoltenVK). Rebuild it with patcher-app/scripts/build-app.sh after scripts/build-wine.sh all and scripts/build-moltenvk.sh all."
@@ -445,7 +445,8 @@ final class PatcherEngine: ObservableObject {
         }
         reset()
         isRunning = true
-        steps = Self.stepLabels(includingGPTK: gptk != nil).enumerated().map { Step(id: $0.offset, label: $0.element) }
+        steps = Self.stepLabels(includingGPTK: gptk != nil, includingLauncher: createLauncher)
+            .enumerated().map { Step(id: $0.offset, label: $0.element) }
 
         Task.detached(priority: .userInitiated) {
             var current = 0
@@ -494,11 +495,13 @@ final class PatcherEngine: ObservableObject {
                 try Self.moveIntoPlace(app, destination: destination)
                 await finish(index); index += 1
 
-                // Best-effort: a double-clickable "Arknights Endfield.app" that launches the game
+                // Optional: a double-clickable "Arknights Endfield.app" that launches the game
                 // directly (the Gryphline launcher's Chromium renderer is broken under Wine).
-                await begin(index)
-                try? Self.createLauncherApp(patchedApp: destination)
-                await finish(index); index += 1
+                if createLauncher {
+                    await begin(index)
+                    try? Self.createLauncherApp(patchedApp: destination)
+                    await finish(index); index += 1
+                }
 
                 await MainActor.run {
                     self.patchedApp = destination

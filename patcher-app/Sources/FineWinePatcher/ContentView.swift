@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var gptkSources: [GPTKSource] = []
     @State private var selectedGPTK: GPTKSource?
     @State private var gptkAutoSelected = false
+    @State private var createLauncher = true
 
     private let payloadReady = Payload.isComplete
 
@@ -20,6 +21,7 @@ struct ContentView: View {
             crossoverBox
             gptkBox
             if !payloadReady { payloadMissingBox }
+            launcherBox
             patchButton
             if !engine.steps.isEmpty { StepsListView(steps: engine.steps) }
             if let error = engine.errorMessage { ErrorBox(message: error) }
@@ -34,7 +36,7 @@ struct ContentView: View {
         .confirmationDialog("CrossOver version mismatch", isPresented: $showVersionWarning, titleVisibility: .visible) {
             Button("Patch Anyway", role: .destructive) {
                 if let destination = pendingDestination, let cx = crossover {
-                    engine.patch(source: cx.url, destination: destination, gptk: selectedGPTK)
+                    engine.patch(source: cx.url, destination: destination, gptk: selectedGPTK, createLauncher: createLauncher)
                 }
                 pendingDestination = nil
             }
@@ -176,6 +178,21 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var launcherBox: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Create a direct launcher app", isOn: $createLauncher)
+                    .disabled(engine.isRunning)
+                Text("Adds a double-clickable “Arknights Endfield.app” next to the patched copy that opens the Gryphline launcher through the direct wine path (the CrossOver GUI's Start button crashes it). Turn this off if you don't want the extra app.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(4)
+        }
+    }
+
     private var patchButton: some View {
         Button(action: startPatch) {
             Text(engine.isRunning ? "Patching…" : "Create Patched Copy…")
@@ -263,7 +280,7 @@ struct ContentView: View {
         guard panel.runModal() == .OK, let destination = panel.url else { return }
 
         if cx.isExpectedVersion {
-            engine.patch(source: cx.url, destination: destination, gptk: selectedGPTK)
+            engine.patch(source: cx.url, destination: destination, gptk: selectedGPTK, createLauncher: createLauncher)
         } else {
             pendingDestination = destination
             showVersionWarning = true
