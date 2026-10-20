@@ -31,10 +31,17 @@ body:
     id: version
     attributes:
       label: Version
-      description: What version of our software are you running?
+      description: What full release of the FineWine Patcher are you using? Nightly builds are not selectable here.
       options:
-        - 1.0.0 (Default)
-        - 1.0.0+ (Beta)
+        - Unselected — choose your FineWine Patcher version
+        - 1.2.4
+        - 1.2.3
+        - 1.2.2
+        - 1.2.1
+        - 1.2.0
+        - 1.1.1
+        - 1.1.0
+        - 1.0.0
       default: 0
     validations:
       required: true

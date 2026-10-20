@@ -211,6 +211,29 @@ jobs:
           gh release view "$TAG" --json name,tagName,isPrerelease,assets \
             --jq '{name, tagName, isPrerelease, assets: [.assets[].name]}'
 
+      # Issue-form dropdowns cannot be populated at form-render time, so publish refreshed
+      # full-release options to the default branch. The next form load offers the new release.
+      - name: Refresh issue-template version dropdowns
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git switch --detach FETCH_HEAD
+          python3 .github/scripts/update-issue-version-dropdowns.py
+
+          if git diff --quiet -- .github/ISSUE_TEMPLATE; then
+            echo "issue-template version dropdowns are already current"
+            exit 0
+          fi
+
+          git add .github/ISSUE_TEMPLATE
+          git commit -m "chore: refresh issue template release versions"
+          git push origin HEAD:main
+          echo "Pushed refreshed version options to \`main\`." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Summary
         shell: bash
         env:
