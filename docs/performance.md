@@ -14,6 +14,7 @@
 |---|---|---|
 | M4 Pro / M3 Pro / M4 Max (24 GB+) | **Max Settings**, DXMT + `-force-d3d11` + TAAU | **~120 FPS** (occasional minor stutters) |
 | M4 Pro / M3 Pro (D3DMetal fallback) | Medium, 100% render scale, D3DMetal | ~60 FPS |
+| **M3 (base, 8-core)** — 14" MBP, 24 GB | Custom; D3DMetal or DXMT — **cap 60 FPS**, 1080p-class | ~45–60 FPS (GPU-bound above ~1440p) |
 | Base M1 / M2 / M3 / M4 (16 GB) | Medium / Low, DXMT + `-force-d3d11` + TAAU | ~45–60 FPS |
 | MacBook Air (any chip) | ❌ **Not recommended** — see below | — |
 
@@ -24,6 +25,49 @@
 > **GPTK4 note:** GPTK4 upgrades the separate D3DMetal backend. It is not loaded by DXMT, so it should not be expected to change DXMT FPS or shader translation behaviour.
 
 For tuning notes specific to 16 GB machines, see [14 — Performance on 16 GB Macs](14-performance-on-16gb-macs.md).
+
+---
+
+## Base M3 / 8-core Macs (measured)
+
+> **Measured on:** MacBook Pro 14" (Mac15,3), Apple **M3** — **8-core CPU (4 P + 4 E)**, 10-core GPU, **24 GB** unified memory, macOS 27.2, patched CrossOver 26.3 with **GPTK 4 (D3DMetal backend)**, 2026-10-16. The game was rendering at **2560×1600**, Custom quality, Volumetric Fog/Cloud high — i.e. the *harder* end of what this chip will be asked to do.
+
+The base M3 is a different machine from the M4 Pro the rest of this page targets. On M4 Pro the GPU has headroom and the Unity main thread is the bottleneck; on the 8-core M3 the **GPU becomes a co-bottleneck** above roughly 1440p, *on top of* the CPU and memory limits. Expect the transient "momentary freeze" hiccups below to be visible at high resolution even when the game is otherwise playable.
+
+| Metric (observed in play) | Value |
+|---|---|
+| GPU utilisation (`ioreg` "Device Utilization %") | **67–99 %** |
+| GPU memory in use | ~6.2 GB |
+| `Endfield.exe` physical footprint | **~11.8 GB** |
+| Free memory / compressor | **~32–151 MB free**, **~9.3 GB** compressed |
+| Page-ins | ~1,300/s sustained |
+| Load average | **13–16** on 8 cores |
+| Game CPU (`ps`) | 265–352 % |
+| `MTLCompilerService` | **126–218 % CPU, continuous** |
+
+**What the momentary freezes are.** Two effects stack on the 8-core M3:
+
+1. **Pipeline-compilation stutter.** A `sample` of the game during play is dominated by `MTLCompiler` and `AGXMetal`, and `MTLCompilerService` sits at one-to-two cores for the whole session. Each first-seen shader/pipeline is compiled synchronously, so the frame stalls until it lands. The game's own PSO warm-up (`HGPsoRecordManager` … `enablePsoWarmup:1`) helps but does not eliminate it, and a compressed/paged-out shader cache under memory pressure makes it come back.
+2. **Memory-reclaim stalls.** With under ~150 MB free and ~9 GB sitting in the compressor, macOS is continuously compressing, decompressing and paging in pages; that work lands as micro-stalls. This is the milder cousin of the permanent *memory-pressure freeze* documented in [14 — Performance on 16 GB Macs](14-performance-on-16gb-macs.md#the-memory-pressure-freeze).
+
+**What helps, in order of impact:**
+
+- **Cap the frame rate.** Set in-game **60 FPS**; with the D3DMetal backend you can also export **`D3DM_MAX_FPS=60`**. At 67–99 % GPU utilisation a capped frame loop paces far more evenly than an uncapped, GPU-saturated one, and it lowers sustained heat and memory-bandwidth contention.
+- **Lower the render load.** Drop to a **1080p-class resolution** (or ~70–80 % render scale) and lower **Texture Quality** — resolution/AA is GPU work and textures are the main *memory* lever. **Volumetric Fog and Volumetric Cloud** are the most expensive GPU effects here; set them low or off.
+- **Prefer the DXMT backend for memory headroom.** On DXMT the game uses roughly **half the RAM** of the D3DMetal path, which directly relieves the compressor/page-in pressure above. Note that CrossOver 26.3's stock DXMT still needs **TAAU** or **AMD FSR3** — DLSS is broken until the [NGX resource-parameter fix](technical.md#dlss-under-dxmt-stock-and-patched-builds) — so DXMT trades DLSS for memory. GPTK4 does not affect the DXMT path.
+- **Close background apps.** On this 24 GB machine the launcher's own `Games.exe` (~1 GB) and `PlatformProcess.exe` (~1.16 GB) stayed resident alongside Discord, Apple Music, LM Studio and Safari. Every gigabyte another app holds is a gigabyte the compressor has to juggle; the single most effective zero-risk action is to quit everything you are not using.
+- **Watch for the permanent freeze.** As in [14](14-performance-on-16gb-macs.md#the-memory-pressure-freeze): if swap climbs to several GB with free memory near zero and the picture freezes *while the sound keeps playing*, it is not going to recover — force-quit `Endfield.exe` (progress is saved server-side) and relaunch.
+
+**Diagnosing it live.** These are enough to tell a shader-compile hitch from a memory-reclaim hitch on your own machine:
+
+```bash
+sysctl vm.swapusage                                   # swap used
+memory_pressure | tail -1                             # system-wide free %
+ioreg -r -d 1 -w 0 -c IOAccelerator \
+  | grep -oE '"(Device Utilization %|In use system memory)"=[0-9]+'   # GPU busy / VRAM
+ps -M -p "$(pgrep -f 'Endfield[.]exe' | head -1)"     # per-thread CPU of the game
+sample "$(pgrep -f 'Endfield[.]exe' | head -1)" 5 1   # 5 s of call stacks (look for MTLCompiler / AGXMetal)
+```
 
 ---
 

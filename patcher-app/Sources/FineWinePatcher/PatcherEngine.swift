@@ -734,8 +734,8 @@ final class PatcherEngine: ObservableObject {
     /// codesign's ad-hoc signature bytes differ across macOS/codesign versions, comparing the
     /// signed file directly would report a false mismatch. Stripping the signature makes the
     /// comparison depend only on the actual code. PE modules carry no embedded signature and are
-    /// hashed as-is. Falls back to a plain hash if the signature can't be removed.
-    private nonisolated static func contentHash(_ url: URL) -> Data? {
+    /// hashed as-is.
+    nonisolated static func contentHash(_ url: URL) -> Data? {
         guard let raw = try? Data(contentsOf: url, options: .alwaysMapped) else { return nil }
         guard requiresOwnSignature(url) else {
             return Data(SHA256.hash(data: raw))
@@ -748,11 +748,23 @@ final class PatcherEngine: ObservableObject {
         defer { try? fm.removeItem(at: tmp) }
         do {
             try fm.copyItem(at: url, to: tmp)
-            _ = try? run("/usr/bin/codesign", ["--remove-signature", tmp.path])
+            // Removing a signature does not fully undo signing: codesign records the signature's
+            // allocation in the Mach-O's __LINKEDIT vmsize, and stripping from a CI/Developer-ID
+            // signed payload can leave different header bytes than stripping a locally ad-hoc
+            // signed copy. Re-sign both sides with the local ad-hoc identity first, so the
+            // signature layout (and therefore the stripped bytes) is canonical.
+            guard (try? run("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier",
+                                                   "io.github.stoicswe.FineWinePatcher.content-hash",
+                                                   tmp.path])) != nil else {
+                return nil
+            }
+            guard (try? run("/usr/bin/codesign", ["--remove-signature", tmp.path])) != nil else {
+                return nil
+            }
             let stripped = try Data(contentsOf: tmp, options: .alwaysMapped)
             return Data(SHA256.hash(data: stripped))
         } catch {
-            return Data(SHA256.hash(data: raw))
+            return nil
         }
     }
 
