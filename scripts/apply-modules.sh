@@ -202,14 +202,6 @@ log "Removing bundle seal and quarantine"
 rm -rf "$DEST_APP/Contents/_CodeSignature" "$DEST_APP/Contents/CodeResources"
 xattr -dr com.apple.quarantine "$DEST_APP" 2>/dev/null || true
 
-# A double-clickable "Arknights Endfield.app" that launches the game directly (the Gryphline
-# launcher's Chromium renderer is unusable under Wine — see docs/project-information/15-*).
-if [ "${SKIP_LAUNCHER_APP:-0}" != "1" ]; then
-  log "Creating the double-clickable launcher app"
-  "$REPO/scripts/make-launcher-app.sh" --out-dir "$(dirname "$DEST_APP")" --cx-app "$DEST_APP" --force \
-    || warn "launcher app not created (non-fatal; run scripts/make-launcher-app.sh manually)"
-fi
-
 cat <<EOF
 
 Created $DEST_APP

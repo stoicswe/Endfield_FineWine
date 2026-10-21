@@ -12,8 +12,11 @@
 # Re-pushing to the same branch refreshes the existing release in place. A manual
 # dispatch can publish an explicit version without a branch.
 #
-# When a release is newly created (not refreshed), an optional final step posts a
-# Discord announcement. Two transports, whichever is configured:
+# When a release is newly created (not refreshed), optional final steps post a Bluesky
+# thread and a Discord announcement. Bluesky is configured with BLUESKY_HANDLE (variable),
+# BLUESKY_APP_PASSWORD (secret) and the optional BLUESKY_PDS (variable).
+#
+# Discord has two transports, whichever is configured:
 #   * Discord app/bot (preferred): DISCORD_BOT_TOKEN secret + DISCORD_CHANNEL_ID
 #     variable. Also crossposts when the channel is an Announcement channel.
 #   * Webhook: DISCORD_WEBHOOK_URL secret.
@@ -57,7 +60,14 @@ jobs:
       has_previous: ${{ steps.resolve.outputs.has_previous }}
       commits: ${{ steps.resolve.outputs.commits }}
       changed: ${{ steps.resolve.outputs.changed }}
+      started_epoch: ${{ steps.clock.outputs.started_epoch }}
     steps:
+      # The Bluesky thread reports this pipeline's duration (docs/wiki are separate workflows).
+      - name: Record pipeline start
+        id: clock
+        shell: bash
+        run: echo "started_epoch=$(date -u +%s)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # full history + tags (baseline = previous release tag)
@@ -142,6 +152,10 @@ jobs:
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
       DISCORD_CHANNEL_ID: ${{ vars.DISCORD_CHANNEL_ID }}
+      # Empty when the Bluesky bot is not configured; step-level `if:` can read job env.
+      BLUESKY_HANDLE: ${{ vars.BLUESKY_HANDLE }}
+      BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
+      BLUESKY_PDS: ${{ vars.BLUESKY_PDS }}
     steps:
       - uses: actions/checkout@v7
 
@@ -157,12 +171,6 @@ jobs:
           pattern: 'endfield-wine-modules-cx*'
           path: dl/modules
           merge-multiple: true
-
-      - name: Download launcher app
-        uses: actions/download-artifact@v4
-        with:
-          name: launcher-app
-          path: dl/launcher
 
       # The release version is the source of truth: verify the artifact before publishing.
       - name: Verify the release version in FineWine Patcher.app
@@ -214,9 +222,6 @@ jobs:
           MOD="$(find dl/modules -name '*.tar.gz' | head -n1)"
           [ -n "$MOD" ] || { echo "::error::no modules tarball in the endfield-wine-modules artifact"; exit 1; }
           cp "$MOD" "release/endfield-wine-modules.tar.gz"
-          LAUNCHER="$(find dl/launcher -name '*.zip' | head -n1)"
-          [ -n "$LAUNCHER" ] || { echo "::error::no launcher app zip in the launcher-app artifact"; exit 1; }
-          cp "$LAUNCHER" "release/Arknights.Endfield.app.zip"
           ( cd release && sha256sum ./* > SHA256SUMS.txt && cat SHA256SUMS.txt )
           ls -lh release
 
@@ -262,7 +267,6 @@ jobs:
           fi
           gh release upload "$TAG" \
             release/FineWine.Patcher.app.zip \
-            release/Arknights.Endfield.app.zip \
             release/endfield-wine-modules.tar.gz \
             release/SHA256SUMS.txt --clobber
           gh release edit "$TAG" --title "$TITLE" --latest --notes-file notes.md
@@ -285,6 +289,22 @@ jobs:
           ANNOUNCE_SHA: ${{ github.sha }}
           ANNOUNCE_SUMMARY_PATH: discord.md
         run: python3 .github/scripts/announce-discord-release.py
+
+      - name: Announce on Bluesky
+        # Only for a brand-new release: refreshing an existing tag must not re-post.
+        if: ${{ success() && steps.publish.outputs.created == 'true' && env.BLUESKY_HANDLE != '' && env.BLUESKY_APP_PASSWORD != '' }}
+        shell: bash
+        env:
+          BLUESKY_HANDLE: ${{ vars.BLUESKY_HANDLE }}
+          BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
+          BLUESKY_PDS: ${{ vars.BLUESKY_PDS }}
+          BLUESKY_MAX_POSTS: ${{ vars.BLUESKY_MAX_POSTS }}
+          THREAD_TYPE: Release
+          VERSION: ${{ needs.version.outputs.version }}
+          PIPELINE_STARTED_EPOCH: ${{ needs.version.outputs.started_epoch }}
+          DOWNLOAD_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.version.outputs.tag }}
+          BODY_FILE: notes.md
+        run: python3 .github/scripts/post-bluesky-thread.py
 
       # Issue-form dropdowns cannot be populated at form-render time, and main is protected.
       # After publishing, open/update a generated PR against main so required checks run there.
@@ -338,6 +358,6 @@ jobs:
             echo "|---|---|"
             echo "| Tag | \`$TAG\` |"
             echo "| Version | \`${{ needs.version.outputs.version }}\` |"
-            echo "| Assets | Patcher.app zip · Arknights Endfield.app zip · modules tarball · SHA256SUMS.txt |"
+            echo "| Assets | Patcher.app zip · modules tarball · SHA256SUMS.txt |"
             echo "| URL | ${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG |"
           } >> "$GITHUB_STEP_SUMMARY"

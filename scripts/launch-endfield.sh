@@ -18,7 +18,7 @@
 #   --debugmsg, because CrossOver's wine wrapper overwrites the WINEDEBUG variable itself),
 #   GFXARGS (default "-force-d3d11" — a DIRECT launch bypasses the launcher, so the
 #   launcher's DirectX-11 setting does NOT apply; without this flag Unity defaults to
-#   Vulkan, which is experimental (see docs/graphics-performance.md). Set GFXARGS="" to
+#   Vulkan (see docs/graphics-performance.md). Set GFXARGS="" to
 #   disable, or GFXARGS=-force-vulkan to force Vulkan.)
 #
 # NOTE: the game still updates itself via the launcher. If a game patch ships, run the launcher

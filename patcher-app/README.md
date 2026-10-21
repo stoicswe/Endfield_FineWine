@@ -27,13 +27,6 @@ A minimal macOS app that turns a copy of **CrossOver 26.3** into the patched bui
 5. Verifies the swap (sizes, `ntdll.so` signature, the `lib64` rpath D3DMetal needs, the
    installed GPTK4 files if selected, and the bundle signature).
 6. Moves the patched app into place; an existing copy macOS won't let it delete goes to the Trash.
-7. Creates a **double-clickable `Arknights Endfield.app`** next to it that **opens the Gryphline
-   launcher** through the *direct* wine path. That path stays up where the CrossOver app's bottle
-   *Start* button crashes the launcher's Chromium renderer
-   ([docs/project-information/15](../docs/project-information/15-launcher-qtwebengine-crash.md)).
-   (Direct `Endfield.exe` launching stays in [`scripts/launch-endfield.sh`](../scripts/launch-endfield.sh).)
-   The app is rendered from [`Resources/LauncherTemplate.sh`](Resources/LauncherTemplate.sh) — the same
-   template [`scripts/make-launcher-app.sh`](../scripts/make-launcher-app.sh) uses.
 
 **Apple's Game Porting Toolkit is never bundled or redistributed** (it is evaluation-only
 software). The optional GPTK4 step reads the DMG *you* mounted, under Apple's own license; if
@@ -44,14 +37,50 @@ MoltenVK **is** bundled (it is Apache-2.0), since the game's Vulkan/DXVK/vkd3d p
 **End users need no developer tools** — the `lib64` rpath is baked into the payload at app-build
 time, so at patch time the app only uses `codesign`, `ditto` and `xattr`, which ship with macOS.
 
+## Automated Setup
+
+**Automated Setup…** (next to *Create Patched Copy…*) is the one-click path. It uses the CrossOver
+selected on the main page and:
+
+1. **Creates the patched copy** — `/Applications/CrossOver_Endfield_Patch.app` (falling back to
+   `~/Applications` if `/Applications` isn't writable) with the same module swap, re-seal and
+   verification as "Create Patched Copy…". An existing patched copy is reused; a *Re-create* toggle
+   rebuilds it. The embedded patch is covered by the setup's single statistics question at the end,
+   not a separate one.
+2. **Graphics (optional)** — keep CrossOver's bundled D3DMetal or install **Apple's GPTK4 /
+   D3DMetal 4**. The wizard links to Apple's GPTK page (you download it yourself — it is never
+   bundled), detects a mounted *“Evaluation environment for Windows games …”* DMG, and lets you
+   Rescan / Choose a redist folder. Picking a GPTK on a reused copy re-creates it so the new
+   D3DMetal is installed.
+3. **Installer** — opens the official Endfield download page and asks you to select the
+   `GRYPHLINK_….exe` you downloaded.
+4. **Bottle settings** — every default is editable:
+   * bottle name (default `Arknights Endfield`; existing names and CrossOver's forbidden
+     characters are rejected),
+   * graphics backend (D3DMetal by default, plus DXMT / DXVK / WineD3D / automatic),
+   * MSync on/off (on by default),
+   * the backend's upscaler toggle (MetalFX for D3DMetal, NVEXT for DXMT).
+5. **Create and install** — creates the bottle with the patched app's own `cxbottle`
+   (`win11_64`, the same keys `scripts/create-bottle.sh` writes), starts the installer through the
+   direct `bin/wine --bottle … --cx-app` path, and — when the installer exits — runs
+   `cxmenu --install` so GRYPHLINK appears in the bottle's page.
+
+The wizard writes a log of every command and its output to `~/Library/Logs/FineWinePatcher/`
+(`bottle-…`, `installer-…`, `cxmenu-…`), reachable from the finished screen.
+
+**Order matters.** The wizard creates the bottle with the *patched* app on purpose: CrossOver bakes
+the creating app's bundle identifier into program launchers, so a bottle created by the stock app
+keeps opening the stock app. Delete stubs the stock app created (`~/Applications/CrossOver/…`)
+before re-creating them from the patched copy.
+
 ## Per-run anonymous usage statistics
 
-There is no telemetry checkbox and no persistent reporting setting. When a patch run finishes —
-whether it succeeded or failed — the patcher shows a dialog asking whether you want to send an
-anonymous report for **that run only**. The dialog includes the exact JSON payload, an explanation
-of why it helps, and a list of what is never collected. Nothing is sent automatically; the report
-is posted only if you choose **Send Statistics**. Choosing **Don't Send** closes the dialog without
-contacting the statistics endpoint.
+There is no telemetry checkbox and no persistent reporting setting. When a **patch run** or an
+**Automated Setup run** finishes — whether it succeeded or failed — the patcher shows a dialog
+asking whether you want to send an anonymous report for **that run only**. The dialog includes the
+exact JSON payload, an explanation of why it helps, and a list of what is never collected. Nothing
+is sent automatically; the report is posted only if you choose **Send Statistics**. Choosing
+**Don't Send** closes the dialog without contacting the statistics endpoint.
 
 **Why this helps.** Release download counts cannot tell us whether the patch worked, which macOS
 or CrossOver version failed, or which step breaks most often. These per-run reports let us see
@@ -66,7 +95,33 @@ performance fixes that actually affect players.
 | `event` | `patch_succeeded`, `patch_failed` | Whether the run completed |
 | `appVersion` | `1.2.4` | Correlate problems with a release |
 | `osMajor` | `26` | Find macOS-version-specific breakage |
-| `metadata` | `gptk=true`, `duration_seconds=42`, `failed_step=3` | Diagnose the path and failing step |
+| `metadata` | `gptk=true`, `duration_seconds=42`, `failed_step=3`, `cross_over_build=39832` | Diagnose the path, failing step and the exact CrossOver build |
+| `logs` | *(Automated Setup only)* redacted excerpts | Show what actually failed during bottle creation / the installer |
+
+`cross_over_build` is the source CrossOver's `CFBundleVersion` (for example `39832`). CrossOver
+point builds that all report `26.3` can ship different Wine modules — the reason the patcher has to
+swap `wineserver` as well — so the build number is the field that tells two reports apart. It is a
+software version, not a machine or user identifier.
+
+Automated Setup reports additionally carry `setup_backend`, `setup_msync`, `setup_upscaling` and
+`installer_status` (`started` / `exited:<code>`), plus **redacted excerpts of that run's logs**
+(`~/Library/Logs/FineWinePatcher/bottle-…`, `installer-…`, `cxmenu-…`). Each excerpt is capped
+(4 000 characters per log, 12 000 in total, newest lines kept), and every line passes through a
+redactor *before* the preview is built:
+
+| Redacted | Becomes |
+|---|---|
+| Your home folder, macOS and Windows user names, other users' profiles | `~`, `<user>` |
+| The bottle name (and the bottle path) | `<bottle>` |
+| Host name (including `host.local`) | `<host>` |
+| E-mail addresses | `<email>` |
+| IP and MAC addresses | `<ip>`, `<mac>` |
+| UUIDs, JWTs, `Bearer …` tokens, `token=…`/`password=…` values, long hex blobs | `<uuid>`, `<token>`, `<hash>`, `<redacted>` |
+| Temporary folders, volume names, CrossOver's `Registered to:` line | `<tmp>`, `<volume>`, `<redacted>` |
+
+Redaction is best-effort — automatic filtering cannot catch everything, so the dialog shows the
+**exact** redacted payload and asks you to review it before sending. A patch report never includes
+logs.
 
 The collector is `https://endfield-fine-wine.lovable.app/api/statistics`. The request is a
 best-effort HTTPS POST; there is no retry or offline queue.
@@ -83,9 +138,11 @@ build fails if anything can be sent automatically, if a send action appears outs
 user-confirmed dialog, if the event or metadata allowlist grows, or if the preview/disclosure
 disappears.
 
-**What is never sent.** File paths, bottle names, game or account data, usernames, hardware
-serials, or a persistent identifier. The statistics server can still observe ordinary network
-metadata such as the source IP address, as with any HTTPS request.
+**What is never sent.** Your home folder or user names, the bottle name, the host name, e-mail
+addresses, IP/MAC addresses, UUIDs, tokens and similar identifiers (all replaced with placeholders
+before the preview is built), game or account data, or a persistent identifier. The statistics
+server can still observe ordinary network metadata such as the source IP address, as with any
+HTTPS request.
 
 Download totals remain release-host metrics; actual patch usage is measured only from reports the
 user explicitly chooses to send.

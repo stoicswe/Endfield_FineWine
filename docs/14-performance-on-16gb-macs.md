@@ -51,9 +51,9 @@ What each lever costs on a Mac:
 
 Not measured, but worth trying for sharpness: macOS **Displays → Default** size (1512×982 on a 14"). With High Resolution Mode off, CrossOver renders at the "looks like" resolution; Default maps 2:1 onto the Retina panel, while "More Space" (1800×1169) is stretched 1.68×, which looks soft — and Default is ~30% fewer pixels. Keep **High Resolution Mode off** (white screen, [#2](https://github.com/stoicswe/Endfield_FineWine/issues/2); it would also quadruple the pixel count).
 
-## Vulkan renderer (experimental)
+## Vulkan renderer
 
-Same Mac, 2026-09-24, CrossOver 26.2, launched with `GFXARGS=-force-vulkan scripts/launch-endfield.sh` ([what it needs](graphics-performance.md#experimental-the-vulkan-renderer)). Each column is a few minutes of sampling in the open world, and the settings differed between sessions, so treat it as a rough comparison. The patched MoltenVK from `patches/moltenvk` wasn't measured.
+Same Mac, 2026-09-24, CrossOver 26.2, launched with `GFXARGS=-force-vulkan scripts/launch-endfield.sh` ([what it needs](graphics-performance.md#the-vulkan-renderer)). Each column is a few minutes of sampling in the open world, and the settings differed between sessions, so treat it as a rough comparison. The patched MoltenVK from `patches/moltenvk` wasn't measured.
 
 | | Vulkan, CrossOver's MoltenVK 1.2.10 | Vulkan, stock MoltenVK 1.4.2 | DX11, GPTK 4.0b2 (session 2) |
 |---|---|---|---|

@@ -4,14 +4,17 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject var engine: PatcherEngine
+    @EnvironmentObject var setup: SetupEngine
     @State private var crossover: CrossOverInfo?
     @State private var showLicenses = false
+    @State private var showAutomatedSetup = false
+    @State private var showPatchProgress = false
+    @State private var showPatchTelemetry = false
     @State private var showVersionWarning = false
     @State private var pendingDestination: URL?
     @State private var gptkSources: [GPTKSource] = []
     @State private var selectedGPTK: GPTKSource?
     @State private var gptkAutoSelected = false
-    @State private var createLauncher = true
 
     private let payloadReady = Payload.isComplete
 
@@ -21,29 +24,43 @@ struct ContentView: View {
             crossoverBox
             gptkBox
             if !payloadReady { payloadMissingBox }
-            launcherBox
-            patchButton
-            if !engine.steps.isEmpty { StepsListView(steps: engine.steps) }
-            if let error = engine.errorMessage { ErrorBox(message: error) }
-            if let patched = engine.patchedApp { successBox(patched) }
+            actionButtons
             Divider()
             footer
         }
         .padding(20)
         .frame(width: 460)
         .fixedSize(horizontal: false, vertical: true)
+        .sheet(isPresented: $showPatchProgress, onDismiss: {
+            // Offer the run report once the result window has closed, so the two sheets never
+            // overlap. Nothing is sent unless the user chooses it in this dialog.
+            guard engine.telemetryPrompt != nil else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { showPatchTelemetry = true }
+        }) {
+            PatchProgressView()
+                .environmentObject(engine)
+        }
+        .sheet(isPresented: $showAutomatedSetup) {
+            AutomatedSetupView(source: crossover, gptk: selectedGPTK)
+                .environmentObject(engine)
+                .environmentObject(setup)
+        }
         .sheet(isPresented: $showLicenses) { LicensesView() }
-        .sheet(item: $engine.telemetryPrompt, onDismiss: { engine.telemetryPrompt = nil }) { prompt in
-            PatchTelemetryPromptView(
-                prompt: prompt,
-                onSend: { UsageTelemetry.send(prompt) },
-                onFinished: { engine.telemetryPrompt = nil }
-            )
+        .sheet(isPresented: $showPatchTelemetry, onDismiss: { engine.telemetryPrompt = nil }) {
+            if let prompt = engine.telemetryPrompt {
+                PatchTelemetryPromptView(
+                    prompt: prompt,
+                    onSend: { UsageTelemetry.send(prompt) },
+                    onFinished: { engine.telemetryPrompt = nil }
+                )
+            }
         }
         .confirmationDialog("CrossOver version mismatch", isPresented: $showVersionWarning, titleVisibility: .visible) {
             Button("Patch Anyway", role: .destructive) {
                 if let destination = pendingDestination, let cx = crossover {
-                    engine.patch(source: cx.url, destination: destination, gptk: selectedGPTK, createLauncher: createLauncher)
+                    engine.patch(source: cx.url, destination: destination, gptk: selectedGPTK)
+                    showPatchTelemetry = false
+                    showPatchProgress = true
                 }
                 pendingDestination = nil
             }
@@ -168,10 +185,10 @@ struct ContentView: View {
             Label("No Wine modules found — not a CrossOver app?", systemImage: "xmark.circle.fill")
                 .font(.caption).foregroundStyle(.red)
         } else if cx.isExpectedVersion {
-            Label("Version \(cx.version ?? "?")", systemImage: "checkmark.seal.fill")
+            Label("Version \(cx.displayVersion)", systemImage: "checkmark.seal.fill")
                 .font(.caption).foregroundStyle(.green)
         } else {
-            Label("Version \(cx.version ?? "unknown") — expected \(CrossOverInfo.expectedVersion) (Wine ABI must match)",
+            Label("Version \(cx.displayVersion) — expected \(CrossOverInfo.expectedVersion) (Wine ABI must match)",
                   systemImage: "exclamationmark.triangle.fill")
                 .font(.caption).foregroundStyle(.orange)
         }
@@ -185,55 +202,36 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var launcherBox: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 4) {
-                Toggle("Create a direct launcher app", isOn: $createLauncher)
-                    .disabled(engine.isRunning)
-                Text("Adds a double-clickable “Arknights Endfield.app” next to the patched copy that opens the Gryphline launcher through the direct wine path (the CrossOver GUI's Start button crashes it). Turn this off if you don't want the extra app.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(4)
-        }
-    }
-
-    private var patchButton: some View {
-        Button(action: startPatch) {
-            Text(engine.isRunning ? "Patching…" : "Create Patched Copy…")
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
-        .disabled(!payloadReady || engine.isRunning || crossover?.hasWineModules != true)
-    }
-
-    private func successBox(_ url: URL) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Label("Created \(url.lastPathComponent)", systemImage: "checkmark.seal.fill")
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(.green)
-                    Spacer()
-                    Button("Reveal in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
-                    }
+    private var actionButtons: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Button(action: startPatch) {
+                    Text(engine.isRunning ? "Patching…" : "Create Patched Copy…")
+                        .frame(maxWidth: .infinity)
                 }
-                Text("Important: in the game's launcher settings, set the rendering API to DirectX 11 — Vulkan and DirectX 12 do not work under CrossOver \(CrossOverInfo.expectedVersion). Re-check after game updates.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(!payloadReady || engine.isRunning || crossover?.hasWineModules != true)
+
+                Button {
+                    showAutomatedSetup = true
+                } label: {
+                    Label("Automated Setup…", systemImage: "wand.and.stars")
+                        .frame(maxWidth: .infinity)
+                }
+                .controlSize(.large)
+                .disabled(engine.isRunning || crossover?.hasWineModules != true)
             }
-            .padding(4)
+            Text("Automated Setup creates the patched copy if needed, then the Windows 11 bottle, and starts the Gryphline installer.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Usage statistics are never sent automatically. After each patch run, a dialog shows the exact anonymous report and asks whether to send it.")
+            Text("Usage statistics are never sent automatically. After each patch or Automated Setup run, a dialog shows the exact anonymous report and asks whether to send it.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -291,7 +289,9 @@ struct ContentView: View {
         guard panel.runModal() == .OK, let destination = panel.url else { return }
 
         if cx.isExpectedVersion {
-            engine.patch(source: cx.url, destination: destination, gptk: selectedGPTK, createLauncher: createLauncher)
+            engine.patch(source: cx.url, destination: destination, gptk: selectedGPTK)
+            showPatchTelemetry = false
+            showPatchProgress = true
         } else {
             pendingDestination = destination
             showVersionWarning = true

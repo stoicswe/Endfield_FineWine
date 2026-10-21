@@ -160,7 +160,7 @@ For a stock installation, follow the upstream PR and CrossOver release notes for
 
 ### Other Backend Notes
 
-* **Vulkan (experimental):** Vulkan now renders via MoltenVK when using MoltenVK **1.4.2+** (see [KhronosGroup/MoltenVK#2722](https://github.com/KhronosGroup/MoltenVK/issues/2722)). CrossOver 26.2's bundled MoltenVK 1.2.10 has a swapchain recreation bug that causes a black window after an FPS change — upgrading to 1.4.2 (as `swap-into-crossover.sh` now does by default) resolves this. Treat Vulkan as **experimental**.
+* **Vulkan:** Vulkan renders via MoltenVK when using MoltenVK **1.4.2+** (see [KhronosGroup/MoltenVK#2722](https://github.com/KhronosGroup/MoltenVK/issues/2722)). CrossOver 26.2's bundled MoltenVK 1.2.10 has a swapchain recreation bug that causes a black window after an FPS change — upgrading to 1.4.2 (as `swap-into-crossover.sh` now does by default) resolves this.
 * **DXVK:** Theoretically viable but shader compilation is extremely slow and EFMI injection fails under this path. Not recommended.
 
 ---

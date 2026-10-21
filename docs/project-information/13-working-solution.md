@@ -55,8 +55,8 @@ The custom Wine is built minimal (no graphics libs), so we **surgically swap onl
 
 After the anti-cheat is solved, the remaining day-to-day gotcha is the **graphics renderer**, and game updates make it recur:
 
-- **Endfield must run in DirectX 11 mode.** It defaults to Vulkan/DX12, and under CrossOver 26.3 both fail → **white/blank screen**: DX12 → `vkd3d` errors `Cannot load DXIL conversion library` (its DXIL/SM6 shaders never compile); native Vulkan → MoltenVK also fails. *(Update 2026-09: Vulkan does render with a newer MoltenVK — see [graphics-performance.md](graphics-performance.md#experimental-the-vulkan-renderer).)* **DX11** uses the mature D3DMetal/DXMT path and renders correctly. Set the renderer to **DirectX 11** in the launcher's / in-game graphics settings (persists in the game's prefs / `Software\Gryphline\Endfield`).
-- **A game update can reset the renderer back to Vulkan/DX12** → white screen returns. Re-select DirectX 11. (This is exactly what happened on 2026-07-15.)
+- **Endfield runs on DirectX 11 or Vulkan.** It defaults to Vulkan/DX12. DX12 fails under CrossOver 26.3 → **white/blank screen** (`vkd3d` errors `Cannot load DXIL conversion library`; its DXIL/SM6 shaders never compile). Native Vulkan renders through MoltenVK, and the patched app bundles a patched MoltenVK ([graphics-performance.md](graphics-performance.md#the-vulkan-renderer)). **DX11** uses the mature D3DMetal/DXMT path and is the most-tested choice. Set the renderer in the launcher's / in-game graphics settings (persists in the game's prefs / `Software\Gryphline\Endfield`).
+- **A game update can reset the renderer back to DirectX 12** → white screen returns. Re-select DirectX 11 (or Vulkan). (This is exactly what happened on 2026-07-15.)
 - **Setting the CrossOver backend to D3DMetal (`CX_ACTIVE_GRAPHICS_BACKEND=d3dmetal`) does NOT reroute the game's DX12 off `vkd3d`** — verified. It helps DX11 go to D3DMetal, but it will not save you from the game choosing DX12. The game-side DX11 setting is the fix.
 - **Do NOT "fix" the white screen by overwriting `lib/wine/x86_64-windows/{d3d11,d3d12,dxgi}.dll` with the `apple_gptk` (D3DMetal) copies.** Those are only meant to load through CrossOver's own D3DMetal backend path; dropping them in as the defaults makes `unityplayer.dll` fail to initialize (**Windows error 1114**, "missing or corrupt"). If you did this, restore the defaults from a stock `CrossOver.app` (`lib/wine/x86_64-windows/`).
 - **Launcher vs. direct launch:** the Gryphline launcher sets up the game's working directory (and session); launching `Endfield.exe` directly can hit the same 1114 on `unityplayer.dll`. Prefer the launcher.
@@ -64,13 +64,14 @@ After the anti-cheat is solved, the remaining day-to-day gotcha is the **graphic
 ## The 2026-07-16 regression: ntdll.so rpath → cxcompatdb → no D3DMetal (SOLVED)
 
 After a clean rebuild of the patch app, the game (set to DX11) failed with `d3d11: failed to
-create device and context (80004005)` and fell back to Vulkan, which doesn't render — easily
-misread as "the Vulkan translation broke." The Vulkan fallback was the *symptom*; the DX11
-device-create failure was the disease. Diagnosis chain, for posterity:
+create device and context (80004005)` and fell back to wined3d (which then served D3D11 through its
+Vulkan renderer) — easily misread as "Vulkan is broken". That fallback was the *symptom*; the DX11
+device-create failure was the disease. (The game's own native Vulkan mode is a separate path and
+renders through MoltenVK.) Diagnosis chain, for posterity:
 
 1. `WINEDEBUG=+process` showed `err:winediag:wined3d_adapter_create Using the Vulkan renderer
    for d3d10/11 applications` in the game's process — **wined3d**, not D3DMetal, was serving
-   d3d11, and its experimental Vulkan renderer can't provide the feature levels Unity asks for
+   d3d11, and wined3d's Vulkan renderer can't provide the feature levels Unity asks for
    → `80004005`.
 2. CrossOver applies the bottle's `CX_GRAPHICS_BACKEND=d3dmetal` **per process** via
    `lib/wine/x86_64-unix/cxcompatdb.so`, which stock `ntdll.so` dlopens at process start

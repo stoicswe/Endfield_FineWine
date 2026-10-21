@@ -73,9 +73,6 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/licenses" \
          "$APP/Contents/Resources/payload/lib64"
 cp "$BIN" "$APP/Contents/MacOS/$EXE"
 cp "$HERE/Resources/licenses/"*.txt "$APP/Contents/Resources/licenses/"
-# Template for the double-clickable "Arknights Endfield.app" the patcher generates when it patches
-# CrossOver (launches the game directly, bypassing the broken Gryphline launcher).
-cp "$HERE/Resources/LauncherTemplate.sh" "$APP/Contents/Resources/LauncherTemplate.sh"
 
 ICON_PLIST=""
 if [ -f "$HERE/Resources/AppIcon.icns" ]; then

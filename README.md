@@ -31,12 +31,26 @@ Tested on an Apple **M4 Pro** (MacBook Pro 12-core, 24 GB), macOS 27.0, CrossOve
 
 ## Quick Start
 
+> [!IMPORTANT]
+> **Fresh installs: order matters.** Patch CrossOver **first**, then create the bottle and install
+> the Gryphline launcher **from the patched app**. CrossOver stamps every program launcher it creates
+> with the bundle identifier of the CrossOver that created it, so a bottle or launcher made in the
+> stock app keeps opening the **stock** CrossOver. Delete launchers the stock app created
+> (`~/Applications/CrossOver/…`) and re-create them from the patched copy.
+
 ### Using the Patcher.app
-Use the latest available release patcher found on the [releases page](https://github.com/stoicswe/Endfield_FineWine/releases). Releases (and nightlies) also ship **`Arknights.Endfield.app.zip`** — the double-clickable launcher alias — which you can drop next to the patched app.
+Use the latest available release patcher found on the [releases page](https://github.com/stoicswe/Endfield_FineWine/releases).
+
+**Create Patched Copy…** produces the patched CrossOver on its own (with a progress window).
+**Automated Setup…** does the whole fresh install from the CrossOver selected on the main page: it
+creates the patched copy, optionally installs **Apple's GPTK4 / D3DMetal 4** (with a link to
+Apple's download page — it is never bundled), asks you to download the Gryphline installer, lets
+you review the bottle settings (Windows 11 64-bit, D3DMetal, MetalFX/DLSS, MSync by default),
+creates the bottle in the patched app and starts the installer.
 
 The patcher can also install **Apple's GPTK4 / D3DMetal** if you mount the *"Evaluation environment for Windows games …"* DMG first — it is never bundled or redistributed, only read from the copy you supply.
 
-It also drops a **double-clickable `Arknights Endfield.app`** next to the patched CrossOver that **opens the Gryphline launcher** through the *direct* wine path — that path stays up where the CrossOver GUI's *Start* button crashes the launcher's Chromium renderer ([docs/15](docs/project-information/15-launcher-qtwebengine-crash.md)). Use it to install/update/play. To start the game **directly** (once installed), use `scripts/launch-endfield.sh`.
+Once the game is installed, start it with `scripts/launch-endfield.sh` (or the `wine` command in [docs/installation.md](docs/installation.md#5-run-the-game)); the Gryphline launcher is only needed to install and update the game.
 
 ### Manual Build and Installation
 
@@ -58,7 +72,6 @@ git clone <your-fork-url> Endfield_FineWine && cd Endfield_FineWine
 ./scripts/build-wine.sh all          # 1. build the patched Wine (deps -> fetch -> patch -> configure -> build)
 
 ./scripts/swap-into-crossover.sh     # 2. deploy into a copy of CrossOver -> /Applications/CrossOver_Endfield_Patch.app
-                                     #    …and create a double-clickable "Arknights Endfield.app" launcher
 
 ./scripts/create-bottle.sh           # 3. create the "Arknights Endfield" bottle (Win11 64-bit, D3DMetal + DLSS + MSync)
                                      #    …then install the Gryphline launcher into it via CrossOver's GUI

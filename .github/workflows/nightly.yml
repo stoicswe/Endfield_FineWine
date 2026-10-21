@@ -20,6 +20,8 @@
 #   - The published .app is ad-hoc signed: right-click → Open on first launch.
 #   - LGPL-2.1-or-later: the release notes point at the exact CrossOver source tarball
 #     (the "complete corresponding source" = this repo's patches + that tarball).
+#   - When BLUESKY_HANDLE + BLUESKY_APP_PASSWORD are configured, each NEW snapshot posts a
+#     Bluesky thread (template: Type / Version / Build time / Download; replies = commits).
 
 name: nightly
 
@@ -44,7 +46,14 @@ jobs:
       should_build: ${{ steps.gate.outputs.should_build }}
       base_sha: ${{ steps.gate.outputs.base_sha }}
       commits: ${{ steps.gate.outputs.commits }}
+      started_epoch: ${{ steps.clock.outputs.started_epoch }}
     steps:
+      # The Bluesky thread reports this pipeline's duration (docs/wiki are separate workflows).
+      - name: Record pipeline start
+        id: clock
+        shell: bash
+        run: echo "started_epoch=$(date -u +%s)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # full history + tags (baseline = newest nightly-* tag)
@@ -131,6 +140,10 @@ jobs:
     timeout-minutes: 15
     env:
       CX_VER: "26.3.0"
+      # Empty when the Bluesky bot is not configured; step-level `if:` can read job env.
+      BLUESKY_HANDLE: ${{ vars.BLUESKY_HANDLE }}
+      BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
+      BLUESKY_PDS: ${{ vars.BLUESKY_PDS }}
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -176,7 +189,6 @@ jobs:
           | Asset | What it is |
           |---|---|
           | `finewine-patcher-…zip` | **FineWine Patcher.app** — patches a copy of your CrossOver @@CX_VER@@ with the anti-cheat Wine modules and a patched MoltenVK (open it and follow the UI) |
-          | `finewine-launcher-…zip` | **Arknights Endfield.app** — a double-clickable alias that opens the Gryphline launcher via the direct wine path (the CrossOver GUI's *Start* crashes it — see `docs/project-information/15-…`) |
           | `finewine-wine-modules-…zip` | The three patched Wine modules alone — for `scripts/swap-into-crossover.sh` users |
           | `SHA256SUMS.txt` | SHA-256 checksums of the assets |
 
@@ -210,7 +222,11 @@ jobs:
           print(out)
           PY
 
+          # The Bluesky thread's replies are the commit list.
+          printf '%s\n' "$NOTES_COMMITS" > commits.txt
+
       - name: Publish a new nightly pre-release
+        id: publish
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -227,14 +243,17 @@ jobs:
           TITLE="Endfield FW ${STAMP}"
           echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
           echo "RELEASE_TITLE=$TITLE" >> "$GITHUB_ENV"
+          echo "NIGHTLY_STAMP=$STAMP" >> "$GITHUB_ENV"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             # Same version+date+commit: a re-run of this exact snapshot (failed-job re-run,
             # double dispatch). Refresh it in place rather than colliding with the tag.
+            echo "created=false" >> "$GITHUB_OUTPUT"
             echo "release $TAG already exists (re-run of the same snapshot) -> refreshing assets"
             gh release upload "$TAG" assets/*.zip assets/SHA256SUMS.txt --clobber
             gh release edit "$TAG" --prerelease --title "$TITLE" --notes-file notes.md
           else
+            echo "created=true" >> "$GITHUB_OUTPUT"
             echo "creating release $TAG at $GITHUB_SHA"
             # gh creates the tag at --target when it doesn't exist yet
             gh release create "$TAG" \
@@ -247,6 +266,22 @@ jobs:
 
           gh release view "$TAG" --json name,tagName,isPrerelease,assets --jq '{name, tagName, isPrerelease, assets: [.assets[].name]}'
 
+      - name: Announce on Bluesky
+        # Only for a newly created nightly: re-running the same snapshot must not re-post.
+        if: ${{ success() && steps.publish.outputs.created == 'true' && env.BLUESKY_HANDLE != '' && env.BLUESKY_APP_PASSWORD != '' }}
+        shell: bash
+        env:
+          BLUESKY_HANDLE: ${{ vars.BLUESKY_HANDLE }}
+          BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
+          BLUESKY_PDS: ${{ vars.BLUESKY_PDS }}
+          BLUESKY_MAX_POSTS: ${{ vars.BLUESKY_MAX_POSTS }}
+          THREAD_TYPE: Nightly
+          VERSION: ${{ env.NIGHTLY_STAMP }}
+          PIPELINE_STARTED_EPOCH: ${{ needs.changes.outputs.started_epoch }}
+          DOWNLOAD_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ env.RELEASE_TAG }}
+          BODY_FILE: commits.txt
+        run: python3 .github/scripts/post-bluesky-thread.py
+
       - name: Summary
         shell: bash
         run: |
@@ -258,7 +293,7 @@ jobs:
           | Title | %TITLE% |
           | Tag | %TAG% (pre-release) |
           | Commit | `%SHA%` |
-          | Assets | Patcher.app zip · Arknights Endfield.app zip · modules zip · SHA256SUMS.txt |
+          | Assets | Patcher.app zip · modules zip · SHA256SUMS.txt |
           | URL | %RELEASE_URL% |
           EOT
           sed -i \

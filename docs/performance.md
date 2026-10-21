@@ -98,6 +98,6 @@ Gameplay performance is overwhelmingly **CPU and RAM bound**, not GPU:
 ## Tips to Improve Performance
 
 * Close browsers, Discord, and other heavy background apps before launching.
-* Use `-force-d3d11` launch flag (or select "Launch with DirectX 11" in the Gryphline launcher). Vulkan is experimental and may introduce additional overhead.
+* Use `-force-d3d11` launch flag (or select "Launch with DirectX 11" in the Gryphline launcher). Vulkan is also supported.
 * Set in-game resolution to **1080p** or use the **70–80% render scale** slider to reduce GPU memory pressure if you experience VRAM-induced stutters.
 * Enable **MSync** in the CrossOver bottle settings (already configured by `create-bottle.sh`).

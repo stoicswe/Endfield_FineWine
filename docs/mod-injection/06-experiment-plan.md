@@ -53,8 +53,8 @@ measurable; medium that it is the blocker]`
 ### A3. Sanity: does the game still run after each bottle change?
 
 After every backend/override change, confirm the unmodded game still reaches the login screen and
-renders (the parent docs' known failure is a white screen from DX12/Vulkan, and error 1114 from
-D3D-DLL tampering). Any regression here invalidates the mod test that follows.
+renders (the parent docs' known failure is a white screen from DX12, and error 1114 from D3D-DLL
+tampering). Any regression here invalidates the mod test that follows.
 
 ## Stage B — make the right `d3d11` win (config only)
 

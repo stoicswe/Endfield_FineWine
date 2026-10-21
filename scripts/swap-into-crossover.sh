@@ -204,7 +204,8 @@ codesign --force --sign - "$CXR/CrossOver-Hosted Application/wineserver" 2>/dev/
 # resolves that through the CALLING image's LC_RPATH — i.e. ntdll.so's. CodeWeavers' ntdll
 # carries "@loader_path/../../../lib64"; our minimal build does not. Without it, cxcompatdb
 # silently fails to load, D3DMetal never engages, d3d11 falls back to wined3d and the game
-# dies with device-create error 80004005 (then falls back to Vulkan → broken rendering).
+# dies with device-create error 80004005 (wined3d then tries its own Vulkan renderer → broken
+# rendering; that is not the game's native Vulkan mode).
 NT="$CXR/lib/wine/x86_64-unix/ntdll.so"
 if ! otool -l "$NT" | grep -A2 LC_RPATH | grep -q 'lib64'; then
   install_name_tool -add_rpath "@loader_path/../../../lib64" "$NT" 2>/dev/null
@@ -609,15 +610,7 @@ elif [ "${MOD_CHAIN:-0}" = "1" ]; then
   mod_chain_apply
 fi
 
-# ---------------------------------------------------------------- 8. direct-launch app
-# The Gryphline launcher's Chromium renderer is unusable under Wine (docs/project-information/15-*),
-# so ship a double-clickable app that launches the game directly.
-if [ "$DO_APP_PATCH" = "1" ] && [ "${SKIP_LAUNCHER_APP:-0}" != "1" ]; then
-  log "Creating the double-clickable launcher app"
-  "$REPO/scripts/make-launcher-app.sh" --out-dir "$(dirname "$DEST_APP")" --cx-app "$DEST_APP" --force \
-    || warn "launcher app not created (non-fatal; run scripts/make-launcher-app.sh manually)"
-fi
-
+# ---------------------------------------------------------------- 8. next steps
 cat <<EOF
 
 Done -> $DEST_APP
@@ -626,7 +619,7 @@ Next:
   1. First time only: create the bottle with scripts/create-bottle.sh, then install the Gryphline
      launcher into it and let it download Endfield (README → "Before the first launch").
   2. Start the game from the launcher with the dropdown next to Start → "Launch with DirectX 11".
-     DX12 does NOT work for this game (white screen); Vulkan is experimental, see
+     DX12 does NOT work for this game (white screen); Vulkan is also supported, see
      docs/graphics-performance.md.
   3. See docs/13-working-solution.md for troubleshooting.
 

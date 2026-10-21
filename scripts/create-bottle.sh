@@ -109,6 +109,6 @@ Next:
        "$CXR/bin/wine" --bottle "$BOTTLE" --wait-children ~/Downloads/GRYPHLINK_<version>.exe
      Keep the default install location (C:\\Program Files\\GRYPHLINK).
   2. Log in to the launcher, download the game, and start it with the dropdown next to Start →
-     "Launch with DirectX 11" (DX12 renders a white screen; Vulkan is experimental,
+     "Launch with DirectX 11" (DX12 renders a white screen; Vulkan is also supported,
      see docs/graphics-performance.md).
 EOF

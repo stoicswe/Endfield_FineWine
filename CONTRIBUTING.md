@@ -158,3 +158,34 @@ when neither transport below is configured, so this stays opt-in.
 
 The announcement reuses the same generated summary as the release body; refreshing an existing
 release tag does not re-post it.
+
+### Bluesky announcements (optional)
+
+New full releases and new nightly snapshots are posted as a **Bluesky thread** when the bot is
+configured. The first post is always the same template:
+
+```text
+Type: Release            # or Nightly
+Version: 1.2.6
+Build time: 1h 12m 4s    # workflow start -> publish (docs/wiki are separate workflows)
+
+Download: https://github.com/stoicswe/Endfield_FineWine/releases/tag/1.2.6
+```
+
+The replies carry the generated release description (full releases) or the commit list
+(nightlies), split into <=300-character posts.
+
+Add these under **Settings → Secrets and variables → Actions**:
+
+-   `BLUESKY_HANDLE` — **repository variable**: the bot's handle, e.g.
+    `endfield-finewine.bsky.social`.
+-   `BLUESKY_APP_PASSWORD` — **repository secret**: an *app password* from the account's
+    Settings → App Passwords (never the account password).
+-   `BLUESKY_PDS` — *optional* **repository variable**: PDS base URL. Defaults to
+    `https://bsky.social`; only needed for a custom/self-hosted PDS.
+-   `BLUESKY_MAX_POSTS` — *optional* **repository variable**: maximum thread length including
+    the first post (default `20`). Longer descriptions are cut off with a warning in the log.
+
+The step is skipped when the handle or app password is missing, and only newly created
+releases/nightlies post (refreshing an existing tag does not re-post). Posting is best-effort: a
+Bluesky failure warns in the run log and does not fail the release.

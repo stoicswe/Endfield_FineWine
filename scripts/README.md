@@ -13,7 +13,6 @@ Helper scripts for the capture → build → swap → test loop.
 | `swap-into-crossover.sh` | build | Build `CrossOver_Endfield_Patch.app` from `CrossOver.app`: swap in the 3 patched modules (+ optional GPTK4 D3DMetal; MoltenVK is downloaded unless `SKIP_MVK=1`), re-seal, verify. | ✅ working |
 | `create-bottle.sh` | setup | Create the `Arknights Endfield` bottle (Windows 11 64-bit, D3DMetal + DLSS + MSync), or re-apply those settings with `UPDATE=1`. | ✅ working |
 | `launch-endfield.sh` | play | Launch `Endfield.exe` directly through the patched app (adds `-force-d3d11`); optional Wine logging via `DEBUG=`. | ✅ working |
-| `make-launcher-app.sh` | install | Generate a **double-clickable** `Arknights Endfield.app` that opens the Gryphline launcher (`Launcher.exe`) via the direct `wine --cx-app` path (which stays up where the CrossOver GUI's *Start* crashes it). Default target is the launcher; point it at the game with `--target … --gfxargs -force-d3d11`. Rendered from [`patcher-app/Resources/LauncherTemplate.sh`](../patcher-app/Resources/LauncherTemplate.sh). Created automatically by `apply-modules.sh`, `swap-into-crossover.sh`, and the Patcher app — opt out with `SKIP_LAUNCHER_APP=1`. | ✅ working |
 
 ## The loop
 ```

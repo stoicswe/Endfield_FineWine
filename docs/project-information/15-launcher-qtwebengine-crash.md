@@ -65,17 +65,15 @@ failing Wine syscall.
 
 The crash is specific to the **CrossOver GUI's Start path** (`cxmenu --start …`). The same launcher
 **runs fine started directly** via `wine --bottle … --cx-app "C:/Program Files/GRYPHLINK/Launcher.exe"`
-— verified: that invocation stayed up, while the GUI path died. So the fix is a launch alias that
-uses the direct path.
+— verified: that invocation stayed up, while the GUI path died. So the workaround is to launch
+through the direct path rather than the GUI's Start button.
 
-- **Double-clickable alias:** the installer / Patcher creates **`Arknights Endfield.app`** next to
-  the patched CrossOver (`scripts/make-launcher-app.sh`), which opens the Gryphline launcher via the
-  direct path. Use it to install, update and play.
+- **Direct launcher path:** run `Launcher.exe` through
+  `wine --bottle "Arknights Endfield" --cx-app "C:/Program Files/GRYPHLINK/Launcher.exe"` (the exact
+  command is in [installation.md §5](../installation.md#5-run-the-game)). Use it to install, update
+  and play.
 - **Direct game launch (skip the launcher):** `scripts/launch-endfield.sh` starts `Endfield.exe`
   with `-force-d3d11` once the game is installed (the game has its own login UI).
-
-To point the alias at the game instead of the launcher:
-`scripts/make-launcher-app.sh --target "C:/Program Files/GRYPHLINK/games/Arknights Endfield/Endfield.exe" --gfxargs -force-d3d11`.
 
 ## Evidence
 
