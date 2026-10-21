@@ -26,6 +26,7 @@ body:
       description: What full release of the FineWine Patcher does this request apply to? Nightly builds are not selectable here.
       options:
         - Unselected — choose your FineWine Patcher version
+        - 1.2.5
         - 1.2.4
         - 1.2.3
         - 1.2.2
