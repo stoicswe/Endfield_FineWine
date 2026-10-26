@@ -140,6 +140,7 @@ To capture a debug log, run `DEBUG=light ./scripts/launch-endfield.sh` (Wine err
 
 ## See also
 
+- [notproton.md](notproton.md) — running Arknights: Endfield through Steam with NotProton.
 - [graphics-performance.md](graphics-performance.md) — graphics backends and the optional GPTK4 upgrade.
 - [troubleshooting.md](troubleshooting.md) — when something goes wrong.
 - [14-performance-on-16gb-macs.md](14-performance-on-16gb-macs.md) — memory-constrained Macs.

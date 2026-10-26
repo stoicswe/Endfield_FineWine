@@ -232,6 +232,17 @@ Endfield via XXMI and check `d3d11_log.txt` for *"Proxy loading active, Forcing
 load_library_redirect=0"*. Note that XXMI rewrites `d3dx.ini` when it updates EFMI
 (`overwrite_ini=True`), so re-run the phase (or disable that option in XXMI) after an update.
 
+## Steam / NotProton — optional tools phase
+
+Under the menu bar **Tools → Steam / NotProton…**, the patcher provides an automated 1-click integration with [NotProton](https://github.com/NotProtonNot/NotProton) and Steam Play:
+
+- **Runner registration**: Stages your FineWine-patched CrossOver into NotProton's runners directory (`~/Library/Application Support/notproton/runners/crossover-finewine-26.3/CrossOver`).
+- **Steam Compatibility Tool**: Automatically writes the Steam compatibility tool manifest and launch bridge to `~/Library/Application Support/Steam/compatibilitytools.d/notproton-finewine-rosetta/`.
+- **Optimal Defaults**: Writes `CX_GRAPHICS_BACKEND=d3dmetal`, `D3DM_ENABLE_METALFX=1`, `WINEMSYNC=1`, and `ROSETTA_ADVERTISE_AVX=1`.
+- **One-click unregister**: Removes the tool entry and runner cleanly if you wish to revert.
+
+CLI equivalent: [`scripts/notproton-register.sh`](../scripts/notproton-register.sh). Full guide: [docs/notproton.md](../docs/notproton.md).
+
 ## Building the app
 
 Requires the Xcode Command Line Tools only (no Xcode):

@@ -452,6 +452,92 @@ final class PatcherEngine: ObservableObject {
         }
     }
 
+    // MARK: - Steam / NotProton (optional Tools phase)
+
+    @Published private(set) var notProtonSteps: [Step] = []
+    @Published private(set) var notProtonIsRunning = false
+    @Published var notProtonError: String?
+
+    private static let notProtonRegisterLabels = [
+        "Preparing directories",
+        "Staging runner into NotProton",
+        "Configuring Steam compatibility tool manifests",
+        "Applying Endfield graphics defaults",
+    ]
+
+    private static let notProtonUnregisterLabels = [
+        "Removing Steam compatibility tool entry",
+        "Removing NotProton runner",
+    ]
+
+    func registerNotProton(app: URL) {
+        guard !isRunning, !notProtonIsRunning else { return }
+        notProtonSteps = []
+        notProtonError = nil
+        notProtonIsRunning = true
+        notProtonSteps = Self.notProtonRegisterLabels.enumerated().map { Step(id: $0.offset, label: $0.element) }
+
+        Task.detached(priority: .userInitiated) {
+            func begin(_ index: Int) async {
+                await MainActor.run { self.notProtonSteps[index].status = .running }
+            }
+            func finish(_ index: Int) async {
+                await MainActor.run { self.notProtonSteps[index].status = .done }
+            }
+            do {
+                await begin(0)
+                try await Task.sleep(nanoseconds: 50_000_000)
+                await finish(0)
+
+                await begin(1)
+                try NotProton.register(patchedApp: app)
+                await finish(1)
+
+                await begin(2)
+                await finish(2)
+
+                await begin(3)
+                await finish(3)
+
+                await MainActor.run {
+                    self.notProtonIsRunning = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.notProtonSteps[1].status = .failed
+                    self.notProtonError = error.localizedDescription
+                    self.notProtonIsRunning = false
+                }
+            }
+        }
+    }
+
+    func unregisterNotProton() {
+        guard !isRunning, !notProtonIsRunning else { return }
+        notProtonSteps = []
+        notProtonError = nil
+        notProtonIsRunning = true
+        notProtonSteps = Self.notProtonUnregisterLabels.enumerated().map { Step(id: $0.offset, label: $0.element) }
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                await MainActor.run { self.notProtonSteps[0].status = .running }
+                try NotProton.unregister()
+                await MainActor.run {
+                    self.notProtonSteps[0].status = .done
+                    self.notProtonSteps[1].status = .done
+                    self.notProtonIsRunning = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.notProtonSteps[0].status = .failed
+                    self.notProtonError = error.localizedDescription
+                    self.notProtonIsRunning = false
+                }
+            }
+        }
+    }
+
     func applyMetalHUD(plan: MetalHUD.Plan) {
         guard !isRunning, !hudIsRunning else { return }
         hudError = nil

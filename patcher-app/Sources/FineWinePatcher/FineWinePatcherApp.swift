@@ -26,6 +26,11 @@ struct FineWinePatcherApp: App {
         }
         .windowResizability(.contentSize)
 
+        Window("Steam / NotProton", id: "notproton") {
+            NotProtonView()
+        }
+        .windowResizability(.contentSize)
+        
         Window("Metal HUD", id: "metal-hud") {
             MetalHUDView()
                 .environmentObject(engine)
@@ -34,6 +39,7 @@ struct FineWinePatcherApp: App {
     }
 }
 
+/// The app's menu bar. Tools menu items open mod-chain and Steam Play / NotProton windows.
 /// The app's menu bar. Tools items open the mod-chain and Metal HUD windows.
 struct PatcherCommands: Commands {
     @Environment(\.openWindow) private var openWindow
@@ -43,6 +49,9 @@ struct PatcherCommands: Commands {
         CommandMenu("Tools") {
             Button("Mod Framework (EFMI)…") {
                 openWindow(id: "mod-framework")
+            }
+            Button("Steam / NotProton…") {
+                openWindow(id: "notproton")
             }
             Button("Metal HUD…") {
                 openWindow(id: "metal-hud")
