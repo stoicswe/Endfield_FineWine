@@ -36,6 +36,12 @@ struct FineWinePatcherApp: App {
                 .environmentObject(engine)
         }
         .windowResizability(.contentSize)
+
+        Window("Bottle Settings", id: "bottle-settings") {
+            BottleSettingsView()
+                .environmentObject(engine)
+        }
+        .windowResizability(.contentSize)
     }
 }
 
@@ -47,6 +53,9 @@ struct PatcherCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .newItem) {}
         CommandMenu("Tools") {
+            Button("Bottle Settings…") {
+                openWindow(id: "bottle-settings")
+            }
             Button("Mod Framework (EFMI)…") {
                 openWindow(id: "mod-framework")
             }
