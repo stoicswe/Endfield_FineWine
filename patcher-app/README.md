@@ -153,6 +153,14 @@ user explicitly chooses to send.
 
 The patcher includes optional bottle-side utilities accessible from the menu bar under **Tools**:
 
+### Bottle Settings & App Alias
+
+**Tools → Bottle Settings…** allows configuring bottle-wide settings without editing `cxbottle.conf` manually:
+
+- **Graphics & Performance**: Set the active graphics backend (D3DMetal, DXMT, DXVK, WineD3D, or Auto), toggle MSync (`WINEMSYNC`), toggle backend upscaling (MetalFX / NVEXT), toggle Apple's Metal Performance HUD overlay (`MTL_HUD_ENABLED`), and set frame rate limits (`D3DM_MAX_FPS`).
+- **Clean App Alias (Dock Shortcut)**: Creates an `Arknights Endfield.app` shortcut in `~/Applications` that starts Gryphline's launcher through the patched CrossOver. Wine sub-processes share the alias's Dock tile, eliminating duplicate Dock icons, and a cleanup handler cleanly terminates Wine processes (`wineserver -k`) on exit.
+- **GPTK In-Place Upgrade**: Upgrades Apple's Game Porting Toolkit / D3DMetal inside an already-patched CrossOver without re-running the full copy and patch workflow.
+
 ### Metal HUD & Performance Overlay
 
 **Tools → Metal HUD…** writes Apple's `MTL_HUD_ENABLED=1` into the selected bottle's

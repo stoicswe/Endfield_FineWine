@@ -605,6 +605,67 @@ final class PatcherEngine: ObservableObject {
     }
 
 
+    // MARK: - GPTK Upgrade In Place
+
+    @Published private(set) var gptkUpgradeSteps: [Step] = []
+    @Published private(set) var gptkUpgradeIsRunning = false
+    @Published var gptkUpgradeError: String?
+
+    private static let gptkUpgradeLabels = [
+        "Installing GPTK / D3DMetal",
+        "Re-sealing the bundle",
+        "Verifying",
+    ]
+
+    /// Replaces the D3DMetal in an already-patched CrossOver with a different GPTK version,
+    /// without re-running the full copy+patch pipeline.
+    func upgradeGPTK(in patchedApp: URL, from gptk: GPTKSource) {
+        guard !isRunning, !gptkUpgradeIsRunning else { return }
+        gptkUpgradeError = nil
+        gptkUpgradeIsRunning = true
+        gptkUpgradeSteps = Self.gptkUpgradeLabels.enumerated().map { Step(id: $0.offset, label: $0.element) }
+
+        Task.detached(priority: .userInitiated) {
+            var current = 0
+            func begin(_ index: Int) async {
+                current = index
+                await MainActor.run { self.gptkUpgradeSteps[index].status = .running }
+            }
+            func finish(_ index: Int) async {
+                await MainActor.run { self.gptkUpgradeSteps[index].status = .done }
+            }
+            do {
+                await begin(0)
+                try Self.installGPTK(into: patchedApp, from: gptk.url)
+                await finish(0)
+
+                await begin(1)
+                try Self.resealBundle(patchedApp)
+                await finish(1)
+
+                await begin(2)
+                // Verify only the GPTK half — the Wine modules haven't changed.
+                guard let payloadDir = Payload.directory else {
+                    throw PatchError("Payload directory not available for verification.")
+                }
+                try Self.verify(patchedApp, payloadDir: payloadDir, gptk: gptk)
+                await finish(2)
+
+                await MainActor.run {
+                    self.patchedApp = patchedApp
+                    self.gptkUpgradeIsRunning = false
+                }
+            } catch {
+                let failed = current
+                await MainActor.run {
+                    self.gptkUpgradeSteps[failed].status = .failed
+                    self.gptkUpgradeError = error.localizedDescription
+                    self.gptkUpgradeIsRunning = false
+                }
+            }
+        }
+    }
+
     nonisolated static let originalBundleIdentifier = "com.codeweavers.CrossOver"
     nonisolated static var patchedBundleIdentifier: String {
         if let env = ProcessInfo.processInfo.environment["BUNDLE_ID"], env.count == originalBundleIdentifier.count {

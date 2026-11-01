@@ -8,7 +8,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "FineWinePatcher",
-            path: "Sources/FineWinePatcher"
+            path: "Sources/FineWinePatcher",
+            resources: [
+                .process("Resources")
+            ]
         ),
         .testTarget(
             name: "FineWinePatcherTests",
