@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: FineWine
+Subject: [PATCH] ntoskrnl: Add a stub for KeCapturePersistentThreadState.
+
+The x64 series carries this as em-backports/0016, but its context differs here.
+---
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -2021,6 +2021,13 @@
+     return NULL;
+ }
+ 
++ULONG WINAPI KeCapturePersistentThreadState( CONTEXT *context, ULONG code, ULONG_PTR p1, ULONG_PTR p2,
++                                             ULONG_PTR p3, ULONG_PTR p4, ULONG_PTR p5, void *page )
++{
++    FIXME( "%p, %#lx: stub\n", context, code );
++    return 0;
++}
++
+ /* Called by ACE-CORE's ARM64 drivers. These fail cleanly, because a spec stub aborts the driver host. */
+ PDEVICE_OBJECT WINAPI IoGetBaseFileSystemDeviceObject( FILE_OBJECT *file )
+ {
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -550,7 +550,7 @@
+ @ stdcall KeBugCheck(long)
+ @ stdcall KeBugCheckEx(long long long long long)
+ @ stdcall KeCancelTimer(ptr)
+-@ stub KeCapturePersistentThreadState
++@ stdcall KeCapturePersistentThreadState(ptr long long long long long long ptr)
+ @ stdcall KeClearEvent(ptr)
+ @ stub KeConnectInterrupt
+ @ stub KeDcacheFlushCount

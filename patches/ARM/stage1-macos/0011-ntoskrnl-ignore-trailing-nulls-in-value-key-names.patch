@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: FineWine
+Subject: [PATCH] ntoskrnl: Ignore trailing nulls in value key names.
+
+ACE-CORE's ARM64 drivers pass value names that keep trailing nulls, which
+the server treats as different names.
+---
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -4702,8 +4702,43 @@
+     RtlInitUnicodeString( drv_name, str );
+     return TRUE;
+ }
++
++/* Windows ignores trailing nulls in a value name. ACE-CORE's ARM64 drivers rely on that. */
++static UNICODE_STRING trim_value_name( const UNICODE_STRING *name )
++{
++    UNICODE_STRING trimmed = *name;
+ 
++    while (trimmed.Length && !trimmed.Buffer[trimmed.Length / sizeof(WCHAR) - 1])
++        trimmed.Length -= sizeof(WCHAR);
++    return trimmed;
++}
++
++
+ /***********************************************************************
++ *           ZwQueryValueKey (NTOSKRNL.EXE.@)
++ */
++NTSTATUS WINAPI ZwQueryValueKey( HANDLE key, const UNICODE_STRING *name, KEY_VALUE_INFORMATION_CLASS class,
++                                 void *info, DWORD length, DWORD *result_length )
++{
++    UNICODE_STRING trimmed = trim_value_name( name );
++
++    return NtQueryValueKey( key, &trimmed, class, info, length, result_length );
++}
++
++
++/***********************************************************************
++ *           ZwSetValueKey (NTOSKRNL.EXE.@)
++ */
++NTSTATUS WINAPI ZwSetValueKey( HANDLE key, const UNICODE_STRING *name, ULONG index, ULONG type,
++                               const void *data, ULONG size )
++{
++    UNICODE_STRING trimmed = trim_value_name( name );
++
++    return NtSetValueKey( key, &trimmed, index, type, data, size );
++}
++
++
++/***********************************************************************
+  *           ZwLoadDriver (NTOSKRNL.EXE.@)
+  */
+ NTSTATUS WINAPI ZwLoadDriver( const UNICODE_STRING *service_name )
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -1506,7 +1506,7 @@
+ @ stdcall -private ZwQuerySystemInformation(long ptr long ptr) NtQuerySystemInformation
+ @ stdcall -private ZwQuerySystemInformationEx(long ptr long ptr long ptr) NtQuerySystemInformationEx
+ @ stdcall -private ZwQueryTimerResolution(ptr ptr ptr) NtQueryTimerResolution
+-@ stdcall ZwQueryValueKey(long ptr long ptr long ptr) NtQueryValueKey
++@ stdcall ZwQueryValueKey(long ptr long ptr long ptr)
+ @ stdcall -private ZwQueryVirtualMemory(long ptr long ptr long ptr) NtQueryVirtualMemory
+ @ stdcall -private ZwQueryVolumeInformationFile(long ptr ptr long long) NtQueryVolumeInformationFile
+ @ stdcall -private ZwReadFile(long long ptr ptr ptr ptr long ptr ptr) NtReadFile
+@@ -1542,7 +1542,7 @@
+ @ stdcall -private ZwSetSystemTime(ptr ptr) NtSetSystemTime
+ @ stdcall -private ZwSetTimer(long ptr ptr ptr long long ptr) NtSetTimer
+ @ stdcall -private ZwSetTimerResolution(long long ptr) NtSetTimerResolution
+-@ stdcall -private ZwSetValueKey(long ptr long long ptr long) NtSetValueKey
++@ stdcall -private ZwSetValueKey(long ptr long long ptr long)
+ @ stdcall -private ZwSetVolumeInformationFile(long ptr ptr long long) NtSetVolumeInformationFile
+ @ stdcall -private ZwTerminateJobObject(long long) NtTerminateJobObject
+ @ stdcall -private ZwTerminateProcess(long long) NtTerminateProcess
