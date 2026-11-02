@@ -28,6 +28,7 @@ enum AppAlias {
         var bottlePath: String? = nil          // absolute path to bottle dir (external SSD)
         var lnkName: String = "Arknights+Endfield.lnk"   // filename inside cxmenu Desktop dir
         var environment: [String: String] = [:]           // LSEnvironment extras (HUD, FPS, etc.)
+        var patchedAppBundleID: String = patchedBundleID  // the patched CrossOver this alias opens
     }
 
     // MARK: - Presets
@@ -74,8 +75,30 @@ enum AppAlias {
         return nil
     }
 
+    /// The patched CrossOver a bottle belongs to. An `arm64` bottle only runs on the ARM copy.
+    static func patchedBundleID(forBottle bottleURL: URL) -> String {
+        let conf = bottleURL.appendingPathComponent("cxbottle.conf")
+        let text = (try? String(contentsOf: conf, encoding: .utf8)) ?? ""
+        let isArm = text.components(separatedBy: .newlines).contains {
+            $0.contains("\"WineArch\"") && $0.contains("\"arm64\"")
+        }
+        return isArm ? CrossOverVariant.arm.patchedBundleIdentifier : CrossOverVariant.x64.patchedBundleIdentifier
+    }
+
+    /// Finds a Menu Helper binary in `app`, skipping one built for another patched CrossOver:
+    /// a helper opens the app whose ID it hardcodes, so that alias would open the wrong copy.
+    private static func menuHelper(in app: URL, patchedBundleID: String) -> URL? {
+        let otherIDs = CrossOverVariant.allCases.map(\.patchedBundleIdentifier).filter { $0 != patchedBundleID }
+        for name in ["Menu Helper", "Menu Helper arm64"] {
+            let binary = app.appendingPathComponent("Contents/MacOS/\(name)")
+            guard let data = try? Data(contentsOf: binary, options: .alwaysMapped) else { continue }
+            if !otherIDs.contains(where: { data.range(of: Data(($0 + "\0").utf8)) != nil }) { return binary }
+        }
+        return nil
+    }
+
     /// Finds the Menu Helper binary from an existing CrossOver-generated shortcut app.
-    static func menuHelperBinary() -> URL? {
+    static func menuHelperBinary(patchedBundleID: String = AppAlias.patchedBundleID) -> URL? {
         let fm = FileManager.default
         let searchDirs = [
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/CrossOver"),
@@ -83,16 +106,14 @@ enum AppAlias {
         for dir in searchDirs {
             guard let apps = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { continue }
             for app in apps where app.pathExtension == "app" {
-                let binary = app.appendingPathComponent("Contents/MacOS/Menu Helper")
-                if fm.fileExists(atPath: binary.path) { return binary }
+                if let binary = menuHelper(in: app, patchedBundleID: patchedBundleID) { return binary }
             }
             // Also look one level deeper (e.g. ~/Applications/CrossOver/GRYPHLINK/*.app)
             for subdir in (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [] {
                 guard (try? subdir.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { continue }
                 guard let apps2 = try? fm.contentsOfDirectory(at: subdir, includingPropertiesForKeys: nil) else { continue }
                 for app in apps2 where app.pathExtension == "app" {
-                    let binary = app.appendingPathComponent("Contents/MacOS/Menu Helper")
-                    if fm.fileExists(atPath: binary.path) { return binary }
+                    if let binary = menuHelper(in: app, patchedBundleID: patchedBundleID) { return binary }
                 }
             }
         }
@@ -236,8 +257,11 @@ enum AppAlias {
             return fm.fileExists(atPath: standard.path) ? standard : nil
         }()
 
+        var config = config
+        if let bottleURL { config.patchedAppBundleID = patchedBundleID(forBottle: bottleURL) }
+
         // 1. Menu Helper binary
-        let helperBinary = menuHelperBinary()
+        let helperBinary = menuHelperBinary(patchedBundleID: config.patchedAppBundleID)
         if let helperBinary {
             let dest = macOS.appendingPathComponent(config.appName)
             try fm.copyItem(at: helperBinary, to: dest)
@@ -386,7 +410,7 @@ enum AppAlias {
             "NSPrincipalClass": "CXFBHelperApp",
             "NSRequiresAquaSystemAppearance": "NO",
             "NSUpdateSecurityPolicy": [
-                "AllowProcesses": ["9C6B7X7Z8E": [patchedBundleID]],
+                "AllowProcesses": ["9C6B7X7Z8E": [config.patchedAppBundleID]],
             ],
             "UTImportedTypeDeclarations": [[
                 "UTTypeIdentifier": "com.codeweavers.CrossOverHelper.MenuDummyType",

@@ -122,7 +122,7 @@ cmd_build() {
     sh -c 'cd "$1" || exit 1; shift
            exec xcodebuild build -project MoltenVKPackaging.xcodeproj \
                 -scheme "MoltenVK Package (macOS only)" \
-                -destination generic/platform=macOS ARCHS="$2"' \
+                -destination generic/platform=macOS ARCHS="$1"' \
     ui_sh "$MVK_SRC" "$MVK_ARCH" \
     || { echo "MoltenVK build failed — see $BUILD_DIR/moltenvk-build.log"; exit 1; }
   ui_learn "$BUILD_DIR/.ui-mvk-build-lines" "$(wc -l < "$BUILD_DIR/moltenvk-build.log" | tr -d ' ')"

@@ -64,6 +64,30 @@ final class VariantTests: XCTestCase {
         XCTAssertNotEqual(CrossOverVariant.x64.patchedAppName, CrossOverVariant.arm.patchedAppName)
     }
 
+    func testPatchedBundleIdentifiersRouteShortcutsToTheRightCopy() {
+        let original = PatcherEngine.originalBundleIdentifier
+        let x64 = CrossOverVariant.x64.patchedBundleIdentifier
+        let arm = CrossOverVariant.arm.patchedBundleIdentifier
+        XCTAssertNotEqual(x64, arm)
+        XCTAssertTrue(arm.hasSuffix(".ARM"))
+        // The helpers hardcode the ID in a fixed-size slot, so any other length corrupts them.
+        XCTAssertEqual(x64.utf8.count, original.utf8.count)
+        XCTAssertEqual(arm.utf8.count, original.utf8.count)
+    }
+
+    func testAliasFollowsTheBottleArchitecture() throws {
+        let write = { (name: String, conf: String) throws -> URL in
+            let bottle = self.tempDir.appendingPathComponent(name, isDirectory: true)
+            try FileManager.default.createDirectory(at: bottle, withIntermediateDirectories: true)
+            try conf.write(to: bottle.appendingPathComponent("cxbottle.conf"), atomically: true, encoding: .utf8)
+            return bottle
+        }
+        XCTAssertEqual(AppAlias.patchedBundleID(forBottle: try write("arm", "\"WineArch\" = \"arm64\"\n")),
+                       CrossOverVariant.arm.patchedBundleIdentifier)
+        XCTAssertEqual(AppAlias.patchedBundleID(forBottle: try write("x64", "\"WineArch\" = \"win64\"\n")),
+                       CrossOverVariant.x64.patchedBundleIdentifier)
+    }
+
     func testD3DMetalIsOfferedOnlyOnX64() {
         XCTAssertTrue(BottleBackend.available(for: .x64).contains(.d3dmetal))
         XCTAssertFalse(BottleBackend.available(for: .arm).contains(.d3dmetal))

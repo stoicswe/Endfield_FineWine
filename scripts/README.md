@@ -12,6 +12,7 @@ Helper scripts for the capture → build → swap → test loop.
 | `apply-modules.sh` | install | Install the packaged Wine modules **and** MoltenVK into a copy of CrossOver (`CrossOver_Endfield_Patch.app`). | ✅ working |
 | `swap-into-crossover.sh` | build | Build `CrossOver_Endfield_Patch.app` from `CrossOver.app`: swap in the 3 patched modules (+ optional GPTK4 D3DMetal; MoltenVK is downloaded unless `SKIP_MVK=1`), re-seal, verify. | ✅ working |
 | `create-bottle.sh` | setup | Create the `Arknights Endfield` bottle (Windows 11 64-bit, D3DMetal + DLSS + MSync), or re-apply those settings with `UPDATE=1`. | ✅ working |
+| `build-local.sh` | build | Build the complete `FineWine Patcher.app` for local testing: x64 Wine and MoltenVK, an ARM payload (`ARM_MODE=stock`, `source` or `skip`), then verify it. | ✅ working |
 | `launch-endfield.sh` | play | Launch `Endfield.exe` directly through the patched app (adds `-force-d3d11`); optional Wine logging via `DEBUG=`. Kept for reference: direct launches are not a supported way to use FineWine and can stop at a black window on recent game builds. | ⚠️ unsupported |
 | `notproton-register.sh` | steam | Register the FineWine-patched CrossOver as a NotProton runner for Steam Play on macOS. See [../docs/notproton.md](../docs/notproton.md). | ✅ working |
 

@@ -97,6 +97,16 @@ enum CrossOverVariant: String, CaseIterable, Sendable {
         }
     }
 
+    /// Bundle identifier of this variant's patched copy. Shortcuts find their app by this ID, so
+    /// each variant needs its own or shortcuts could open the wrong copy. The helpers hardcode the
+    /// ID in a fixed-size slot, so it must stay the same length as CrossOver's own.
+    var patchedBundleIdentifier: String {
+        switch self {
+        case .x64: return PatcherEngine.patchedBundleIdentifier
+        case .arm: return "com.codeweavers.CrsEF.ARM"
+        }
+    }
+
     /// Modules this variant swaps, in install order. `crossoverSubpath` is relative to
     /// `Contents/SharedSupport/CrossOver/`; `payloadSubpath` is relative to the variant's payload
     /// directory (see `Payload.directory(for:)`).
@@ -911,7 +921,7 @@ final class PatcherEngine: ObservableObject {
                 }
 
                 await begin(index)
-                try Self.patchBundleIdentifier(in: app)
+                try Self.patchBundleIdentifier(in: app, variant: variant)
                 await finish(index); index += 1
 
                 await begin(index)
@@ -1227,8 +1237,8 @@ final class PatcherEngine: ObservableObject {
         guard let plistData = try? Data(contentsOf: infoPlist),
               let plist = (try? PropertyListSerialization.propertyList(from: plistData, format: nil)) as? [String: Any],
               let bid = plist["CFBundleIdentifier"] as? String,
-              bid == patchedBundleIdentifier else {
-            throw PatchError("The patched app's CFBundleIdentifier was not set to \(patchedBundleIdentifier).")
+              bid == variant.patchedBundleIdentifier else {
+            throw PatchError("The patched app's CFBundleIdentifier was not set to \(variant.patchedBundleIdentifier).")
         }
 
         // The whole bundle must verify, or macOS reports it as damaged and kills its binaries.
@@ -1239,11 +1249,13 @@ final class PatcherEngine: ObservableObject {
         }
     }
 
-    /// Patches the app's CFBundleIdentifier in Info.plist to `com.codeweavers.CrossOvEF`
-    /// and patches the seed launcher templates (`Contents/Resources/Menu Helper.cpbz2`
-    /// and `Bottle Helper.cpbz2`) so that launcher app bundles created by this patched
-    /// CrossOver will reference its bundle ID and always launch with the patched version.
-    private nonisolated static func patchBundleIdentifier(in app: URL) throws {
+    /// Patches the app's CFBundleIdentifier in Info.plist to the variant's patched ID and
+    /// patches the seed launcher templates (`Contents/Resources/Menu Helper.cpbz2`, `Bottle
+    /// Helper.cpbz2` and, on CrossOver ARM, `Menu Helper arm64.cpbz2`) so that launcher app
+    /// bundles created by this patched CrossOver reference its bundle ID and always launch
+    /// with the patched version.
+    private nonisolated static func patchBundleIdentifier(in app: URL, variant: CrossOverVariant) throws {
+        let patchedBundleIdentifier = variant.patchedBundleIdentifier
         let fm = FileManager.default
         let infoPlist = app.appendingPathComponent("Contents/Info.plist")
         guard fm.fileExists(atPath: infoPlist.path) else {
@@ -1258,7 +1270,7 @@ final class PatcherEngine: ObservableObject {
         try newData.write(to: infoPlist, options: .atomic)
 
         let resDir = app.appendingPathComponent("Contents/Resources", isDirectory: true)
-        let helpers = ["Menu Helper", "Bottle Helper"]
+        let helpers = ["Menu Helper", "Menu Helper arm64", "Bottle Helper"]
         for helper in helpers {
             let cpbz2 = resDir.appendingPathComponent("\(helper).cpbz2")
             guard fm.fileExists(atPath: cpbz2.path) else { continue }

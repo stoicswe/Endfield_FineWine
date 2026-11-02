@@ -63,7 +63,10 @@ Windows code inside native processes. So for an ARM source the patcher:
 - skips the Rosetta 2 step when patching and in the Automated Setup preflight,
 - creates `arm64` bottles,
 - hides GPTK and D3DMetal, which are x86_64-only even in CrossOver ARM (DXMT is the default),
-- names the copy `CrossOver_Endfield_Patch_ARM.app`, and only reuses a copy of the same variant.
+- names the copy `CrossOver_Endfield_Patch_ARM.app`, and only reuses a copy of the same variant,
+- gives it the bundle ID `com.codeweavers.CrsEF.ARM`, so shortcuts open the right copy when both
+  variants are installed. CrossOver's helpers hardcode the ID in a fixed-size slot, so it has to
+  stay 25 characters, which rules out `com.codeweavers.CrossOvEF.ARM`.
 
 A bottle created any other way runs CrossOver's unpatched x86_64 tree, and the ARM payload never
 loads.

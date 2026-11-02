@@ -135,7 +135,8 @@ enum SetupValidation {
         let plist = app.appendingPathComponent("Contents/Info.plist")
         guard let data = try? Data(contentsOf: plist),
               let parsed = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              parsed["CFBundleIdentifier"] as? String == PatcherEngine.patchedBundleIdentifier
+              let identifier = parsed["CFBundleIdentifier"] as? String,
+              CrossOverVariant.allCases.contains(where: { $0.patchedBundleIdentifier == identifier })
         else { return false }
         return FileManager.default.isExecutableFile(
             atPath: app.appendingPathComponent("Contents/SharedSupport/CrossOver/bin/wine").path)
