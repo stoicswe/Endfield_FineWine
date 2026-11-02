@@ -27,6 +27,10 @@ enum Payload {
         // Rosetta NOP + privileged-instruction fixes, NtDelayExecution QPC timing
         PayloadModule(payloadSubpath: "x86_64-unix/ntdll.so",
                       crossoverSubpath: "lib/wine/x86_64-unix/ntdll.so"),
+        // Keeps the GRYPHLINK launcher's window alpha, so no black margin surrounds it.
+        // The patched build applies it to that launcher only; the game stays opaque.
+        PayloadModule(payloadSubpath: "x86_64-unix/winemac.so",
+                      crossoverSubpath: "lib/wine/x86_64-unix/winemac.so"),
         // KiUser*Dispatcher int3 spoof
         PayloadModule(payloadSubpath: "x86_64-windows/kernel32.dll",
                       crossoverSubpath: "lib/wine/x86_64-windows/kernel32.dll"),

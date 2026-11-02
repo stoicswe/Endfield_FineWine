@@ -31,7 +31,7 @@ cleanup(){
 trap cleanup EXIT
 
 log "Checking modules in $MODULES"
-for f in ntdll.so kernel32.dll ntoskrnl.exe lsass.exe wineboot.exe rundll32.exe wineserver libMoltenVK.dylib CROSSOVER_VERSION SHA256SUMS; do
+for f in ntdll.so winemac.so kernel32.dll ntoskrnl.exe lsass.exe wineboot.exe rundll32.exe wineserver libMoltenVK.dylib CROSSOVER_VERSION SHA256SUMS; do
   [ -f "$MODULES/$f" ] || die "$MODULES/$f not found — run scripts/install-release.sh or follow README.md's source build steps"
 done
 ( cd "$MODULES" && shasum -a 256 -c -s SHA256SUMS ) || die "checksum mismatch in $MODULES"
@@ -118,6 +118,7 @@ swap(){ # module  path-under-lib/wine  [allow-new]
   ok "$2"
 }
 swap ntdll.so     x86_64-unix/ntdll.so
+swap winemac.so   x86_64-unix/winemac.so      # GRYPHLINK launcher window alpha (no black margin)
 swap kernel32.dll x86_64-windows/kernel32.dll
 swap ntoskrnl.exe x86_64-windows/ntoskrnl.exe
 swap lsass.exe    x86_64-windows/lsass.exe    allow-new
@@ -127,6 +128,7 @@ swap wineboot.exe x86_64-windows/wineboot.exe
 # macOS 26. Like wineserver it is an exec'd Mach-O and needs its own signature.
 swap rundll32.exe x86_64-windows/rundll32.exe
 codesign --force --sign - "$CXR/lib/wine/x86_64-unix/ntdll.so"
+codesign --force --sign - "$CXR/lib/wine/x86_64-unix/winemac.so"
 codesign --force --sign - "$CXR/lib/wine/x86_64-windows/rundll32.exe"
 
 # The ACE-CORE driver opens kernel objects for every process token; stock CrossOver's server

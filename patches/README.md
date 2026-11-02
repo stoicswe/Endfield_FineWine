@@ -44,6 +44,17 @@ Original to this project. The two Rosetta fixes live in `dlls/ntdll/unix/signal_
     (`build-wine.sh` MODULES, `package.sh`, `apply-modules.sh`, `swap-into-crossover.sh`, and
     the patcher's payload) and why it is ad-hoc signed like `wineserver` (an exec'd Mach-O).
 
+- **`0009-winemac-composite-the-gryphlink-launcher-s-window-alpha.patch`** — removes the black
+  margin around the Gryphline launcher. The launcher is a rounded Qt window inside a transparent
+  margin, and on Windows DWM composites that alpha. dwproton fixes the same symptom in `winex11`
+  (commit `50182fc3f58c`), which macOS doesn't use, so this is a separate `winemac` implementation:
+  for processes under `\GRYPHLINK\` (excluding `\GRYPHLINK\games\`) it keeps per-pixel alpha across
+  `SetLayeredWindowAttributes`, makes the Metal view and layer non-opaque, and stops the window
+  surface drawing behind the Metal view. See
+  [docs/project-information/16-launcher-black-margin.md](../docs/project-information/16-launcher-black-margin.md).
+  This is why `winemac.so` is part of the shipped module set; it needs the same `lib64` rpath as
+  `ntdll.so`.
+
 ## `stage2-dwproton/` — the ported dw-proton anti-cheat patches
 
 The Endfield-relevant subset of dw-proton's fix commit `b816be489`, from the `dawn-winery/dwproton-mirror` (fetched by [`../scripts/fetch-dwproton-patches.sh`](../scripts/fetch-dwproton-patches.sh)). Analysis: [../docs/02-dwproton-ace-patches.md](../docs/02-dwproton-ace-patches.md).

@@ -204,6 +204,7 @@ swap(){ # src  dst-rel
   cp "$1" "$dst" && ok "$2"
 }
 swap "$B/dlls/ntdll/ntdll.so"                           "lib/wine/x86_64-unix/ntdll.so"        # Rosetta NOP + priv-instr fixes, NtDelayExecution QPC
+swap "$B/dlls/winemac.drv/winemac.so"                   "lib/wine/x86_64-unix/winemac.so"      # GRYPHLINK launcher window alpha (no black margin)
 swap "$B/dlls/kernel32/x86_64-windows/kernel32.dll"     "lib/wine/x86_64-windows/kernel32.dll" # KiUser*Dispatcher int3 spoof
 swap "$B/dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe" "lib/wine/x86_64-windows/ntoskrnl.exe" # ntoskrnl em-backports + ACE-CORE DriverInit/lsass support
 swap "$B/programs/lsass/x86_64-windows/lsass.exe"       "lib/wine/x86_64-windows/lsass.exe"     # new: ACE-CORE requires a running lsass.exe
@@ -236,6 +237,16 @@ codesign --force --sign - "$NT" 2>/dev/null || { echo "ERROR: failed to ad-hoc s
 otool -l "$NT" | grep -A2 LC_RPATH | grep -q 'lib64' \
   && ok "ntdll.so LC_RPATH → lib64 (cxcompatdb/gnutls — required for D3DMetal)" \
   || { echo "ERROR: failed to add lib64 rpath to ntdll.so — D3DMetal will NOT work"; exit 1; }
+
+# winemac.so needs the same rpath: stock carries it, our build does not.
+WM="$CXR/lib/wine/x86_64-unix/winemac.so"
+if ! otool -l "$WM" | grep -A2 LC_RPATH | grep -q 'lib64'; then
+  install_name_tool -add_rpath "@loader_path/../../../lib64" "$WM" 2>/dev/null
+fi
+codesign --force --sign - "$WM" 2>/dev/null || { echo "ERROR: failed to ad-hoc sign winemac.so"; exit 1; }
+otool -l "$WM" | grep -A2 LC_RPATH | grep -q 'lib64' \
+  && ok "winemac.so LC_RPATH → lib64" \
+  || { echo "ERROR: failed to add lib64 rpath to winemac.so"; exit 1; }
 
 # ---------------------------------------------------------------- 3. GPTK4 / D3DMetal
 if [ "${SKIP_GPTK:-0}" = "1" ]; then

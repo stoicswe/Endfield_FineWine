@@ -12,8 +12,8 @@ The anti-cheat fixes get Endfield past ACE; this page is about making it *render
 
 **For Endfield specifically, DirectX 11 is the most-tested renderer.** The game defaults to Vulkan/DX12. **Vulkan works** through MoltenVK — the patched app bundles a patched MoltenVK — while **DirectX 12 fails** under CrossOver (`vkd3d` can't compile its DXIL shaders → white screen). Setting the CrossOver *backend* to D3DMetal is **not** enough to reroute the game's DX12 off vkd3d — the game itself must run in **DirectX 11** or **Vulkan**:
 
-- start it with the Gryphline launcher's **Launch with DirectX 11** (in the dropdown next to Start), which passes `-force-d3d11`, **or**
-- launch `Endfield.exe` with `-force-d3d11` yourself ([`scripts/launch-endfield.sh`](../scripts/launch-endfield.sh) does).
+- start it with the Gryphline launcher's **Launch with DirectX 11** (in the dropdown next to Start), which passes `-force-d3d11`. This is the supported way, **or**
+- launch `Endfield.exe` with `-force-d3d11` yourself ([`scripts/launch-endfield.sh`](../scripts/launch-endfield.sh) does). This direct launch is not supported and can stop at a black window on recent game builds.
 
 The in-game graphics settings have no API option, and the plain Start button uses the default renderer. The backend guidance below applies once the game is on a DirectX path. A game update can reset the renderer back to DirectX 12 — that's the usual cause when the white screen "comes back" ([troubleshooting.md](troubleshooting.md)).
 
@@ -26,7 +26,7 @@ The game's Vulkan renderer runs through MoltenVK (Vulkan → Metal), not the bot
 - **This repo's patched MoltenVK** (`patches/moltenvk`, ported from [mary-ext's fork](https://github.com/mary-ext/crossover-wine-endfield)) is meant to fix those three. The FineWine Patcher ships it from 1.1.0 on (nightlies included), so you don't need to build it. To build it yourself, use `scripts/build-moltenvk.sh` (needs full Xcode), then `scripts/package.sh` and `scripts/apply-modules.sh`.
 - **After swapping MoltenVK (or changing `MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS`), delete the game's pipeline cache** — `…/LocalLow/Gryphline/Endfield/vulkan_pso_cache.bin` was compiled by the previous module build and can be reused after the change, drawing some meshes with wrong shader/descriptor data (e.g. bushes/grass as odd, stretched polygons). It is not cleared automatically; delete it manually and let the game rebuild it. See [troubleshooting.md → In-game graphics](troubleshooting.md#in-game-graphics).
 
-Launch it with `GFXARGS=-force-vulkan scripts/launch-endfield.sh`.
+Launch it with `GFXARGS=-force-vulkan scripts/launch-endfield.sh`. This uses the direct launch, which is not supported and can stop at a black window on recent game builds.
 
 On a 16 GB M4 (CrossOver 26.2, stock MoltenVK 1.4.2): the first Vulkan launch compiled shaders for ~10 minutes (~3–4 the next time), frame pacing felt smoother than DX11, and it used about half the GPU memory. There's no DLSS under Vulkan; the game offers TAAU and AMD FSR3 instead (FSR3 *Native AA* looked best, and FSR Frame Generation made it slower). Numbers and settings: [14-performance-on-16gb-macs.md](14-performance-on-16gb-macs.md#vulkan-renderer).
 

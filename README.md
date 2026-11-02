@@ -52,7 +52,7 @@ creates the bottle in the patched app and starts the installer.
 
 The patcher can also install **Apple's GPTK4 / D3DMetal** if you mount the *"Evaluation environment for Windows games …"* DMG first — it is never bundled or redistributed, only read from the copy you supply.
 
-Once the game is installed, start it with `scripts/launch-endfield.sh` (or the `wine` command in [docs/installation.md](docs/installation.md#5-run-the-game)); the Gryphline launcher is only needed to install and update the game.
+Once the game is installed, start it from the Gryphline launcher with **Launch with DirectX 11** ([docs/installation.md](docs/installation.md#5-run-the-game)). Starting `Endfield.exe` directly with `scripts/launch-endfield.sh` is not a supported way to use FineWine; it stays available for reference and can stop at a black window on recent game builds.
 
 ### Manual Build and Installation
 

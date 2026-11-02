@@ -480,7 +480,7 @@ struct AutomatedSetupView: View {
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        Text("Afterwards: launch the game with the bottle's **Start** button (DirectX 11 is the most-tested renderer; “Launch with DirectX 11” is in the dropdown), or run `scripts/launch-endfield.sh` from the repository.")
+                        Text("Afterwards: launch the game with the bottle's **Start** button (DirectX 11 is the most-tested renderer; “Launch with DirectX 11” is in the dropdown).")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

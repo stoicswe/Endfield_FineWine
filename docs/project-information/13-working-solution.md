@@ -59,7 +59,7 @@ After the anti-cheat is solved, the remaining day-to-day gotcha is the **graphic
 - **A game update can reset the renderer back to DirectX 12** → white screen returns. Re-select DirectX 11 (or Vulkan). (This is exactly what happened on 2026-07-15.)
 - **Setting the CrossOver backend to D3DMetal (`CX_ACTIVE_GRAPHICS_BACKEND=d3dmetal`) does NOT reroute the game's DX12 off `vkd3d`** — verified. It helps DX11 go to D3DMetal, but it will not save you from the game choosing DX12. The game-side DX11 setting is the fix.
 - **Do NOT "fix" the white screen by overwriting `lib/wine/x86_64-windows/{d3d11,d3d12,dxgi}.dll` with the `apple_gptk` (D3DMetal) copies.** Those are only meant to load through CrossOver's own D3DMetal backend path; dropping them in as the defaults makes `unityplayer.dll` fail to initialize (**Windows error 1114**, "missing or corrupt"). If you did this, restore the defaults from a stock `CrossOver.app` (`lib/wine/x86_64-windows/`).
-- **Launcher vs. direct launch:** the Gryphline launcher sets up the game's working directory (and session); launching `Endfield.exe` directly can hit the same 1114 on `unityplayer.dll`. Prefer the launcher.
+- **Launcher vs. direct launch:** the Gryphline launcher sets up the game's working directory (and session); launching `Endfield.exe` directly can hit the same 1114 on `unityplayer.dll`. Use the launcher: direct launches are not supported and can stop at a black window on recent game builds.
 
 ## The 2026-07-16 regression: ntdll.so rpath → cxcompatdb → no D3DMetal (SOLVED)
 
