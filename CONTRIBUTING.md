@@ -134,3 +134,58 @@ Notes:
     mirrors its title, `nightly_<CrossOver version>.<UTC date>_<commit>`, so each snapshot
     keeps its own assets; see
     [`.github/workflows/nightly.yml`](.github/workflows/nightly.yml).
+
+### Discord announcements (optional)
+
+A newly created full release can be announced in Discord, pinging a role. The job is skipped
+when neither transport below is configured, so this stays opt-in.
+
+-   **Discord app (preferred):** create an application in the
+    [Developer Portal](https://discord.com/developers/applications), add a bot, and invite it to
+    your server with **View Channel**, **Send Messages**, **Embed Links**, and **Mention
+    @everyone, @here, and All Roles**. Then set:
+    -   `DISCORD_BOT_TOKEN` — repository secret (Bot tab → Reset Token)
+    -   `DISCORD_CHANNEL_ID` — repository variable (right-click channel with Developer Mode on
+        → Copy Channel ID)
+    If the channel is an Announcement channel, the message is also crossposted to every channel
+    following it.
+-   **Webhook (simpler):** set `DISCORD_WEBHOOK_URL` (channel settings → Integrations →
+    Webhooks). Webhooks cannot crosspost announcement channels, and can only ping a role that
+    has "Allow anyone to @mention this role" enabled.
+-   **Ping target:** set `DISCORD_RELEASE_ROLE_ID` (repository variable) to the role's ID. With
+    the bot transport, its Mention Everyone permission lets it ping non-mentionable roles.
+    Only that role is mentionable in the message — `@everyone`/`@here` are always suppressed.
+
+The announcement reuses the same generated summary as the release body; refreshing an existing
+release tag does not re-post it.
+
+### Bluesky announcements (optional)
+
+New full releases and new nightly snapshots are posted as a **Bluesky thread** when the bot is
+configured. The first post is always the same template:
+
+```text
+Type: Release            # or Nightly
+Version: 1.2.6
+Build time: 1h 12m 4s    # workflow start -> publish (docs/wiki are separate workflows)
+
+Download: https://github.com/stoicswe/Endfield_FineWine/releases/tag/1.2.6
+```
+
+The replies carry the generated release description (full releases) or the commit list
+(nightlies), split into <=300-character posts.
+
+Add these under **Settings → Secrets and variables → Actions**:
+
+-   `BLUESKY_HANDLE` — **repository variable**: the bot's handle, e.g.
+    `endfield-finewine.bsky.social`.
+-   `BLUESKY_APP_PASSWORD` — **repository secret**: an *app password* from the account's
+    Settings → App Passwords (never the account password).
+-   `BLUESKY_PDS` — *optional* **repository variable**: PDS base URL. Defaults to
+    `https://bsky.social`; only needed for a custom/self-hosted PDS.
+-   `BLUESKY_MAX_POSTS` — *optional* **repository variable**: maximum thread length including
+    the first post (default `20`). Longer descriptions are cut off with a warning in the log.
+
+The step is skipped when the handle or app password is missing, and only newly created
+releases/nightlies post (refreshing an existing tag does not re-post). Posting is best-effort: a
+Bluesky failure warns in the run log and does not fail the release.

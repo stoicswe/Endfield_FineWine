@@ -20,6 +20,8 @@
 #   - The published .app is ad-hoc signed: right-click → Open on first launch.
 #   - LGPL-2.1-or-later: the release notes point at the exact CrossOver source tarball
 #     (the "complete corresponding source" = this repo's patches + that tarball).
+#   - When BLUESKY_HANDLE + BLUESKY_APP_PASSWORD are configured, each NEW snapshot posts a
+#     Bluesky thread (template: Type / Version / Build time / Download; replies = commits).
 
 name: nightly
 
@@ -44,7 +46,15 @@ jobs:
       should_build: ${{ steps.gate.outputs.should_build }}
       base_sha: ${{ steps.gate.outputs.base_sha }}
       commits: ${{ steps.gate.outputs.commits }}
+      short_sha: ${{ steps.gate.outputs.short_sha }}
+      started_epoch: ${{ steps.clock.outputs.started_epoch }}
     steps:
+      # The Bluesky thread reports this pipeline's duration (docs/wiki are separate workflows).
+      - name: Record pipeline start
+        id: clock
+        shell: bash
+        run: echo "started_epoch=$(date -u +%s)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # full history + tags (baseline = newest nightly-* tag)
@@ -55,23 +65,15 @@ jobs:
         run: |
           set -euo pipefail
           echo "event: $GITHUB_EVENT_NAME / head: $(git rev-parse --short HEAD)"
+          echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "manual dispatch -> forced build"
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-            BASE="$(git rev-list --max-parents=0 HEAD)"
-            {
-              echo "base_sha=$BASE"
-              echo "commits<<EOT"
-              git log --oneline --no-decorate -30 HEAD
-              echo "EOT"
-            } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Newest nightly snapshot tag. Tags are `nightly_<cxver>.<UTC YYYYMMDD>_<sha>` (the
-          # date part is fixed width, so lexical order == chronological order); also match
-          # the transitional `nightly-YYYYMMDD-HHMM` format in case it ever shipped.
+          # Baseline: the newest nightly snapshot tag — on every event, manual dispatches
+          # included, so release notes and the Bluesky thread only ever list commits newer
+          # than the last published nightly (never "the last N commits of main").
+          #
+          # Tags are `nightly_<cxver>.<UTC YYYYMMDD>_<sha>` (the date part is fixed width, so
+          # lexical order == chronological order); also match the transitional
+          # `nightly-YYYYMMDD-HHMM` format in case it ever shipped.
           LATEST="$(git for-each-ref 'refs/tags/nightly_*' 'refs/tags/nightly-*' --sort=-refname --count=1 --format='%(refname:short)')"
           if [ -n "$LATEST" ]; then
             BASE="$(git rev-parse "${LATEST}^{}")"
@@ -84,23 +86,30 @@ jobs:
             echo "baseline (legacy rolling nightly tag): $BASE"
           else
             BASE="$(git rev-list --max-parents=0 HEAD)"
-            echo "no previous nightly tag -> first nightly, building"
+            echo "no previous nightly tag -> first nightly"
           fi
 
-          CHANGED="$(git diff --name-only "$BASE"..HEAD -- patches scripts patcher-app .github/workflows || true)"
-          if [ -n "$CHANGED" ]; then
-            echo "build-affecting changes:"
-            echo "$CHANGED"
+          # A manual dispatch always (re)builds; the schedule only builds when build-affecting
+          # paths changed since the baseline.
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "manual dispatch -> forced build"
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           else
-            echo "no build-affecting changes since the last nightly -> skipping"
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            CHANGED="$(git diff --name-only "$BASE"..HEAD -- patches scripts patcher-app .github/workflows || true)"
+            if [ -n "$CHANGED" ]; then
+              echo "build-affecting changes:"
+              echo "$CHANGED"
+              echo "should_build=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "no build-affecting changes since the last nightly -> skipping"
+              echo "should_build=false" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
           {
             echo "base_sha=$BASE"
             echo "commits<<EOT"
-            git log --oneline --no-decorate -30 "$BASE"..HEAD
+            git log --oneline --no-decorate "$BASE"..HEAD
             echo "EOT"
           } >> "$GITHUB_OUTPUT"
 
@@ -123,6 +132,9 @@ jobs:
       cx_version: "26.3.0"
       runner: "xcode-27" # macOS 27.0 + Xcode 27.0 RC; change to macos-26 for the GA image
       build_patcher_app: true
+      # Without this, build-app.sh stamps its default "1.1.0", so wizard telemetry from
+      # nightly users reports a stale version that never existed for that build.
+      app_version: nightly-${{ needs.changes.outputs.short_sha }}
 
   release:
     name: Snapshot pre-release
@@ -131,7 +143,15 @@ jobs:
     timeout-minutes: 15
     env:
       CX_VER: "26.3.0"
+      # Empty when the Bluesky bot is not configured; step-level `if:` can read job env.
+      BLUESKY_HANDLE: ${{ vars.BLUESKY_HANDLE }}
+      BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
+      BLUESKY_PDS: ${{ vars.BLUESKY_PDS }}
     steps:
+      # The release job needs the repo's scripts (e.g. .github/scripts/post-bluesky-thread.py);
+      # downloading build artifacts does not populate the workspace with them.
+      - uses: actions/checkout@v4
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -176,7 +196,6 @@ jobs:
           | Asset | What it is |
           |---|---|
           | `finewine-patcher-…zip` | **FineWine Patcher.app** — patches a copy of your CrossOver @@CX_VER@@ with the anti-cheat Wine modules and a patched MoltenVK (open it and follow the UI) |
-          | `finewine-launcher-…zip` | **Arknights Endfield.app** — a double-clickable alias that opens the Gryphline launcher via the direct wine path (the CrossOver GUI's *Start* crashes it — see `docs/project-information/15-…`) |
           | `finewine-wine-modules-…zip` | The three patched Wine modules alone — for `scripts/swap-into-crossover.sh` users |
           | `SHA256SUMS.txt` | SHA-256 checksums of the assets |
 
@@ -210,7 +229,11 @@ jobs:
           print(out)
           PY
 
+          # The Bluesky thread's replies are the commit list.
+          printf '%s\n' "$NOTES_COMMITS" > commits.txt
+
       - name: Publish a new nightly pre-release
+        id: publish
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -227,14 +250,17 @@ jobs:
           TITLE="Endfield FW ${STAMP}"
           echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
           echo "RELEASE_TITLE=$TITLE" >> "$GITHUB_ENV"
+          echo "NIGHTLY_STAMP=$STAMP" >> "$GITHUB_ENV"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             # Same version+date+commit: a re-run of this exact snapshot (failed-job re-run,
             # double dispatch). Refresh it in place rather than colliding with the tag.
+            echo "created=false" >> "$GITHUB_OUTPUT"
             echo "release $TAG already exists (re-run of the same snapshot) -> refreshing assets"
             gh release upload "$TAG" assets/*.zip assets/SHA256SUMS.txt --clobber
             gh release edit "$TAG" --prerelease --title "$TITLE" --notes-file notes.md
           else
+            echo "created=true" >> "$GITHUB_OUTPUT"
             echo "creating release $TAG at $GITHUB_SHA"
             # gh creates the tag at --target when it doesn't exist yet
             gh release create "$TAG" \
@@ -247,6 +273,22 @@ jobs:
 
           gh release view "$TAG" --json name,tagName,isPrerelease,assets --jq '{name, tagName, isPrerelease, assets: [.assets[].name]}'
 
+      - name: Announce on Bluesky
+        # Only for a newly created nightly: re-running the same snapshot must not re-post.
+        if: ${{ success() && steps.publish.outputs.created == 'true' && env.BLUESKY_HANDLE != '' && env.BLUESKY_APP_PASSWORD != '' }}
+        shell: bash
+        env:
+          BLUESKY_HANDLE: ${{ vars.BLUESKY_HANDLE }}
+          BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
+          BLUESKY_PDS: ${{ vars.BLUESKY_PDS }}
+          BLUESKY_MAX_POSTS: ${{ vars.BLUESKY_MAX_POSTS }}
+          THREAD_TYPE: Nightly
+          VERSION: ${{ env.NIGHTLY_STAMP }}
+          PIPELINE_STARTED_EPOCH: ${{ needs.changes.outputs.started_epoch }}
+          DOWNLOAD_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ env.RELEASE_TAG }}
+          BODY_FILE: commits.txt
+        run: python3 .github/scripts/post-bluesky-thread.py
+
       - name: Summary
         shell: bash
         run: |
@@ -258,7 +300,7 @@ jobs:
           | Title | %TITLE% |
           | Tag | %TAG% (pre-release) |
           | Commit | `%SHA%` |
-          | Assets | Patcher.app zip · Arknights Endfield.app zip · modules zip · SHA256SUMS.txt |
+          | Assets | Patcher.app zip · modules zip · SHA256SUMS.txt |
           | URL | %RELEASE_URL% |
           EOT
           sed -i \

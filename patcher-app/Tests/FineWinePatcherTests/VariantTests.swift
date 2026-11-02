@@ -34,9 +34,13 @@ final class VariantTests: XCTestCase {
 
     private let x64Layout = [
         "lib/wine/x86_64-unix/ntdll.so",
+        "lib/wine/x86_64-unix/winemac.so",
         "lib/wine/x86_64-windows/kernel32.dll",
         "lib/wine/x86_64-windows/ntoskrnl.exe",
         "lib/wine/x86_64-windows/wineboot.exe",
+        "lib/wine/x86_64-windows/rundll32.exe",
+        "bin/wineserver",
+        "CrossOver-Hosted Application/wineserver",
         "lib64/libMoltenVK.dylib",
     ]
 
@@ -48,6 +52,23 @@ final class VariantTests: XCTestCase {
         "lib/wine/aarch64-windows/wineboot.exe",
         "lib/aarch64/libMoltenVK.dylib",
     ]
+
+    func testOnlyX64NeedsRosetta() {
+        XCTAssertTrue(CrossOverVariant.x64.requiresRosetta)
+        XCTAssertFalse(CrossOverVariant.arm.requiresRosetta)
+    }
+
+    func testArmUsesItsOwnBottleArchAndPatchedCopy() {
+        XCTAssertNil(CrossOverVariant.x64.bottleWineArch)
+        XCTAssertEqual(CrossOverVariant.arm.bottleWineArch, "arm64")
+        XCTAssertNotEqual(CrossOverVariant.x64.patchedAppName, CrossOverVariant.arm.patchedAppName)
+    }
+
+    func testD3DMetalIsOfferedOnlyOnX64() {
+        XCTAssertTrue(BottleBackend.available(for: .x64).contains(.d3dmetal))
+        XCTAssertFalse(BottleBackend.available(for: .arm).contains(.d3dmetal))
+        XCTAssertTrue(BottleBackend.available(for: .arm).contains(.dxmt))
+    }
 
     func testDetectsX64Layout() throws {
         let app = try makeApp("CrossOver", files: x64Layout)

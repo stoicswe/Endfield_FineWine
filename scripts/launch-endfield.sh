@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # launch-endfield.sh — launch Arknights: Endfield directly, bypassing the Gryphline launcher.
 #
-# The game binary ships its own embedded login UI (CefView / QCefView.dll), so it can start and
-# log in without the launcher. Use this when the launcher won't start, or to skip it entirely.
-# It runs through the patched CrossOver app, so the anti-cheat fixes and the D3DMetal graphics
-# setting are already in effect.
+# NOT SUPPORTED: starting Endfield.exe directly is not a supported way to use FineWine, and on
+# recent game builds it can stop at a black window. Start the game from the Gryphline launcher
+# (docs/installation.md). This script is kept for reference.
+#
+# The game binary ships its own embedded login UI (CefView / QCefView.dll). The script runs through
+# the patched CrossOver app, so the anti-cheat fixes and the D3DMetal graphics setting are in effect.
 #
 # Usage:
 #   scripts/launch-endfield.sh              # launch and play
@@ -18,8 +20,10 @@
 #   --debugmsg, because CrossOver's wine wrapper overwrites the WINEDEBUG variable itself),
 #   GFXARGS (default "-force-d3d11" — a DIRECT launch bypasses the launcher, so the
 #   launcher's DirectX-11 setting does NOT apply; without this flag Unity defaults to
-#   Vulkan, which is experimental (see docs/graphics-performance.md). Set GFXARGS="" to
+#   Vulkan (see docs/graphics-performance.md). Set GFXARGS="" to
 #   disable, or GFXARGS=-force-vulkan to force Vulkan.)
+#   METAL_HUD (default 0; set 1 to enable Apple's Metal Performance HUD for this launch)
+#   MAX_FPS (optional; e.g. 60 or 120 to set D3DM_MAX_FPS for this launch)
 #
 # NOTE: the game still updates itself via the launcher. If a game patch ships, run the launcher
 # once when it's working again to update; this script is for launching an already-updated install.
@@ -66,9 +70,19 @@ TARGET="${TARGET:-C:/Program Files/GRYPHLINK/games/Arknights Endfield/Endfield.e
 GFXARGS="${GFXARGS--force-d3d11}"
 [ -d "$BP" ] || { echo "ERROR: bottle '$BOTTLE' not found at $BP" >&2; exit 1; }
 
+echo "NOTE: direct launches are not supported and can stop at a black window on recent game builds." >&2
+echo "      Start the game from the Gryphline launcher instead (see docs/installation.md)." >&2
 echo "App:    $APP"
 echo "Bottle: $BOTTLE"
 echo "Game:   $TARGET"
+if [ "${METAL_HUD:-0}" = "1" ]; then
+  export MTL_HUD_ENABLED=1
+  echo "Metal HUD: enabled (MTL_HUD_ENABLED=1)"
+fi
+if [ -n "${MAX_FPS:-}" ]; then
+  export D3DM_MAX_FPS="$MAX_FPS"
+  echo "FPS Cap:   $MAX_FPS (D3DM_MAX_FPS=$MAX_FPS)"
+fi
 
 # ---- clean any stale Wine/ACE state so the anti-cheat starts fresh ----------
 WINEPREFIX="$BP" CX_ROOT="$CXR" "$CXBIN/wineserver" -k >/dev/null 2>&1 || true

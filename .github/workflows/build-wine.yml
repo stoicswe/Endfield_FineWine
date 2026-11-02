@@ -335,6 +335,21 @@ jobs:
       - name: Short SHA
         run: echo "SHORT_SHA=${GITHUB_SHA::8}" >> "$GITHUB_ENV"
 
+      # Privacy gate: fail the build before packaging if anything can be sent without the
+      # post-patch dialog, the preview/allowlist disappears, or the disclosure is lost.
+      - name: Verify telemetry privacy protections
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ./patcher-app/scripts/check-telemetry-privacy.py
+
+      - name: Test telemetry confirmation and data minimisation
+        shell: bash
+        working-directory: patcher-app
+        run: |
+          set -euo pipefail
+          swift test --filter UsageTelemetryTests
+
       - name: Download wine modules artifact
         uses: actions/download-artifact@v4
         with:
@@ -361,6 +376,22 @@ jobs:
           PAYLOAD_DIR: ${{ github.workspace }}/payload
           MOLTENVK_DIR: ${{ github.workspace }}/moltenvk
         run: ./patcher-app/scripts/build-app.sh
+
+      - name: Verify the requested Patcher.app version
+        if: ${{ inputs.app_version != '' }}
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ inputs.app_version }}
+        run: |
+          set -euo pipefail
+          APP="patcher-app/build/FineWine Patcher.app"
+          short="$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")"
+          build="$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")"
+          if [ "$short" != "$EXPECTED_VERSION" ] || [ "$build" != "$EXPECTED_VERSION" ]; then
+            echo "::error::FineWine Patcher version mismatch — expected $EXPECTED_VERSION, got CFBundleShortVersionString=$short and CFBundleVersion=$build"
+            exit 1
+          fi
+          echo "FineWine Patcher version: $short"
 
       - name: Package Patcher.app zip
         shell: bash
@@ -393,60 +424,20 @@ jobs:
           EOF
 
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Privacy audit
+
+          ✅ There is no telemetry checkbox and nothing is sent automatically.
+          ✅ After each patch run, the app asks whether to send that run's report and shows the
+          exact payload first; only the explicit Send Statistics action posts it.
+          ✅ The build verified the event/metadata allowlists, the HTTPS endpoint, the send/skip
+          dialog, and that the engine cannot send on its own.
+          ✅ Sending opens a thank-you dialog with a confetti celebration.
+          ✅ `patcher-app/README.md` documents what is collected, why it helps, and what is never
+          sent.
+          EOF
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
           > ⚠️ **LGPL-2.1-or-later**: the app bundles Wine modules. If you publish releases
           > from these artifacts, attach the exact `crossover-sources-${{ env.CX_VER }}` tarball +
           > this repo's patches (see `patcher-app/README.md`).
-          EOF
-
-  launcher-app:
-    name: Arknights Endfield.app (launcher alias)
-    runs-on: ${{ inputs.runner || 'xcode-27' }}
-    if: ${{ inputs.build_patcher_app != false }}
-    timeout-minutes: 10
-    env:
-      CX_VER: ${{ inputs.cx_version || '26.3.0' }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Short SHA
-        run: echo "SHORT_SHA=${GITHUB_SHA::8}" >> "$GITHUB_ENV"
-
-      # A tiny shell-script .app that opens the Gryphline launcher via the direct `wine --cx-app`
-      # path (which stays up where the CrossOver GUI's Start button crashes it — docs/15).
-      # Built --portable so it resolves the patched CrossOver app at launch on the user's machine.
-      - name: Build the portable launcher app
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          ./scripts/make-launcher-app.sh --portable --out-dir dist --force
-          codesign --verify --verbose "dist/Arknights Endfield.app"
-
-      - name: Package launcher app zip
-        shell: bash
-        run: |
-          set -euo pipefail
-          ditto -c -k --sequesterRsrc --keepParent \
-            "dist/Arknights Endfield.app" \
-            "dist/finewine-launcher-${{ env.CX_VER }}-${{ env.SHORT_SHA }}.zip"
-          ls -lh dist
-
-      - name: Upload launcher app
-        uses: actions/upload-artifact@v4
-        with:
-          name: launcher-app
-          path: dist/finewine-launcher-${{ env.CX_VER }}-${{ env.SHORT_SHA }}.zip
-          retention-days: 14
-
-      - name: Write job summary
-        shell: bash
-        run: |
-          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
-          ## Arknights Endfield.app (launcher alias)
-
-          | | |
-          |---|---|
-          | Purpose | Double-click to open the Gryphline launcher via the direct wine path |
-          | Artifact | `launcher-app` — finewine-launcher-${{ env.CX_VER }}-${{ env.SHORT_SHA }}.zip |
-          | Signing | ad-hoc (right-click → Open on first launch) |
           EOF

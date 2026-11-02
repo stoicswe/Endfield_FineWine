@@ -23,6 +23,10 @@ on:
       - 'scripts/**'
       - 'patcher-app/**'
       - '.github/workflows/**'
+      # The release bot opens generated PRs for issue-template version refreshes; include them
+      # so the branch protection's required build check actually starts on those PRs.
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/scripts/**'
   push:
     branches: [main]
     paths:

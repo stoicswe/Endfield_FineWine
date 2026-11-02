@@ -48,7 +48,7 @@ Notes:
 ./scripts/swap-into-crossover.sh
 ```
 
-This copies `/Applications/CrossOver.app` into a staging folder, swaps in the patched modules (plus GPTK4's D3DMetal if `GPTK_DIR` points at it — see [graphics-performance.md](graphics-performance.md)), re-seals the whole bundle with an ad-hoc signature, verifies it, and moves it into place as `/Applications/CrossOver_Endfield_Patch.app`. It also creates a double-clickable **`Arknights Endfield.app`** beside it that launches the game directly (step 5).
+This copies `/Applications/CrossOver.app` into a staging folder, swaps in the patched modules (plus GPTK4's D3DMetal if `GPTK_DIR` points at it — see [graphics-performance.md](graphics-performance.md)), re-seals the whole bundle with an ad-hoc signature, verifies it, and moves it into place as `/Applications/CrossOver_Endfield_Patch.app`.
 
 ## 3. Deploy into CrossOver — manual
 
@@ -93,47 +93,53 @@ Prefer a GUI? The [FineWine Patcher.app](../patcher-app/README.md) does the same
 
 ## 4. Create the bottle and install the game
 
+> **Create the bottle with the patched app, after patching.** CrossOver writes the creating app's
+> bundle identifier into the launchers it generates, so a bottle or program launcher created in the
+> stock CrossOver keeps opening the stock app. If you installed the launcher before patching, remove
+> the stock app's launchers from `~/Applications/CrossOver/` and redo this step from
+> `CrossOver_Endfield_Patch.app`.
+
 ```bash
 ./scripts/create-bottle.sh    # "Arknights Endfield": Windows 11 64-bit, D3DMetal + DLSS + MSync
 ```
 
 Then install the Gryphline launcher into it: download the Windows launcher from [endfield.gryphline.com](https://endfield.gryphline.com), use CrossOver → **Arknights Endfield** → *Install Application into Bottle* (or `/Applications/CrossOver_Endfield_Patch.app/Contents/SharedSupport/CrossOver/bin/wine --bottle "Arknights Endfield" --wait-children ~/Downloads/GRYPHLINK_<version>.exe`), keep the default install location, log in, and let the launcher download the game.
 
-Prefer the GUI for the bottle too? Create a *Windows 11 64-bit* bottle named `Arknights Endfield` and set Graphics → D3DMetal, DLSS → on, MSync → on. `UPDATE=1 ./scripts/create-bottle.sh` re-applies the settings to an existing bottle. If the launcher crashes under Rosetta with leftover Wine processes, use `MSYNC=0 BACKEND=d3dmetal UPDATE=1 ./scripts/create-bottle.sh` to disable MSync for that bottle.
+Prefer the GUI? The Patcher's **Automated Setup…** does the whole fresh install from the CrossOver you selected on its main page: it creates the patched copy, offers an optional **GPTK4 / D3DMetal 4** replacement (link to Apple's download page + mounted-DMG detection), then creates the bottle (name, backend, MSync and upscaler are editable) and starts the installer you downloaded. Prefer the GUI for the bottle itself? Create a *Windows 11 64-bit* bottle named `Arknights Endfield` and set Graphics → D3DMetal, DLSS → on, MSync → on. `UPDATE=1 ./scripts/create-bottle.sh` re-applies the settings to an existing bottle. If the launcher crashes under Rosetta with leftover Wine processes, use `MSYNC=0 BACKEND=d3dmetal UPDATE=1 ./scripts/create-bottle.sh` to disable MSync for that bottle. To enable Apple's Metal Performance HUD overlay, use `METAL_HUD=1 ./scripts/create-bottle.sh` (or toggle it in the patcher app under **Tools → Metal HUD…**).
+
 
 ## 5. Run the game
 
-**Double-click `Arknights Endfield.app`.** The installer creates it next to the patched CrossOver
-(`/Applications`, if that's where you put `CrossOver_Endfield_Patch.app`); you can also (re)create
-it any time with `./scripts/make-launcher-app.sh`. It **opens the Gryphline launcher**
-(`Launcher.exe`) through the *direct* wine path — install, update and start the game from there.
+Start the game from the Gryphline launcher, which also installs and updates it. Open the launcher from the patched CrossOver's bottle page (**Start**), then choose **Launch with DirectX 11** from the dropdown next to Start.
 
-> **Why an alias at all?** The launcher's Chromium web UI crashes when started from the CrossOver
-> app's bottle **Start** button, but it stays up when started via the direct `wine --cx-app` path
-> this app uses — [docs/15](project-information/15-launcher-qtwebengine-crash.md).
-
-**Or start the game directly** (once it's installed — the game has its own login screen), which
-skips the launcher entirely and adds `-force-d3d11`:
+If the launcher's window closes immediately, start the launcher through the `wine` command instead. Its Chromium/QtWebEngine renderer crashes on the GUI path, which isn't an ACE problem (see [docs/15](project-information/15-launcher-qtwebengine-crash.md)):
 
 ```bash
-# Easy launcher script (handles wineserver cleanup, graphics args, debug logging):
+CXR="/Applications/CrossOver_Endfield_Patch.app/Contents/SharedSupport/CrossOver"
+"$CXR/bin/wine" --bottle "Arknights Endfield" --wait-children \
+  --cx-app "C:/Program Files/GRYPHLINK/Launcher.exe"
+```
+
+### Direct game launch (unsupported)
+
+> **Not supported:** starting `Endfield.exe` directly, without the Gryphline launcher, is not a supported way to use FineWine. On recent game builds it can stop at a black window. These commands are kept for reference only.
+
+```bash
+# Launch script (handles wineserver cleanup, graphics args, debug logging):
 ./scripts/launch-endfield.sh
 
 # Or invoke wine directly:
-CXR="/Applications/CrossOver_Endfield_Patch.app/Contents/SharedSupport/CrossOver"
 "$CXR/bin/wine" --bottle "Arknights Endfield" \
   --cx-app "C:/Program Files/GRYPHLINK/games/Arknights Endfield/Endfield.exe" -force-d3d11
 ```
 
-To make the alias point at the game instead of the launcher:
-`./scripts/make-launcher-app.sh --target "C:/Program Files/GRYPHLINK/games/Arknights Endfield/Endfield.exe" --gfxargs "-force-d3d11"`.
-
 ### Debug logging
 
-To capture a debug log, run `DEBUG=light ./scripts/launch-endfield.sh` (Wine errors only — cheap enough to leave on while playing) or `DEBUG=1 ./scripts/launch-endfield.sh` (the full CrossOver log — heavy). Calling `bin/wine` yourself? Pass channels with `--debugmsg` (e.g. `--debugmsg err+all`), not `WINEDEBUG`: CrossOver's wrapper overwrites that variable — with `-all`, or with `CX_LOG` set, with its own heavy default channel list.
+To capture a debug log from the launcher, add `--debugmsg` to the `wine` command above (for example `--debugmsg err+all`). The script's `DEBUG=light ./scripts/launch-endfield.sh` (Wine errors only — cheap enough to leave on while playing) and `DEBUG=1 ./scripts/launch-endfield.sh` (the full CrossOver log — heavy) use the unsupported direct launch. Calling `bin/wine` yourself? Pass channels with `--debugmsg` (e.g. `--debugmsg err+all`), not `WINEDEBUG`: CrossOver's wrapper overwrites that variable — with `-all`, or with `CX_LOG` set, with its own heavy default channel list.
 
 ## See also
 
+- [notproton.md](notproton.md) — running Arknights: Endfield through Steam with NotProton.
 - [graphics-performance.md](graphics-performance.md) — graphics backends and the optional GPTK4 upgrade.
 - [troubleshooting.md](troubleshooting.md) — when something goes wrong.
 - [14-performance-on-16gb-macs.md](14-performance-on-16gb-macs.md) — memory-constrained Macs.

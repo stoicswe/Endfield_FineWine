@@ -24,6 +24,37 @@ Original to this project. The two Rosetta fixes live in `dlls/ntdll/unix/signal_
 - `0005-msync-fix-waitall-rollback.patch`, in `dlls/ntdll/unix/msync.c`:
   - When another thread wins an object partway through a WaitAll, the rollback now leaves recursively owned mutexes alone, restores abandoned mutexes as abandoned, and wakes waiters on every object it puts back. Test: `python3 tests/test-msync-waitall.py <wine-src>`.
 
+- `0006-msync-server-one-waiter-node-per-thread.patch`, in `server/msync.c`:
+  - A multi-object wait that returns early (an object became available while the client spun) leaves its registration in the wineserver until the object is signaled. On a rarely signaled object, such as a quit event, every lost race added another node for the same thread: the node pool ran out, the server printed a warning on every allocation and grew by about 1 MB/s. `add_tid()` now skips a thread that is already on the list, so each object holds at most one node per thread, and the warning prints once. The client is unchanged. Test: `tests/fixtures/msync-wait-stress.c` (build and run instructions in the file).
+- `0007-ntdll-replace-stale-ntdll-symlink-in-winetemp-dir.patch`, in `dlls/ntdll/unix/loader.c`:
+  - CW HACK 22144 re-execs each process through a link to the loader in `$TMPDIR/winetemp-<loader inode>-…/`, next to an `ntdll.so` symlink. The folder is keyed on the loader's inode, which survives renaming or moving the app, but the symlink was only created once, so after a rename every process fails with `could not load ntdll.so`. The symlink is now replaced atomically each time.
+- `0008-rundll32-don-t-create-a-visible-window.patch`, in `programs/rundll32/rundll32.c`:
+  - rundll32's helper window was created with `WS_VISIBLE`. On macOS 26 (Tahoe) that makes
+    winemac.drv foreground the process (`transformProcessToForeground`), whose activation
+    callbacks re-post display-change events and the clipboard manager's 2 s timer
+    (`CLIPBOARD_UPDATE_DELAY`), re-entering the `CreateWindowW` message pump — rundll32 never
+    reaches `InstallHinfSection`, and bottle creation dies at
+    `setup:error: 'rundll32 win11Install crossover.inf' failed` / hangs (WineHQ **bug 59595**,
+    reported against prefix creation on macOS 26 in March 2026; no fix merged upstream as of
+    Wine master, and CrossOver 26.3 still carries the `WS_VISIBLE` window). The window is only
+    a message sink for the called entry point, so the patch keeps it hidden on every platform —
+    which also stops rundll32 stealing focus during bottle creation. macOS 27 is unaffected
+    either way (verified on a macOS 27.2 machine: bottle creation succeeds before and after the
+    patch, ~14-17 s). This is why `rundll32.exe` is now part of the shipped module set
+    (`build-wine.sh` MODULES, `package.sh`, `apply-modules.sh`, `swap-into-crossover.sh`, and
+    the patcher's payload) and why it is ad-hoc signed like `wineserver` (an exec'd Mach-O).
+
+- **`0009-winemac-composite-the-gryphlink-launcher-s-window-alpha.patch`** — removes the black
+  margin around the Gryphline launcher. The launcher is a rounded Qt window inside a transparent
+  margin, and on Windows DWM composites that alpha. dwproton fixes the same symptom in `winex11`
+  (commit `50182fc3f58c`), which macOS doesn't use, so this is a separate `winemac` implementation:
+  for processes under `\GRYPHLINK\` (excluding `\GRYPHLINK\games\`) it keeps per-pixel alpha across
+  `SetLayeredWindowAttributes`, makes the Metal view and layer non-opaque, and stops the window
+  surface drawing behind the Metal view. See
+  [docs/project-information/16-launcher-black-margin.md](../docs/project-information/16-launcher-black-margin.md).
+  This is why `winemac.so` is part of the shipped module set; it needs the same `lib64` rpath as
+  `ntdll.so`.
+
 ## `stage2-dwproton/` — the ported dw-proton anti-cheat patches
 
 The Endfield-relevant subset of dw-proton's fix commit `b816be489`, from the `dawn-winery/dwproton-mirror` (fetched by [`../scripts/fetch-dwproton-patches.sh`](../scripts/fetch-dwproton-patches.sh)). Analysis: [../docs/02-dwproton-ace-patches.md](../docs/02-dwproton-ace-patches.md).

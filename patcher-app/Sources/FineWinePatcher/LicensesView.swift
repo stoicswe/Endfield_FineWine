@@ -19,10 +19,10 @@ struct LicenseComponent: Identifiable, Hashable {
         LicenseComponent(
             id: "finewine-patcher",
             name: "FineWine Patcher",
-            license: "MIT",
+            license: "GPL-3.0-or-later",
             summary: "This application — the interface and patching logic.",
             notice: "Copyright © 2026 Endfield_FineWine contributors.",
-            textFile: "mit-finewine-patcher.txt",
+            textFile: "gpl-3.0.txt",
             links: [
                 LicenseLink(label: "Project repository", url: "https://github.com/stoicswe/Endfield_FineWine"),
             ]

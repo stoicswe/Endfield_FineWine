@@ -14,7 +14,8 @@
   2. the bottle's graphics backend (`CX_GRAPHICS_BACKEND`: `d3dmetal` / `dxmt` / `dxvk`),
   3. the DLL overrides (`d3d11`, `dxgi`, `d3dcompiler_47`, `nvapi64`).
 - Capture a log for every run: `DEBUG=1 scripts/launch-endfield.sh` writes
-  `~/endfield-debug/<ts>/cxlog.txt`; for mod-specific signals add `WINEDEBUG=+loaddll,+seh`
+  `~/endfield-debug/<ts>/cxlog.txt` (this direct launch is not supported and can stop at a black
+  window on recent game builds); for mod-specific signals add `WINEDEBUG=+loaddll,+seh`
   (`+loaddll` prints every module load — the single most useful channel for this work).
 - Success criteria are stated per experiment; if an experiment cannot be run, record *why* in the
   results table at the bottom.
@@ -53,8 +54,8 @@ measurable; medium that it is the blocker]`
 ### A3. Sanity: does the game still run after each bottle change?
 
 After every backend/override change, confirm the unmodded game still reaches the login screen and
-renders (the parent docs' known failure is a white screen from DX12/Vulkan, and error 1114 from
-D3D-DLL tampering). Any regression here invalidates the mod test that follows.
+renders (the parent docs' known failure is a white screen from DX12, and error 1114 from D3D-DLL
+tampering). Any regression here invalidates the mod test that follows.
 
 ## Stage B — make the right `d3d11` win (config only)
 

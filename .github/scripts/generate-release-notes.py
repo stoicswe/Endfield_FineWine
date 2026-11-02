@@ -12,9 +12,11 @@ block a release. It never exits non-zero because of an LLM error.
 Inputs are read from the environment (NOTES_*), so multi-line commit logs can be
 passed through without shell quoting problems. Usage:
 
-    python3 .github/scripts/generate-release-notes.py [OUTPUT_PATH]
+    python3 .github/scripts/generate-release-notes.py [OUTPUT_PATH] [SUMMARY_PATH]
 
 Writes the assembled Markdown to OUTPUT_PATH (default: notes.md) and prints it.
+When SUMMARY_PATH is given, also writes just the LLM summary (or the commit-list
+fallback) there — a short, table-free version suitable for a Discord embed.
 """
 
 from __future__ import annotations
@@ -206,6 +208,7 @@ def compose(
 
 def main() -> int:
     output_path = sys.argv[1] if len(sys.argv) > 1 else "notes.md"
+    summary_path = sys.argv[2] if len(sys.argv) > 2 else ""
 
     version = env("NOTES_VERSION")
     previous = env("NOTES_PREVIOUS")
@@ -238,6 +241,9 @@ def main() -> int:
 
     with open(output_path, "w", encoding="utf-8") as handle:
         handle.write(notes + "\n")
+    if summary_path:
+        with open(summary_path, "w", encoding="utf-8") as handle:
+            handle.write(summary.strip() + "\n")
     print(notes)
     return 0
 

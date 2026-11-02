@@ -1,0 +1,199 @@
+diff --git a/dlls/winemac.drv/cocoa_window.m b/dlls/winemac.drv/cocoa_window.m
+index ffb7c6a..6c942ba 100644
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -389,6 +389,7 @@ - (void) wine_getBackingSize:(int*)outBackingSize;
+     - (void) wine_setBackingSize:(const int*)newBackingSize;
+ 
+     - (WineMetalView*) newMetalViewWithDevice:(id<MTLDevice>)device;
++    - (BOOL) hasMetalDescendant;
+ 
+ @end
+ 
+@@ -527,6 +528,14 @@ - (void) updateLayer
+         if (window.closing)
+             return;
+ 
++        /* The window surface sits behind the Metal view and has no alpha, so it
++         * would show through wherever the swapchain is transparent. */
++        if (launcher_alpha && [self hasMetalDescendant])
++        {
++            layer.contents = nil;
++            return;
++        }
++
+         imageRect = layer.bounds;
+         imageRect.origin.x *= layer.contentsScale;
+         imageRect.origin.y *= layer.contentsScale;
+@@ -674,6 +683,18 @@ - (void) invalidateHasGLDescendant
+         }
+     }
+ 
++    - (BOOL) hasMetalDescendant
++    {
++        if (_metalView)
++            return YES;
++        for (WineContentView* view in [self subviews])
++        {
++            if ([view isKindOfClass:[WineContentView class]] && [view hasMetalDescendant])
++                return YES;
++        }
++        return NO;
++    }
++
+     - (void) wine_getBackingSize:(int*)outBackingSize
+     {
+         @synchronized(self) {
+@@ -696,6 +717,7 @@ - (WineMetalView*) newMetalViewWithDevice:(id<MTLDevice>)device
+         [self setAutoresizesSubviews:YES];
+         [self addSubview:view positioned:NSWindowBelow relativeTo:nil];
+         _metalView = view;
++        if (launcher_alpha) [[self.window contentView] setNeedsDisplay:YES];
+ 
+         [(WineWindow*)self.window windowDidDrawContent];
+ 
+@@ -986,14 +1008,15 @@ - (CALayer*) makeBackingLayer
+         layer.device = _device;
+         layer.framebufferOnly = YES;
+         layer.magnificationFilter = kCAFilterNearest;
+-        layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
++        layer.backgroundColor = CGColorGetConstantColor(launcher_alpha ? kCGColorClear : kCGColorBlack);
++        layer.opaque = !launcher_alpha;
+         layer.contentsScale = retina_on ? 2.0 : 1.0;
+         return layer;
+     }
+ 
+     - (BOOL) isOpaque
+     {
+-        return YES;
++        return !launcher_alpha;
+     }
+ 
+ @end
+diff --git a/dlls/winemac.drv/d3dmetal_objc.m b/dlls/winemac.drv/d3dmetal_objc.m
+index 9b4a054..6fb5248 100644
+--- a/dlls/winemac.drv/d3dmetal_objc.m
++++ b/dlls/winemac.drv/d3dmetal_objc.m
+@@ -37,6 +37,12 @@
+ 
+ @implementation WineMetalLayer
+ 
++    /* D3DMetal can't know that DWM would have composited this swapchain's alpha. */
++    - (void) setOpaque:(BOOL)opaque
++    {
++        [super setOpaque:opaque && !launcher_alpha];
++    }
++
+     /* Extend [CAMetalLayer nextDrawable] so client_surface_present() can be
+      * called for the corresponding client_surface.
+      */
+diff --git a/dlls/winemac.drv/macdrv_cocoa.h b/dlls/winemac.drv/macdrv_cocoa.h
+index 477efe9..4ffc582 100644
+--- a/dlls/winemac.drv/macdrv_cocoa.h
++++ b/dlls/winemac.drv/macdrv_cocoa.h
+@@ -146,6 +146,7 @@
+ extern bool retina_enabled;  /* Whether Retina mode is enabled via registry setting. */
+ extern bool retina_on;       /* Whether Retina mode is currently active (enabled and display is in default mode). */
+ extern bool enable_app_nap;
++extern bool launcher_alpha;   /* Whether this process composites window alpha (GRYPHLINK launcher). */
+ 
+ static inline CGRect cgrect_mac_from_win(CGRect rect)
+ {
+diff --git a/dlls/winemac.drv/macdrv_main.c b/dlls/winemac.drv/macdrv_main.c
+index 56e7a77..a5df1d2 100644
+--- a/dlls/winemac.drv/macdrv_main.c
++++ b/dlls/winemac.drv/macdrv_main.c
+@@ -60,6 +60,7 @@ bool use_precise_scrolling = true;
+ int gl_surface_mode = GL_SURFACE_IN_FRONT_OPAQUE;
+ bool retina_enabled = false;
+ bool enable_app_nap = false;
++bool launcher_alpha = false;
+ 
+ UINT64 app_icon_callback = 0;
+ UINT64 app_quit_request_callback = 0;
+@@ -281,6 +282,34 @@ static inline DWORD get_config_key(HKEY defkey, HKEY appkey, const char *name,
+  *
+  * Set up the Mac driver options.
+  */
++static BOOL path_contains(const WCHAR *path, const WCHAR *needle)
++{
++    size_t len = wcslen(needle);
++
++    for (; *path; path++)
++        if (!wcsnicmp(path, needle, len)) return TRUE;
++    return FALSE;
++}
++
++
++/***********************************************************************
++ *              is_gryphlink_launcher
++ *
++ * HACK: The GRYPHLINK launcher is a rounded Qt window surrounded by a transparent
++ * margin, which it leaves for DWM to composite.  The game lives under the same
++ * directory and must keep its opaque windows.
++ */
++static BOOL is_gryphlink_launcher(void)
++{
++    const WCHAR *image = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
++
++    return (path_contains(image, u"\\GRYPHLINK\\") &&
++            !path_contains(image, u"\\GRYPHLINK\\games\\")) ||
++           (path_contains(image, u"\\ArknightsEndfieldgowoU\\") &&
++            !path_contains(image, u"\\ArknightsEndfieldgowoU\\games\\"));
++}
++
++
+ static void setup_options(void)
+ {
+     static const WCHAR macdriverW[] = {'\\','M','a','c',' ','D','r','i','v','e','r',0};
+@@ -288,6 +317,8 @@ static void setup_options(void)
+     HKEY hkey, appkey = 0;
+     DWORD len;
+ 
++    launcher_alpha = is_gryphlink_launcher();
++
+     /* @@ Wine registry key: HKCU\Software\Wine\Mac Driver */
+     hkey = open_hkcu_key("Software\\Wine\\Mac Driver");
+ 
+diff --git a/dlls/winemac.drv/window.c b/dlls/winemac.drv/window.c
+index 741f7fd..9327bf8 100644
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -340,6 +340,19 @@ static void sync_window_opacity(struct macdrv_win_data *data, BYTE alpha,
+ }
+ 
+ 
++/***********************************************************************
++ *              window_keeps_per_pixel_alpha
++ *
++ * SetLayeredWindowAttributes() normally drops per-pixel alpha.  The GRYPHLINK
++ * launcher fades itself in with it, while relying on DWM to honor the alpha
++ * in its swapchain.
++ */
++static BOOL window_keeps_per_pixel_alpha(HWND hwnd)
++{
++    return launcher_alpha && (NtUserGetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_LAYERED);
++}
++
++
+ /***********************************************************************
+  *              sync_window_min_max_info
+  */
+@@ -528,7 +541,7 @@ static void create_cocoa_window(struct macdrv_win_data *data)
+ 
+     /* set the window opacity */
+     if (!NtUserGetLayeredWindowAttributes(data->hwnd, &key, &alpha, &layered_flags)) layered_flags = 0;
+-    sync_window_opacity(data, alpha, FALSE, layered_flags);
++    sync_window_opacity(data, alpha, window_keeps_per_pixel_alpha(data->hwnd), layered_flags);
+ 
+ done:
+     if (win_rgn) NtGdiDeleteObjectApp(win_rgn);
+@@ -1376,7 +1389,7 @@ void macdrv_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha, DWOR
+         data->ulw_layered = FALSE;
+         if (data->cocoa_window)
+         {
+-            sync_window_opacity(data, alpha, FALSE, flags);
++            sync_window_opacity(data, alpha, window_keeps_per_pixel_alpha(hwnd), flags);
+             /* since layered attributes are now set, can now show the window */
+             if ((NtUserGetWindowLongW(hwnd, GWL_STYLE) & WS_VISIBLE) && !data->on_screen)
+                 show_window(data);

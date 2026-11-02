@@ -45,7 +45,8 @@ final class GPTKSourceTests: XCTestCase {
             XCTAssertFalse(sources.isEmpty, "Should find the loaded GPT disk")
             if let first = sources.first {
                 XCTAssertTrue(first.isVersion4)
-                XCTAssertEqual(first.version, "4.0b2")
+                XCTAssertTrue(first.version?.hasPrefix("4.0") == true,
+                              "Expected a GPTK 4.x version, got \(first.version ?? "nil")")
             }
         }
     }

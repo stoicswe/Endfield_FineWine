@@ -14,12 +14,17 @@
 #   BOTTLE   (default "Arknights Endfield" — the name the other scripts expect)
 #   BACKEND  (default d3dmetal; one of d3dmetal | dxmt | dxvk | wined3d)
 #   MSYNC    (default 1; set 0 for the D3DMetal/Rosetta launcher-crash workaround)
+#   METAL_HUD (default 0; set 1 to enable Apple's Metal Performance HUD for every Wine
+#            process in the bottle — Endfield.exe, Games.exe, Launcher.exe, XXMI, …)
+#   MAX_FPS  (optional; e.g. 60 or 120 to set D3DM_MAX_FPS frame cap)
 #   APP      (CrossOver app whose tools to use; default: the patched copy, else /Applications/CrossOver.app)
 #
 # The settings are [EnvironmentVariables] keys in the bottle's cxbottle.conf — the same keys the
 # CrossOver 26 GUI writes (see docs/06):
 #   CX_GRAPHICS_BACKEND   d3dmetal | dxmt | dxvk | wined3d   (key absent = "Auto")
 #   WINEMSYNC=1           MSync
+#   MTL_HUD_ENABLED=1     Apple's Metal Performance HUD (optional; Tools → Metal HUD in the patcher)
+#   D3DM_MAX_FPS=60       optional D3DMetal frame rate limit
 #   D3DM_ENABLE_METALFX=1 "DLSS" for D3DMetal (DLSS calls are served by MetalFX)
 #   DXMT_ENABLE_NVEXT=1   the same toggle for DXMT
 # ROSETTA_ADVERTISE_AVX needs no setting: CrossOver's wine wrapper already sets it to 1.
@@ -30,6 +35,8 @@ set -uo pipefail
 BOTTLE="${BOTTLE:-Arknights Endfield}"
 BACKEND="${BACKEND:-d3dmetal}"
 MSYNC="${MSYNC:-1}"
+METAL_HUD="${METAL_HUD:-0}"
+MAX_FPS="${MAX_FPS:-}"
 APP="${APP:-}"
 if [ -z "$APP" ]; then
   for c in "/Applications/CrossOver_Endfield_Patch.app" \
@@ -48,6 +55,10 @@ case "$MSYNC" in
   0|1) ;;
   *) echo "ERROR: MSYNC must be 0 or 1 (got '$MSYNC')" >&2; exit 1 ;;
 esac
+case "$METAL_HUD" in
+  0|1) ;;
+  *) echo "ERROR: METAL_HUD must be 0 or 1 (got '$METAL_HUD')" >&2; exit 1 ;;
+esac
 BP="$HOME/Library/Application Support/CrossOver/Bottles/$BOTTLE"
 CONF="$BP/cxbottle.conf"
 
@@ -57,9 +68,15 @@ case "$BACKEND" in
   d3dmetal) SETTINGS+=(D3DM_ENABLE_METALFX 1) ;;
   dxmt)     SETTINGS+=(DXMT_ENABLE_NVEXT 1) ;;
 esac
+if [ "$METAL_HUD" = "1" ]; then
+  SETTINGS+=(MTL_HUD_ENABLED 1)
+fi
+if [ -n "$MAX_FPS" ]; then
+  SETTINGS+=(D3DM_MAX_FPS "$MAX_FPS")
+fi
 
 show_settings(){
-  grep -E '^"(CX_GRAPHICS_BACKEND|WINEMSYNC|D3DM_ENABLE_METALFX|DXMT_ENABLE_NVEXT)"' "$CONF" 2>/dev/null \
+  grep -E '^"(CX_GRAPHICS_BACKEND|WINEMSYNC|D3DM_ENABLE_METALFX|DXMT_ENABLE_NVEXT|MTL_HUD_ENABLED|D3DM_MAX_FPS)"' "$CONF" 2>/dev/null \
     | sed 's/^/  /' || echo "  (none set — CrossOver defaults: graphics Auto, MSync off, DLSS off)"
 }
 
@@ -109,6 +126,6 @@ Next:
        "$CXR/bin/wine" --bottle "$BOTTLE" --wait-children ~/Downloads/GRYPHLINK_<version>.exe
      Keep the default install location (C:\\Program Files\\GRYPHLINK).
   2. Log in to the launcher, download the game, and start it with the dropdown next to Start →
-     "Launch with DirectX 11" (DX12 renders a white screen; Vulkan is experimental,
+     "Launch with DirectX 11" (DX12 renders a white screen; Vulkan is also supported,
      see docs/graphics-performance.md).
 EOF

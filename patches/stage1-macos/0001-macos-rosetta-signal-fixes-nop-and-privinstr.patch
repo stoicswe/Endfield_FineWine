@@ -1,41 +1,75 @@
 diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
-index 91926a8..e6f434e 100644
+index 91926a8..6d073fa 100644
 --- a/dlls/ntdll/unix/signal_x86_64.c
 +++ b/dlls/ntdll/unix/signal_x86_64.c
-@@ -1990,6 +1990,31 @@ static inline BOOL handle_cet_nop( ucontext_t *sigcontext, CONTEXT *context )
-             RIP_sig(sigcontext) += prefix_count + 3;
-             TRACE_(seh)( "skipped RDSSPD/RDSSPQ instruction\n" );
-             return TRUE;
-+        case 0x1F:
-+            /* Endfield_FineWine stage-1 fix: multi-byte NOP (0F 1F /0). Rosetta 2 wrongly raises
-+               an illegal-instruction fault on some forms (observed: the register form 0F 1F C1
-+               = "nop ecx", used by the Endfield/TenProtect VMProtect layer). It is a NOP with no
-+               side effects, so decode its length and skip past it. */
+@@ -1999,6 +1999,62 @@
+ }
+
+ /***********************************************************************
++ *           handle_multibyte_nop
++ *
++ * Decode a documented 0F 1F /0 NOP reported as an invalid opcode on macOS.
++ * Do not suppress faults for LOCK, reserved /reg encodings or incomplete
++ * instructions. Address-size override selects 32-bit addressing in long mode;
++ * SIB and displacement lengths are the same as for 64-bit addressing.
++ */
++static inline BOOL handle_multibyte_nop( ucontext_t *sigcontext, CONTEXT *context )
++{
++    BYTE instr[15], modrm;
++    unsigned int p = 0, mod, rm, disp = 0;
++    unsigned int len = virtual_uninterrupted_read_memory( (BYTE *)context->Rip, instr, sizeof(instr) );
++
++    while (p < len)
++    {
++        switch (instr[p])
 +        {
-+            unsigned int p = i + 2;                 /* index of the modrm byte */
-+            BYTE modrm; unsigned int mod, rm;
-+            if (p >= len) return FALSE;
-+            modrm = instr[p++];
-+            mod = modrm >> 6; rm = modrm & 7;
-+            if (mod != 3 && rm == 4)                /* SIB byte */
-+            {
-+                BYTE sib;
-+                if (p >= len) return FALSE;
-+                sib = instr[p++];
-+                if (mod == 0 && (sib & 7) == 5) p += 4;   /* SIB base=5, mod=0 -> disp32 */
-+            }
-+            if (mod == 1) p += 1;                   /* disp8 */
-+            else if (mod == 2) p += 4;              /* disp32 */
-+            else if (mod == 0 && rm == 5) p += 4;   /* rip-relative disp32 (no SIB) */
-+            RIP_sig(sigcontext) += p;               /* p = full instruction length incl. prefixes */
-+            TRACE_(seh)( "skipped multi-byte NOP (0F 1F)\n" );
-+            return TRUE;
++        case 0xf0: /* LOCK is invalid on NOP. */
++        case 0xf2: /* Do not accept undocumented repeat-prefix forms. */
++        case 0xf3:
++            return FALSE;
++        case 0x26: case 0x2e: case 0x36: case 0x3e: case 0x64: case 0x65:
++        case 0x66: case 0x67:
++        case 0x40: case 0x41: case 0x42: case 0x43:
++        case 0x44: case 0x45: case 0x46: case 0x47:
++        case 0x48: case 0x49: case 0x4a: case 0x4b:
++        case 0x4c: case 0x4d: case 0x4e: case 0x4f:
++            p++;
++            continue;
 +        }
-         }
-         break;
-     default:
-@@ -2518,6 +2543,21 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
++        break;
++    }
++    if (len - p < 3 || instr[p] != 0x0f || instr[p + 1] != 0x1f) return FALSE;
++    p += 2;
++    modrm = instr[p++];
++    if (modrm & 0x38) return FALSE; /* Only /0 is documented. */
++    mod = modrm >> 6;
++    rm = modrm & 7;
++    if (mod != 3 && rm == 4)
++    {
++        BYTE sib;
++        if (p >= len) return FALSE;
++        sib = instr[p++];
++        if (mod == 0 && (sib & 7) == 5) disp = 4;
++    }
++    if (mod == 1) disp = 1;
++    else if (mod == 2 || (mod == 0 && rm == 5)) disp = 4;
++    if (disp > len - p) return FALSE;
++    p += disp;
++    /* len is bounded by the architectural 15-byte instruction limit. */
++    RIP_sig(sigcontext) += p;
++    TRACE_(seh)( "skipped multi-byte NOP (0F 1F /0), length %u\n", p );
++    return TRUE;
++}
++
++/***********************************************************************
+  *           emulate_xgetbv
+  *
+  * Check if the fault location is an Intel XGETBV instruction for xcr0 and
+@@ -2516,8 +2572,32 @@
+ #ifdef __APPLE__
+         /* CW HACK 20186 */
          if (handle_cet_nop( ucontext, &context.c )) return;
++        if (handle_multibyte_nop( ucontext, &context.c )) return;
          /* CW HACK 23427 */
          if (emulate_xgetbv( ucontext, &context.c )) return;
 +        /* Endfield_FineWine stage-2 fix: Rosetta reports privileged instructions (e.g. mov reg,cr3
@@ -45,13 +79,21 @@ index 91926a8..e6f434e 100644
 +           processes it the same way it does on Linux (fixes ACE "driver error 13"). */
 +        rec.ExceptionCode = is_privileged_instr( &context.c );
 +        if (rec.ExceptionCode) break;
-+        {   /* instrumentation: log any remaining genuinely-unknown illegal instruction */
-+            BYTE _ib[16];
-+            unsigned int _il = virtual_uninterrupted_read_memory( (BYTE *)RIP_sig(ucontext), _ib, sizeof(_ib) );
-+            ERR( "CWC-ILLEGAL-INSTR rip=%p len=%u bytes: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
-+                 (void *)RIP_sig(ucontext), _il,
-+                 _ib[0],_ib[1],_ib[2],_ib[3],_ib[4],_ib[5],_ib[6],_ib[7],
-+                 _ib[8],_ib[9],_ib[10],_ib[11],_ib[12],_ib[13],_ib[14],_ib[15] );
++        {
++            static const char hex[] = "0123456789abcdef";
++            BYTE instr[15];
++            char bytes[3 * sizeof(instr) + 1];
++            unsigned int i, len = virtual_uninterrupted_read_memory( (BYTE *)context.c.Rip,
++                                                                    instr, sizeof(instr) );
++            for (i = 0; i < len; i++)
++            {
++                bytes[3 * i] = hex[instr[i] >> 4];
++                bytes[3 * i + 1] = hex[instr[i] & 15];
++                bytes[3 * i + 2] = ' ';
++            }
++            bytes[3 * len] = 0;
++            ERR( "macOS illegal instruction rip=%p len=%u bytes: %s\n",
++                 (void *)context.c.Rip, len, bytes );
 +        }
  #endif
          rec.ExceptionCode = EXCEPTION_ILLEGAL_INSTRUCTION;

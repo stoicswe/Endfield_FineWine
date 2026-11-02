@@ -12,6 +12,17 @@
 # Re-pushing to the same branch refreshes the existing release in place. A manual
 # dispatch can publish an explicit version without a branch.
 #
+# When a release is newly created (not refreshed), optional final steps post a Bluesky
+# thread and a Discord announcement. Bluesky is configured with BLUESKY_HANDLE (variable),
+# BLUESKY_APP_PASSWORD (secret) and the optional BLUESKY_PDS (variable).
+#
+# Discord has two transports, whichever is configured:
+#   * Discord app/bot (preferred): DISCORD_BOT_TOKEN secret + DISCORD_CHANNEL_ID
+#     variable. Also crossposts when the channel is an Announcement channel.
+#   * Webhook: DISCORD_WEBHOOK_URL secret.
+# Both ping the role in the DISCORD_RELEASE_ROLE_ID repository variable (if set).
+# Without either transport the step is skipped and the release still publishes.
+#
 # The app's CFBundleShortVersionString is set to the release version, so the .app
 # reports the version it was released as.
 
@@ -29,7 +40,8 @@ on:
         type: string
 
 permissions:
-  contents: write # create/edit the release and its tag
+  contents: write # create/edit the release and its tag, and push the generated PR branch
+  pull-requests: write # create/update the generated issue-template refresh PR
 
 concurrency:
   group: release-${{ github.ref }}
@@ -48,7 +60,14 @@ jobs:
       has_previous: ${{ steps.resolve.outputs.has_previous }}
       commits: ${{ steps.resolve.outputs.commits }}
       changed: ${{ steps.resolve.outputs.changed }}
+      started_epoch: ${{ steps.clock.outputs.started_epoch }}
     steps:
+      # The Bluesky thread reports this pipeline's duration (docs/wiki are separate workflows).
+      - name: Record pipeline start
+        id: clock
+        shell: bash
+        run: echo "started_epoch=$(date -u +%s)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # full history + tags (baseline = previous release tag)
@@ -128,6 +147,15 @@ jobs:
     timeout-minutes: 20
     env:
       CX_VER: "26.3.0"
+      # Empty when the secret/variable is not configured; step-level `if:` can read
+      # job env (unlike `secrets`, which is not allowed in `if:` conditions).
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+      DISCORD_CHANNEL_ID: ${{ vars.DISCORD_CHANNEL_ID }}
+      # Empty when the Bluesky bot is not configured; step-level `if:` can read job env.
+      BLUESKY_HANDLE: ${{ vars.BLUESKY_HANDLE }}
+      BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
+      BLUESKY_PDS: ${{ vars.BLUESKY_PDS }}
     steps:
       - uses: actions/checkout@v7
 
@@ -144,11 +172,44 @@ jobs:
           path: dl/modules
           merge-multiple: true
 
-      - name: Download launcher app
-        uses: actions/download-artifact@v4
-        with:
-          name: launcher-app
-          path: dl/launcher
+      # The release version is the source of truth: verify the artifact before publishing.
+      - name: Verify the release version in FineWine Patcher.app
+        env:
+          EXPECTED_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          APP="$(find dl/app -name '*.zip' | head -n1)"
+          [ -n "$APP" ] || { echo "::error::no Patcher.app zip in the patcher-app artifact"; exit 1; }
+
+          python3 - <<'PY'
+          import plistlib
+          import pathlib
+          import sys
+          import zipfile
+          import os
+
+          expected = os.environ["EXPECTED_VERSION"]
+          app = next(
+              path for path in sorted(pathlib.Path("dl/app").glob("*.zip"))
+          )
+          with zipfile.ZipFile(app) as bundle:
+              name = next(
+                  name for name in bundle.namelist()
+                  if name.endswith("FineWine Patcher.app/Contents/Info.plist")
+              )
+              plist = plistlib.loads(bundle.read(name))
+
+          short = plist.get("CFBundleShortVersionString")
+          build = plist.get("CFBundleVersion")
+          if short != expected or build != expected:
+              print(
+                  f"::error::FineWine Patcher version mismatch — expected {expected}, "
+                  f"got CFBundleShortVersionString={short} and CFBundleVersion={build}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          print(f"FineWine Patcher version: {short}")
+          PY
 
       - name: Assemble release assets
         shell: bash
@@ -161,9 +222,6 @@ jobs:
           MOD="$(find dl/modules -name '*.tar.gz' | head -n1)"
           [ -n "$MOD" ] || { echo "::error::no modules tarball in the endfield-wine-modules artifact"; exit 1; }
           cp "$MOD" "release/endfield-wine-modules.tar.gz"
-          LAUNCHER="$(find dl/launcher -name '*.zip' | head -n1)"
-          [ -n "$LAUNCHER" ] || { echo "::error::no launcher app zip in the launcher-app artifact"; exit 1; }
-          cp "$LAUNCHER" "release/Arknights.Endfield.app.zip"
           ( cd release && sha256sum ./* > SHA256SUMS.txt && cat SHA256SUMS.txt )
           ls -lh release
 
@@ -185,9 +243,12 @@ jobs:
           # Reuse the wiki generator's configured OpenRouter model.
           MODEL="$(grep -E '^[[:space:]]+model:' .git-wiki-builder.yml | head -n1 | awk '{print $2}')"
           export NOTES_MODEL="${MODEL:-openrouter/free}"
-          python3 .github/scripts/generate-release-notes.py notes.md
+          # notes.md is the release body; discord.md is the short, table-free
+          # summary the Discord announcement embeds.
+          python3 .github/scripts/generate-release-notes.py notes.md discord.md
 
       - name: Publish / refresh the release
+        id: publish
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -198,18 +259,95 @@ jobs:
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "existing release $TAG -> refreshing in place"
+            echo "created=false" >> "$GITHUB_OUTPUT"
           else
             echo "creating release $TAG"
+            echo "created=true" >> "$GITHUB_OUTPUT"
             gh release create "$TAG" --title "$TITLE" --target "$GITHUB_SHA" --latest --notes-file notes.md
           fi
           gh release upload "$TAG" \
             release/FineWine.Patcher.app.zip \
-            release/Arknights.Endfield.app.zip \
             release/endfield-wine-modules.tar.gz \
             release/SHA256SUMS.txt --clobber
           gh release edit "$TAG" --title "$TITLE" --latest --notes-file notes.md
           gh release view "$TAG" --json name,tagName,isPrerelease,assets \
             --jq '{name, tagName, isPrerelease, assets: [.assets[].name]}'
+
+      - name: Announce on Discord
+        # Only for a brand-new release: refreshing an existing tag must not re-ping.
+        if: ${{ success() && steps.publish.outputs.created == 'true' && (env.DISCORD_WEBHOOK_URL != '' || (env.DISCORD_BOT_TOKEN != '' && env.DISCORD_CHANNEL_ID != '')) }}
+        shell: bash
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_CHANNEL_ID: ${{ vars.DISCORD_CHANNEL_ID }}
+          DISCORD_ROLE_ID: ${{ vars.DISCORD_RELEASE_ROLE_ID }}
+          ANNOUNCE_TITLE: ${{ needs.version.outputs.title }}
+          ANNOUNCE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.version.outputs.tag }}
+          ANNOUNCE_VERSION: ${{ needs.version.outputs.version }}
+          ANNOUNCE_CX_VER: ${{ env.CX_VER }}
+          ANNOUNCE_SHA: ${{ github.sha }}
+          ANNOUNCE_SUMMARY_PATH: discord.md
+        run: python3 .github/scripts/announce-discord-release.py
+
+      - name: Announce on Bluesky
+        # Only for a brand-new release: refreshing an existing tag must not re-post.
+        if: ${{ success() && steps.publish.outputs.created == 'true' && env.BLUESKY_HANDLE != '' && env.BLUESKY_APP_PASSWORD != '' }}
+        shell: bash
+        env:
+          BLUESKY_HANDLE: ${{ vars.BLUESKY_HANDLE }}
+          BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
+          BLUESKY_PDS: ${{ vars.BLUESKY_PDS }}
+          BLUESKY_MAX_POSTS: ${{ vars.BLUESKY_MAX_POSTS }}
+          THREAD_TYPE: Release
+          VERSION: ${{ needs.version.outputs.version }}
+          PIPELINE_STARTED_EPOCH: ${{ needs.version.outputs.started_epoch }}
+          DOWNLOAD_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.version.outputs.tag }}
+          # The thread's replies carry the generated description only (discord.md = the LLM
+          # summary, or the commit-list fallback when the model was unavailable) — never the
+          # full release body, whose asset table, collapsible commit list and provenance
+          # footer are meant for the GitHub release page.
+          BODY_FILE: discord.md
+        run: python3 .github/scripts/post-bluesky-thread.py
+
+      # Issue-form dropdowns cannot be populated at form-render time, and main is protected.
+      # After publishing, open/update a generated PR against main so required checks run there.
+      - name: Open a PR to refresh issue-template version dropdowns
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+          BRANCH: chore/issue-template-versions-${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git switch -C "$BRANCH" FETCH_HEAD
+          python3 .github/scripts/update-issue-version-dropdowns.py
+
+          if git diff --quiet -- .github/ISSUE_TEMPLATE; then
+            echo "issue-template version dropdowns are already current"
+            exit 0
+          fi
+
+          git add .github/ISSUE_TEMPLATE
+          git commit -m "chore: refresh issue template release versions"
+          git push --force origin "HEAD:refs/heads/$BRANCH"
+
+          existing_url="$(gh pr view "$BRANCH" --json state,url \
+            --jq 'select(.state == "OPEN") | .url' 2>/dev/null || true)"
+          if [ -n "$existing_url" ]; then
+            echo "Updated existing PR: $existing_url"
+            echo "Issue-template refresh PR: $existing_url" >> "$GITHUB_STEP_SUMMARY"
+          else
+            url="$(gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "Refresh issue template release versions" \
+              --body "Automated by the release workflow after publishing a full release. This refreshes the issue-form version dropdowns with the current full, non-nightly release versions. Please merge after the required build checks pass.")"
+            echo "Opened PR: $url"
+            echo "Issue-template refresh PR: $url" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Summary
         shell: bash
@@ -224,6 +362,6 @@ jobs:
             echo "|---|---|"
             echo "| Tag | \`$TAG\` |"
             echo "| Version | \`${{ needs.version.outputs.version }}\` |"
-            echo "| Assets | Patcher.app zip · Arknights Endfield.app zip · modules tarball · SHA256SUMS.txt |"
+            echo "| Assets | Patcher.app zip · modules tarball · SHA256SUMS.txt |"
             echo "| URL | ${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG |"
           } >> "$GITHUB_STEP_SUMMARY"

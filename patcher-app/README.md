@@ -6,8 +6,14 @@ A minimal macOS app that turns a copy of **CrossOver 26.3** into the patched bui
 
 1. Copies your `CrossOver.app` into a staging folder (the original is never touched).
 2. Swaps in the pre-built patched modules bundled inside the app:
-   * the Wine modules — `ntdll.so`, `kernel32.dll`, `ntoskrnl.exe`, `lsass.exe`, `wineboot.exe`
-     (`lsass.exe` is added: stock CrossOver has none, and the new ACE-CORE driver requires it)
+   * the Wine modules — `ntdll.so`, `kernel32.dll`, `ntoskrnl.exe`, `lsass.exe`, `wineboot.exe`,
+     `rundll32.exe`, and `wineserver` (installed at both `bin/wineserver` and
+     `CrossOver-Hosted Application/wineserver`)
+     (`lsass.exe` is added: stock CrossOver has none, and the new ACE-CORE driver requires it;
+     `wineserver` must be swapped too — its server protocol has to match the patched `ntdll.so`,
+     otherwise every wine process dies with a `version mismatch` before any window appears;
+     `rundll32.exe` is swapped because the stock one shows a visible helper window that
+     hangs/fails bottle creation on macOS 26 — WineHQ bug 59595)
    * `lib64/libMoltenVK.dylib` (built by [`scripts/build-moltenvk.sh`](../scripts/build-moltenvk.sh))
 
    keeping `.cxorig` backups.
@@ -23,13 +29,6 @@ A minimal macOS app that turns a copy of **CrossOver 26.3** into the patched bui
 5. Verifies the swap (sizes, `ntdll.so` signature, the `lib64` rpath D3DMetal needs, the
    installed GPTK4 files if selected, and the bundle signature).
 6. Moves the patched app into place; an existing copy macOS won't let it delete goes to the Trash.
-7. Creates a **double-clickable `Arknights Endfield.app`** next to it that **opens the Gryphline
-   launcher** through the *direct* wine path. That path stays up where the CrossOver app's bottle
-   *Start* button crashes the launcher's Chromium renderer
-   ([docs/project-information/15](../docs/project-information/15-launcher-qtwebengine-crash.md)).
-   (Direct `Endfield.exe` launching stays in [`scripts/launch-endfield.sh`](../scripts/launch-endfield.sh).)
-   The app is rendered from [`Resources/LauncherTemplate.sh`](Resources/LauncherTemplate.sh) — the same
-   template [`scripts/make-launcher-app.sh`](../scripts/make-launcher-app.sh) uses.
 
 **Apple's Game Porting Toolkit is never bundled or redistributed** (it is evaluation-only
 software). The optional GPTK4 step reads the DMG *you* mounted, under Apple's own license; if
@@ -55,6 +54,19 @@ and vice-versa:
 | ntdll rpath | `@loader_path/../../../lib64` | `@loader_path/../../../lib/aarch64` |
 | D3DMetal | `lib64/apple_gptk` | `lib/apple_gptk` |
 | payload | `Resources/payload/` | `Resources/payload/arm/` |
+
+**ARM needs no Rosetta 2, but only in an `arm64` bottle.** CrossOver ARM also ships a full x86_64
+Wine tree, and its `bin/wine` runs a default `win64` bottle on that tree under Rosetta. Only a
+bottle created with `cxbottle --winearch arm64` uses the aarch64 host, with FEX emulating x86_64
+Windows code inside native processes. So for an ARM source the patcher:
+
+- skips the Rosetta 2 step when patching and in the Automated Setup preflight,
+- creates `arm64` bottles,
+- hides GPTK and D3DMetal, which are x86_64-only even in CrossOver ARM (DXMT is the default),
+- names the copy `CrossOver_Endfield_Patch_ARM.app`, and only reuses a copy of the same variant.
+
+A bottle created any other way runs CrossOver's unpatched x86_64 tree, and the ARM payload never
+loads.
 
 Detection is structural: an app carrying `lib/wine/aarch64-unix/ntdll.so` is the ARM variant,
 otherwise an app with `lib/wine/x86_64-unix/ntdll.so` + `lib64/libMoltenVK.dylib` is x64.
@@ -93,7 +105,141 @@ fuzz), the rest need rebasing, and the `msync` patches cannot apply at all becau
 `dlls/ntdll/unix/msync.c` is a CrossOver-only file — so the real CrossOver ARM sources are
 required for a faithful build.
 
-## Mod framework (EFMI) — optional second phase
+## Automated Setup
+
+**Automated Setup…** (next to *Create Patched Copy…*) is the one-click path. It uses the CrossOver
+selected on the main page and:
+
+1. **Creates the patched copy** — `/Applications/CrossOver_Endfield_Patch.app` (falling back to
+   `~/Applications` if `/Applications` isn't writable) with the same module swap, re-seal and
+   verification as "Create Patched Copy…". An existing patched copy is reused; a *Re-create* toggle
+   rebuilds it. The embedded patch is covered by the setup's single statistics question at the end,
+   not a separate one.
+2. **Graphics (optional)** — keep CrossOver's bundled D3DMetal or install **Apple's GPTK4 /
+   D3DMetal 4**. The wizard links to Apple's GPTK page (you download it yourself — it is never
+   bundled), detects a mounted *“Evaluation environment for Windows games …”* DMG, and lets you
+   Rescan / Choose a redist folder. Picking a GPTK on a reused copy re-creates it so the new
+   D3DMetal is installed.
+3. **Installer** — opens the official Endfield download page and asks you to select the
+   `GRYPHLINK_….exe` you downloaded.
+4. **Bottle settings** — every default is editable:
+   * bottle name (default `Arknights Endfield`; existing names and CrossOver's forbidden
+     characters are rejected),
+   * graphics backend (D3DMetal by default, plus DXMT / DXVK / WineD3D / automatic),
+   * MSync on/off (on by default),
+   * the backend's upscaler toggle (MetalFX for D3DMetal, NVEXT for DXMT).
+5. **Create and install** — creates the bottle with the patched app's own `cxbottle`
+   (`win11_64`, the same keys `scripts/create-bottle.sh` writes), starts the installer through the
+   direct `bin/wine --bottle … --cx-app` path, and — when the installer exits — runs
+   `cxmenu --install` so GRYPHLINK appears in the bottle's page.
+
+The wizard writes a log of every command and its output to `~/Library/Logs/FineWinePatcher/`
+(`bottle-…`, `installer-…`, `cxmenu-…`), reachable from the finished screen.
+
+**Order matters.** The wizard creates the bottle with the *patched* app on purpose: CrossOver bakes
+the creating app's bundle identifier into program launchers, so a bottle created by the stock app
+keeps opening the stock app. Delete stubs the stock app created (`~/Applications/CrossOver/…`)
+before re-creating them from the patched copy.
+
+## Per-run anonymous usage statistics
+
+There is no telemetry checkbox and no persistent reporting setting. When a **patch run** or an
+**Automated Setup run** finishes — whether it succeeded or failed — the patcher shows a dialog
+asking whether you want to send an anonymous report for **that run only**. The dialog includes the
+exact JSON payload, an explanation of why it helps, and a list of what is never collected. Nothing
+is sent automatically; the report is posted only if you choose **Send Statistics**. Choosing
+**Don't Send** closes the dialog without contacting the statistics endpoint.
+
+**Why this helps.** Release download counts cannot tell us whether the patch worked, which macOS
+or CrossOver version failed, or which step breaks most often. These per-run reports let us see
+failure rates and timings across real machines, so we can prioritise the compatibility and
+performance fixes that actually affect players.
+
+**What is collected.** Each report contains only:
+
+| Field | Example | Purpose |
+|---|---|---|
+| `app` | `endfield-finewine-patcher` | Identifies the client |
+| `event` | `patch_succeeded`, `patch_failed` | Whether the run completed |
+| `appVersion` | `1.2.4` | Correlate problems with a release |
+| `osMajor` | `26` | Find macOS-version-specific breakage |
+| `metadata` | `gptk=true`, `duration_seconds=42`, `failed_step=3`, `cross_over_build=39832` | Diagnose the path, failing step and the exact CrossOver build |
+| `logs` | *(Automated Setup only)* redacted excerpts | Show what actually failed during bottle creation / the installer |
+
+`cross_over_build` is the source CrossOver's `CFBundleVersion` (for example `39832`). CrossOver
+point builds that all report `26.3` can ship different Wine modules — the reason the patcher has to
+swap `wineserver` as well — so the build number is the field that tells two reports apart. It is a
+software version, not a machine or user identifier.
+
+Automated Setup reports additionally carry `setup_backend`, `setup_msync`, `setup_upscaling` and
+`installer_status` (`started` / `exited:<code>`), plus **redacted excerpts of that run's logs**
+(`~/Library/Logs/FineWinePatcher/bottle-…`, `installer-…`, `cxmenu-…`). Each excerpt is capped
+(4 000 characters per log, 12 000 in total, newest lines kept), and every line passes through a
+redactor *before* the preview is built:
+
+| Redacted | Becomes |
+|---|---|
+| Your home folder, macOS and Windows user names, other users' profiles | `~`, `<user>` |
+| The bottle name (and the bottle path) | `<bottle>` |
+| Host name (including `host.local`) | `<host>` |
+| E-mail addresses | `<email>` |
+| IP and MAC addresses | `<ip>`, `<mac>` |
+| UUIDs, JWTs, `Bearer …` tokens, `token=…`/`password=…` values, long hex blobs | `<uuid>`, `<token>`, `<hash>`, `<redacted>` |
+| Temporary folders, volume names, CrossOver's `Registered to:` line | `<tmp>`, `<volume>`, `<redacted>` |
+
+Redaction is best-effort — automatic filtering cannot catch everything, so the dialog shows the
+**exact** redacted payload and asks you to review it before sending. A patch report never includes
+logs.
+
+The collector is `https://endfield-fine-wine.lovable.app/api/statistics`. The request is a
+best-effort HTTPS POST; there is no retry or offline queue.
+
+**Preview — exactly what would be sent.** The confirmation dialog displays the pretty-printed
+JSON built from the same encoder used by the send action, so the preview cannot drift from the
+actual payload. It is shown before the Send Statistics button can be used.
+
+After you choose **Send Statistics**, the app shows a thank-you dialog with a short confetti
+celebration to acknowledge your contribution to the project.
+
+Every patcher build runs `scripts/check-telemetry-privacy.py` plus the telemetry unit tests. The
+build fails if anything can be sent automatically, if a send action appears outside the
+user-confirmed dialog, if the event or metadata allowlist grows, or if the preview/disclosure
+disappears.
+
+**What is never sent.** Your home folder or user names, the bottle name, the host name, e-mail
+addresses, IP/MAC addresses, UUIDs, tokens and similar identifiers (all replaced with placeholders
+before the preview is built), game or account data, or a persistent identifier. The statistics
+server can still observe ordinary network metadata such as the source IP address, as with any
+HTTPS request.
+
+Download totals remain release-host metrics; actual patch usage is measured only from reports the
+user explicitly chooses to send.
+
+## Tools menu
+
+The patcher includes optional bottle-side utilities accessible from the menu bar under **Tools**:
+
+### Bottle Settings & App Alias
+
+**Tools → Bottle Settings…** allows configuring bottle-wide settings without editing `cxbottle.conf` manually:
+
+- **Graphics & Performance**: Set the active graphics backend (D3DMetal, DXMT, DXVK, WineD3D, or Auto), toggle MSync (`WINEMSYNC`), toggle backend upscaling (MetalFX / NVEXT), toggle Apple's Metal Performance HUD overlay (`MTL_HUD_ENABLED`), and set frame rate limits (`D3DM_MAX_FPS`).
+- **Clean App Alias (Dock Shortcut)**: Creates an `Arknights Endfield.app` shortcut in `~/Applications` that starts Gryphline's launcher through the patched CrossOver. Wine sub-processes share the alias's Dock tile, eliminating duplicate Dock icons, and a cleanup handler cleanly terminates Wine processes (`wineserver -k`) on exit.
+- **GPTK In-Place Upgrade**: Upgrades Apple's Game Porting Toolkit / D3DMetal inside an already-patched CrossOver without re-running the full copy and patch workflow.
+
+### Metal HUD & Performance Overlay
+
+**Tools → Metal HUD…** writes Apple's `MTL_HUD_ENABLED=1` into the selected bottle's
+`cxbottle.conf` `[EnvironmentVariables]`. CrossOver injects those Unix variables into every
+Wine process in the bottle, so the overlay follows **Endfield.exe**, Gryphline's **Games.exe** /
+**Launcher.exe**, XXMI, and anything else in that bottle that talks to Metal (D3DMetal, DXMT, or
+MoltenVK). Matching macOS launcher stubs (name or Info.plist pointing at those EXEs) get the same
+key in `LSEnvironment`. Off by default; **Disable HUD** removes it. The window also supports setting
+a D3DMetal frame rate limit (`D3DM_MAX_FPS`) and provides a **Stop Bottle** button to immediately
+restart bottle processes. The same opt-ins exist on the shell side: `METAL_HUD=1 MAX_FPS=60 ./scripts/create-bottle.sh`,
+or `scripts/swap-into-crossover.sh --metal-hud --skip-app-patch`.
+
+### Mod framework (EFMI)
 
 A separate **Mod Framework** window — menu bar **Tools → Mod Framework (EFMI)…** — hosts an
 independent **bottle-side** phase that makes the **XXMI Launcher / EFMI** mod stack work: it
@@ -160,6 +306,17 @@ Endfield via XXMI and check `d3d11_log.txt` for *"Proxy loading active, Forcing
 load_library_redirect=0"*. Note that XXMI rewrites `d3dx.ini` when it updates EFMI
 (`overwrite_ini=True`), so re-run the phase (or disable that option in XXMI) after an update.
 
+## Steam / NotProton — optional tools phase
+
+Under the menu bar **Tools → Steam / NotProton…**, the patcher provides an automated 1-click integration with [NotProton](https://github.com/NotProtonNot/NotProton) and Steam Play:
+
+- **Runner registration**: Stages your FineWine-patched CrossOver into NotProton's runners directory (`~/Library/Application Support/notproton/runners/crossover-finewine-26.3/CrossOver`).
+- **Steam Compatibility Tool**: Automatically writes the Steam compatibility tool manifest and launch bridge to `~/Library/Application Support/Steam/compatibilitytools.d/notproton-finewine-rosetta/`.
+- **Optimal Defaults**: Writes `CX_GRAPHICS_BACKEND=d3dmetal`, `D3DM_ENABLE_METALFX=1`, `WINEMSYNC=1`, and `ROSETTA_ADVERTISE_AVX=1`.
+- **One-click unregister**: Removes the tool entry and runner cleanly if you wish to revert.
+
+CLI equivalent: [`scripts/notproton-register.sh`](../scripts/notproton-register.sh). Full guide: [docs/notproton.md](../docs/notproton.md).
+
 ## Building the app
 
 Requires the Xcode Command Line Tools only (no Xcode):
@@ -202,8 +359,8 @@ third-party image libraries), centering the artwork on a transparent square with
 
 ## Licensing (important if you distribute the built app)
 
-- **The app itself** (Swift sources, UI, this directory): [MIT](../LICENSE).
-- **The bundled Wine modules** (`ntdll.so`, `kernel32.dll`, `ntoskrnl.exe`, `lsass.exe`, `wineboot.exe`): **LGPL-2.1-or-later** —
+- **The app itself** (Swift sources, UI, this directory): [GNU GPL-3.0-or-later](../LICENSE).
+- **The bundled Wine modules** (`ntdll.so`, `kernel32.dll`, `ntoskrnl.exe`, `lsass.exe`, `wineboot.exe`, `rundll32.exe`, `wineserver`): **LGPL-2.1-or-later** —
   they are Wine, built from CodeWeavers' freely published
   [CrossOver 26.3 Wine source](https://www.codeweavers.com/crossover/source) with this repo's
   [patches](../patches/) applied (which include the
@@ -233,10 +390,15 @@ game. It requires the user's own licensed CrossOver install as input, and links 
 ```
 Package.swift                     SwiftPM manifest (macOS 13+)
 Sources/FineWinePatcher/
-  FineWinePatcherApp.swift        app entry: main window + Tools menu + the Mod Framework window
+  FineWinePatcherApp.swift        app entry: main window + Tools menu + Mod Framework / Metal HUD windows
   ContentView.swift               the main window UI (the patch flow only)
+  MetalHUDView.swift              the Metal HUD window: per-bottle enable/disable of Apple's overlay
+  MetalHUD.swift                  bottle `MTL_HUD_ENABLED`, related Endfield/Games/GRYPHLINK discovery
   ModChainView.swift              the Mod Framework window: bottle + EFMI discovery, apply/revert chain
   PatchProgressViews.swift        the shared step-checklist and error views
+  PatchTelemetryPromptView.swift  the post-patch send/skip dialog with the exact payload preview
+  TelemetryThankYouView.swift     the post-send thank-you dialog with confetti
+  UsageTelemetry.swift            per-run report schema, allowlists, and the one send action
   PatcherEngine.swift             the patch steps (mirrors swap-into-crossover.sh) + the mod-chain phase
   ModChain.swift                  the mod (EFMI) chain support: backend/bottle/EFMI discovery,
                                   the d3dx.ini [System] proxy_d3d11 edit, verify, revert, state file
@@ -244,10 +406,13 @@ Sources/FineWinePatcher/
 Tests/FineWinePatcherTests/
   ModChainTests.swift             the mod-chain ini-editing rules (swift test)
   VariantTests.swift              x64-vs-ARM detection + the per-variant path table (swift test)
+  MetalHUDTests.swift             bottle env editing, related-app discovery, apply/revert
+  UsageTelemetryTests.swift       per-run prompt schema + metadata allowlist checks (swift test)
 Resources/licenses/               license texts bundled into the app
 Resources/AppIcon.icns            the app icon (committed; regenerate with make-appicon.sh)
 Resources/appicon/                the icon source art
 scripts/build-app.sh              compile + assemble + payload staging (Wine + MoltenVK) + signing
+scripts/check-telemetry-privacy.py  build-time privacy gate for user-confirmed telemetry
 scripts/make-appicon.sh           regenerate AppIcon.icns from the source art
 scripts/make-appicon.swift        the icon renderer (ImageIO/Core Graphics)
 build/                            (gitignored) the assembled .app

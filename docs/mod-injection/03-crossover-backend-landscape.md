@@ -109,9 +109,9 @@ D3DMetal is the one to keep for unmodded play, not the one to debug against.
 ## 4. Endfield-side constraint that cuts across all of this
 
 - XXMI/EFMI is **DX11-only**. Endfield defaults to Vulkan/DX12; the parent docs established that
-  DX12 (→`vkd3d`) and native Vulkan (→MoltenVK) both fail to render under CrossOver 26.2 and that
-  `-force-d3d11` is required. EFMI itself passes `-force-d3d11`, so a *launcher-driven* launch is
-  consistent with what the game needs anyway.
+  DX12 (→`vkd3d`) white-screens under CrossOver 26.3 and that `-force-d3d11` is required for DX11
+  (Vulkan is a separate, working path through the patched MoltenVK). EFMI itself passes
+  `-force-d3d11`, so a *launcher-driven* launch is consistent with what the game needs anyway.
 - Community confirmation, r/linux_gaming *Modding Arknights: Endfield*: *"XXMI only supports DX11.
   So even if you have everything set up correctly, if the game is running DX12, the mods won't
   load."*

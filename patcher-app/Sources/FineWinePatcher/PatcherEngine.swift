@@ -76,6 +76,27 @@ enum CrossOverVariant: String, CaseIterable, Sendable {
     /// CrossOver's D3DMetal tree. 26.x: `lib64/apple_gptk`; CrossOver 27: `lib/apple_gptk`.
     var gptkPrefixSubpath: String { self == .x64 ? "lib64/apple_gptk" : "lib/apple_gptk" }
 
+    /// Whether this variant's Wine runs as x86_64 and therefore needs Rosetta 2. The ARM variant
+    /// runs native aarch64 Wine; x86_64 Windows code is emulated by FEX inside those processes.
+    var requiresRosetta: Bool { self == .x64 }
+
+    /// The `cxbottle --winearch` value this variant's bottles need. CrossOver ARM also ships an
+    /// x86_64 Wine tree and runs a default `win64` bottle on it under Rosetta, so only an `arm64`
+    /// bottle reaches the aarch64 host (and this variant's payload).
+    var bottleWineArch: String? { self == .arm ? "arm64" : nil }
+
+    /// D3DMetal is x86_64-only, even inside CrossOver ARM, so an aarch64 Wine process can't load it.
+    var supportsD3DMetal: Bool { self == .x64 }
+
+    /// Default name of the patched copy. They differ so patching one variant never replaces the
+    /// other's copy.
+    var patchedAppName: String {
+        switch self {
+        case .x64: return "CrossOver_Endfield_Patch"
+        case .arm: return "CrossOver_Endfield_Patch_ARM"
+        }
+    }
+
     /// Modules this variant swaps, in install order. `crossoverSubpath` is relative to
     /// `Contents/SharedSupport/CrossOver/`; `payloadSubpath` is relative to the variant's payload
     /// directory (see `Payload.directory(for:)`).
@@ -86,6 +107,10 @@ enum CrossOverVariant: String, CaseIterable, Sendable {
                 // Rosetta NOP + privileged-instruction fixes, NtDelayExecution QPC timing
                 PayloadModule(payloadSubpath: "x86_64-unix/ntdll.so",
                               crossoverSubpath: "lib/wine/x86_64-unix/ntdll.so"),
+                // Keeps the GRYPHLINK launcher's window alpha, so no black margin surrounds it.
+                // The patched build applies it to that launcher only; the game stays opaque.
+                PayloadModule(payloadSubpath: "x86_64-unix/winemac.so",
+                              crossoverSubpath: "lib/wine/x86_64-unix/winemac.so"),
                 // KiUser*Dispatcher int3 spoof
                 PayloadModule(payloadSubpath: "x86_64-windows/kernel32.dll",
                               crossoverSubpath: "lib/wine/x86_64-windows/kernel32.dll"),
@@ -98,6 +123,22 @@ enum CrossOverVariant: String, CaseIterable, Sendable {
                 // Patched wineboot.exe starts the lsass.exe stub at boot.
                 PayloadModule(payloadSubpath: "x86_64-windows/wineboot.exe",
                               crossoverSubpath: "lib/wine/x86_64-windows/wineboot.exe"),
+                // rundll32.exe is EXEC'd by cxbottle for the 'win11Install crossover.inf' step that
+                // creates every bottle. Our rebuild drops the visible helper window that hangs/fails
+                // prefix creation on macOS 26 (WineHQ bug 59595) — upstream Wine has not merged a fix,
+                // so we ship the patched builtin. Like wineserver it is an exec'd Mach-O and needs its
+                // own signature (see requiresOwnSignature).
+                PayloadModule(payloadSubpath: "x86_64-windows/rundll32.exe",
+                              crossoverSubpath: "lib/wine/x86_64-windows/rundll32.exe"),
+                // wineserver: its server-side protocol version must match the swapped ntdll.so's client
+                // version. Stock CrossOver ships an older wineserver, so leaving it in place makes every
+                // wine process die with "wine client error:0: version mismatch …" before any window shows.
+                // CrossOver installs the same binary at two paths; both must be replaced. This is also the
+                // module that carries the ACE-CORE token-object fix (see docs/14-ace-core-regression.md).
+                PayloadModule(payloadSubpath: "server/wineserver",
+                              crossoverSubpath: "bin/wineserver"),
+                PayloadModule(payloadSubpath: "server/wineserver",
+                              crossoverSubpath: "CrossOver-Hosted Application/wineserver"),
                 // Patched MoltenVK (Vulkan/DXVK/vkd3d paths; replaces CrossOver's bundled copy).
                 // Built by scripts/build-moltenvk.sh and baked into the payload by build-app.sh.
                 PayloadModule(payloadSubpath: "lib64/libMoltenVK.dylib",
@@ -365,6 +406,10 @@ struct GPTKSource: Identifiable, Hashable, Sendable {
 struct CrossOverInfo {
     let url: URL
     let version: String?
+    /// CFBundleVersion — CrossOver's exact build. Point builds of "26.3" ship different Wine
+    /// modules (which is why wineserver has to be swapped too), so this is the field to quote when
+    /// a report only works on one build. Reported (anonymously) with patch statistics.
+    let build: String?
     let bundleIdentifier: String?
     /// `nil` when this looks like neither known CrossOver layout.
     let variant: CrossOverVariant?
@@ -381,6 +426,12 @@ struct CrossOverInfo {
     }
 
     var displayName: String { url.deletingPathExtension().lastPathComponent }
+    /// "26.3.0 (39832)" — version and build for the UI and reports.
+    var displayVersion: String {
+        let version = version ?? "unknown"
+        guard let build, !build.isEmpty, build != version else { return version }
+        return "\(version) (build \(build))"
+    }
 
     init(url: URL) {
         self.url = url
@@ -390,6 +441,7 @@ struct CrossOverInfo {
             plist = parsed
         }
         version = plist["CFBundleShortVersionString"] as? String
+        build = plist["CFBundleVersion"] as? String
         bundleIdentifier = plist["CFBundleIdentifier"] as? String
 
         let fm = FileManager.default
@@ -432,6 +484,8 @@ final class PatcherEngine: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var patchedApp: URL?
     @Published var errorMessage: String?
+    /// Set after a patch run finishes. The UI presents it with an explicit send/skip choice.
+    @Published var telemetryPrompt: UsageTelemetry.Prompt?
 
     // MARK: Mod (EFMI) chain phase (bottle-side; independent of the app patch above)
 
@@ -439,6 +493,22 @@ final class PatcherEngine: ObservableObject {
     @Published private(set) var modIsRunning = false
     @Published var modError: String?
     @Published private(set) var modAppliedPlan: ChainPlan?
+
+    // MARK: Metal HUD (optional Tools phase; bottle-side)
+
+    @Published private(set) var hudSteps: [Step] = []
+    @Published private(set) var hudIsRunning = false
+    @Published var hudError: String?
+
+    private static let hudStepLabels = [
+        "Writing MTL_HUD_ENABLED into the bottle",
+        "Updating related macOS launchers",
+    ]
+
+    private static let hudRevertLabels = [
+        "Removing MTL_HUD_ENABLED from the bottle",
+        "Restoring macOS launchers",
+    ]
 
     private static let modStepLabels = [
         "Backing up d3dx.ini",
@@ -530,6 +600,228 @@ final class PatcherEngine: ObservableObject {
         }
     }
 
+    // MARK: - Steam / NotProton (optional Tools phase)
+
+    @Published private(set) var notProtonSteps: [Step] = []
+    @Published private(set) var notProtonIsRunning = false
+    @Published var notProtonError: String?
+
+    private static let notProtonRegisterLabels = [
+        "Preparing directories",
+        "Staging runner into NotProton",
+        "Configuring Steam compatibility tool manifests",
+        "Applying Endfield graphics defaults",
+    ]
+
+    private static let notProtonUnregisterLabels = [
+        "Removing Steam compatibility tool entry",
+        "Removing NotProton runner",
+    ]
+
+    func registerNotProton(app: URL) {
+        guard !isRunning, !notProtonIsRunning else { return }
+        notProtonSteps = []
+        notProtonError = nil
+        notProtonIsRunning = true
+        notProtonSteps = Self.notProtonRegisterLabels.enumerated().map { Step(id: $0.offset, label: $0.element) }
+
+        Task.detached(priority: .userInitiated) {
+            func begin(_ index: Int) async {
+                await MainActor.run { self.notProtonSteps[index].status = .running }
+            }
+            func finish(_ index: Int) async {
+                await MainActor.run { self.notProtonSteps[index].status = .done }
+            }
+            do {
+                await begin(0)
+                try await Task.sleep(nanoseconds: 50_000_000)
+                await finish(0)
+
+                await begin(1)
+                try NotProton.register(patchedApp: app)
+                await finish(1)
+
+                await begin(2)
+                await finish(2)
+
+                await begin(3)
+                await finish(3)
+
+                await MainActor.run {
+                    self.notProtonIsRunning = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.notProtonSteps[1].status = .failed
+                    self.notProtonError = error.localizedDescription
+                    self.notProtonIsRunning = false
+                }
+            }
+        }
+    }
+
+    func unregisterNotProton() {
+        guard !isRunning, !notProtonIsRunning else { return }
+        notProtonSteps = []
+        notProtonError = nil
+        notProtonIsRunning = true
+        notProtonSteps = Self.notProtonUnregisterLabels.enumerated().map { Step(id: $0.offset, label: $0.element) }
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                await MainActor.run { self.notProtonSteps[0].status = .running }
+                try NotProton.unregister()
+                await MainActor.run {
+                    self.notProtonSteps[0].status = .done
+                    self.notProtonSteps[1].status = .done
+                    self.notProtonIsRunning = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.notProtonSteps[0].status = .failed
+                    self.notProtonError = error.localizedDescription
+                    self.notProtonIsRunning = false
+                }
+            }
+        }
+    }
+
+    func applyMetalHUD(plan: MetalHUD.Plan) {
+        guard !isRunning, !hudIsRunning else { return }
+        hudError = nil
+        hudIsRunning = true
+        hudSteps = Self.hudStepLabels.enumerated().map { Step(id: $0.offset, label: $0.element) }
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                await MainActor.run { self.hudSteps[0].status = .running }
+                _ = try MetalHUD.apply(plan: plan)
+                await MainActor.run {
+                    self.hudSteps[0].status = .done
+                    self.hudSteps[1].status = .done
+                    self.hudIsRunning = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.hudSteps[0].status = .failed
+                    self.hudError = error.localizedDescription
+                    self.hudIsRunning = false
+                }
+            }
+        }
+    }
+
+    func revertMetalHUD(bottle: URL) {
+        guard !isRunning, !hudIsRunning else { return }
+        hudError = nil
+        hudIsRunning = true
+        hudSteps = Self.hudRevertLabels.enumerated().map { Step(id: $0.offset, label: $0.element) }
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                await MainActor.run { self.hudSteps[0].status = .running }
+                try MetalHUD.revert(bottle: bottle)
+                await MainActor.run {
+                    self.hudSteps[0].status = .done
+                    self.hudSteps[1].status = .done
+                    self.hudIsRunning = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.hudSteps[0].status = .failed
+                    self.hudError = error.localizedDescription
+                    self.hudIsRunning = false
+                }
+            }
+        }
+    }
+
+    func setMetalHUDFPS(bottle: URL, fps: String?) {
+        do {
+            try MetalHUD.setFPSCap(bottle: bottle, fps: fps)
+        } catch {
+            self.hudError = error.localizedDescription
+        }
+    }
+
+    func stopBottle(bottle: URL) {
+        do {
+            try MetalHUD.stopBottle(bottle: bottle, app: patchedApp)
+        } catch {
+            self.hudError = error.localizedDescription
+        }
+    }
+
+
+    // MARK: - GPTK Upgrade In Place
+
+    @Published private(set) var gptkUpgradeSteps: [Step] = []
+    @Published private(set) var gptkUpgradeIsRunning = false
+    @Published var gptkUpgradeError: String?
+
+    private static let gptkUpgradeLabels = [
+        "Installing GPTK / D3DMetal",
+        "Re-sealing the bundle",
+        "Verifying",
+    ]
+
+    /// Replaces the D3DMetal in an already-patched CrossOver with a different GPTK version,
+    /// without re-running the full copy+patch pipeline.
+    func upgradeGPTK(in patchedApp: URL, from gptk: GPTKSource) {
+        guard !isRunning, !gptkUpgradeIsRunning else { return }
+        guard let variant = CrossOverInfo(url: patchedApp).variant else {
+            gptkUpgradeError = "\(patchedApp.lastPathComponent) is not a recognized CrossOver layout."
+            return
+        }
+        guard variant.supportsD3DMetal else {
+            gptkUpgradeError = "D3DMetal is x86_64-only, so it can't run on the \(variant.displayName) variant."
+            return
+        }
+        gptkUpgradeError = nil
+        gptkUpgradeIsRunning = true
+        gptkUpgradeSteps = Self.gptkUpgradeLabels.enumerated().map { Step(id: $0.offset, label: $0.element) }
+
+        Task.detached(priority: .userInitiated) {
+            var current = 0
+            func begin(_ index: Int) async {
+                current = index
+                await MainActor.run { self.gptkUpgradeSteps[index].status = .running }
+            }
+            func finish(_ index: Int) async {
+                await MainActor.run { self.gptkUpgradeSteps[index].status = .done }
+            }
+            do {
+                await begin(0)
+                try Self.installGPTK(into: patchedApp, from: gptk.url, variant: variant)
+                await finish(0)
+
+                await begin(1)
+                try Self.resealBundle(patchedApp)
+                await finish(1)
+
+                await begin(2)
+                // Verify only the GPTK half — the Wine modules haven't changed.
+                guard let payloadDir = Payload.directory(for: variant) else {
+                    throw PatchError("Payload directory not available for verification.")
+                }
+                try Self.verify(patchedApp, payloadDir: payloadDir, gptk: gptk, variant: variant)
+                await finish(2)
+
+                await MainActor.run {
+                    self.patchedApp = patchedApp
+                    self.gptkUpgradeIsRunning = false
+                }
+            } catch {
+                let failed = current
+                await MainActor.run {
+                    self.gptkUpgradeSteps[failed].status = .failed
+                    self.gptkUpgradeError = error.localizedDescription
+                    self.gptkUpgradeIsRunning = false
+                }
+            }
+        }
+    }
+
     nonisolated static let originalBundleIdentifier = "com.codeweavers.CrossOver"
     nonisolated static var patchedBundleIdentifier: String {
         if let env = ProcessInfo.processInfo.environment["BUNDLE_ID"], env.count == originalBundleIdentifier.count {
@@ -538,8 +830,9 @@ final class PatcherEngine: ObservableObject {
         return "com.codeweavers.CrossOvEF"
     }
 
-    private static func stepLabels(includingGPTK: Bool, includingLauncher: Bool) -> [String] {
-        var labels = [
+    private static func stepLabels(includingRosetta: Bool, includingGPTK: Bool) -> [String] {
+        var labels = includingRosetta ? ["Checking / installing Rosetta 2"] : []
+        labels += [
             "Copying CrossOver",
             "Installing the patched modules",
         ]
@@ -550,7 +843,6 @@ final class PatcherEngine: ObservableObject {
             "Verifying",
             "Moving the patched app into place",
         ]
-        if includingLauncher { labels.append("Creating the direct launcher app") }
         return labels
     }
 
@@ -558,20 +850,28 @@ final class PatcherEngine: ObservableObject {
         steps = []
         patchedApp = nil
         errorMessage = nil
+        telemetryPrompt = nil
     }
 
-    func patch(source: URL, variant: CrossOverVariant, destination: URL, gptk: GPTKSource? = nil, createLauncher: Bool = true) {
+    /// - Parameter reportTelemetry: `false` for a patch run that is part of a larger Automated
+    ///   Setup run — that run asks once at the end instead of prompting twice.
+    func patch(source: URL, variant: CrossOverVariant, destination: URL, gptk: GPTKSource? = nil, reportTelemetry: Bool = true) {
         guard !isRunning else { return }
         guard let payloadDir = Payload.directory(for: variant), Payload.isComplete(for: variant) else {
             errorMessage = variant.isExperimental
-                ? "This build of the patcher has no \(variant.displayName) module payload yet. Build it with patcher-app/scripts/build-wine-arm.sh (and stage it with build-app.sh). The \(CrossOverVariant.x64.displayName) payload is unaffected."
+                ? "This build of the patcher has no \(variant.displayName) module payload yet. Build it with scripts/build-wine-arm.sh (and stage it with build-app.sh). The \(CrossOverVariant.x64.displayName) payload is unaffected."
                 : "This build of the patcher does not include the module payload (Wine + MoltenVK). Rebuild it with patcher-app/scripts/build-app.sh after scripts/build-wine.sh all and scripts/build-moltenvk.sh all."
             return
         }
+        let gptk = variant.supportsD3DMetal ? gptk : nil
         reset()
         isRunning = true
-        steps = Self.stepLabels(includingGPTK: gptk != nil, includingLauncher: createLauncher)
+        steps = Self.stepLabels(includingRosetta: variant.requiresRosetta, includingGPTK: gptk != nil)
             .enumerated().map { Step(id: $0.offset, label: $0.element) }
+        let patchStartedAt = Date()
+        // Recorded with the (optional) statistics: CrossOver point builds of the same version can
+        // ship different Wine modules, and this is what identifies the source app in a report.
+        let crossOverBuild = CrossOverInfo(url: source).build
 
         Task.detached(priority: .userInitiated) {
             var current = 0
@@ -588,6 +888,12 @@ final class PatcherEngine: ObservableObject {
             }
             do {
                 var index = 0
+
+                if variant.requiresRosetta {
+                    await begin(index)
+                    try RosettaSupport.ensureInstalled()
+                    await finish(index); index += 1
+                }
 
                 await begin(index)
                 let app = try Self.copyBundle(from: source, to: destination)
@@ -620,24 +926,30 @@ final class PatcherEngine: ObservableObject {
                 try Self.moveIntoPlace(app, destination: destination)
                 await finish(index); index += 1
 
-                // Optional: a double-clickable "Arknights Endfield.app" that launches the game
-                // directly (the Gryphline launcher's Chromium renderer is broken under Wine).
-                if createLauncher {
-                    await begin(index)
-                    try? Self.createLauncherApp(patchedApp: destination)
-                    await finish(index); index += 1
-                }
-
+                let elapsed = Int(Date().timeIntervalSince(patchStartedAt))
+                var prompt: UsageTelemetry.Prompt? = UsageTelemetry.makePatchPrompt(
+                    succeeded: true, gptk: gptk != nil, failedStep: nil, durationSeconds: elapsed,
+                    crossOverBuild: crossOverBuild)
+                if !reportTelemetry { prompt = nil }
+                let promptToSend = prompt
                 await MainActor.run {
                     self.patchedApp = destination
                     self.isRunning = false
+                    self.telemetryPrompt = promptToSend
                 }
             } catch {
                 let failed = current
+                let elapsed = Int(Date().timeIntervalSince(patchStartedAt))
+                var prompt: UsageTelemetry.Prompt? = UsageTelemetry.makePatchPrompt(
+                    succeeded: false, gptk: gptk != nil, failedStep: failed, durationSeconds: elapsed,
+                    crossOverBuild: crossOverBuild)
+                if !reportTelemetry { prompt = nil }
+                let promptToSend = prompt
                 await MainActor.run {
                     if failed < self.steps.count { self.steps[failed].status = .failed }
                     self.errorMessage = error.localizedDescription
                     self.isRunning = false
+                    self.telemetryPrompt = promptToSend
                 }
             }
         }
@@ -702,74 +1014,13 @@ final class PatcherEngine: ObservableObject {
                 throw PatchError("\(module.crossoverSubpath) not found in the copied app — is this really CrossOver \(variant.expectedVersion) (\(variant.displayName))?")
             }
             try fm.copyItem(at: src, to: dst)
-            // Only the Mach-O modules (ntdll.so, libMoltenVK.dylib) need a signature of their
-            // own to load on Apple Silicon. The PE modules are covered by the bundle seal, as in
-            // stock CrossOver.
-            if dst.pathExtension == "so" || dst.pathExtension == "dylib" {
+            // Only the Mach-O modules (ntdll.so, libMoltenVK.dylib, wineserver) need a signature
+            // of their own to load on Apple Silicon. The PE modules are covered by the bundle
+            // seal, as in stock CrossOver.
+            if requiresOwnSignature(dst) {
                 try run("/usr/bin/codesign", ["--force", "--sign", "-", dst.path])
             }
         }
-    }
-
-    /// Writes a double-clickable `Arknights Endfield.app` next to the patched CrossOver that opens the
-    /// Gryphline launcher (Launcher.exe) via the *direct* wine path, which stays up where the CrossOver
-    /// GUI's Start button crashes it (docs/project-information/15-launcher-qtwebengine-crash.md).
-    /// Rendered from the bundled `LauncherTemplate.sh`, the same source `scripts/make-launcher-app.sh`
-    /// uses. Best-effort. (Direct `Endfield.exe` launching stays in scripts/launch-endfield.sh.)
-    private nonisolated static func createLauncherApp(patchedApp: URL, bottle: String = "Arknights Endfield") throws {
-        let fm = FileManager.default
-        guard let resources = Bundle.main.resourceURL,
-              let template = try? String(contentsOf: resources.appendingPathComponent("LauncherTemplate.sh"),
-                                         encoding: .utf8) else { return }
-
-        let name = "Arknights Endfield"
-        let launcher = patchedApp.deletingLastPathComponent()
-            .appendingPathComponent("\(name).app", isDirectory: true)
-        try? fm.removeItem(at: launcher)
-        let macos = launcher.appendingPathComponent("Contents/MacOS", isDirectory: true)
-        try fm.createDirectory(at: macos, withIntermediateDirectories: true)
-        try fm.createDirectory(at: launcher.appendingPathComponent("Contents/Resources", isDirectory: true),
-                               withIntermediateDirectories: true)
-
-        var script = template
-        for (token, value) in [
-            ("@CX_APP@", patchedApp.path),
-            ("@BUNDLE_ID@", Self.patchedBundleIdentifier),
-            ("@BOTTLE@", bottle),
-            // The alias opens the Gryphline launcher (install/update/play) via the direct wine path,
-            // which stays up where the CrossOver GUI's Start button crashes it. Leave the direct
-            // Endfield.exe launch to scripts/launch-endfield.sh.
-            ("@TARGET@", "C:/Program Files/GRYPHLINK/Launcher.exe"),
-            ("@GFXARGS@", ""),
-        ] { script = script.replacingOccurrences(of: token, with: value) }
-
-        let exe = macos.appendingPathComponent("launcher")
-        try script.write(to: exe, atomically: true, encoding: .utf8)
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: exe.path)
-
-        let plist = """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-        \t<key>CFBundleName</key><string>\(name)</string>
-        \t<key>CFBundleDisplayName</key><string>\(name)</string>
-        \t<key>CFBundleExecutable</key><string>launcher</string>
-        \t<key>CFBundleIdentifier</key><string>io.github.stoicswe.EndfieldFineWine.launcher</string>
-        \t<key>CFBundleShortVersionString</key><string>1.0</string>
-        \t<key>CFBundleVersion</key><string>1.0</string>
-        \t<key>CFBundlePackageType</key><string>APPL</string>
-        \t<key>LSMinimumSystemVersion</key><string>13.0</string>
-        \t<key>LSUIElement</key><true/>
-        \t<key>NSHighResolutionCapable</key><true/>
-        </dict>
-        </plist>
-        """
-        let plistURL = launcher.appendingPathComponent("Contents/Info.plist")
-        try plist.write(to: plistURL, atomically: true, encoding: .utf8)
-        _ = try? run("/usr/bin/plutil", ["-lint", "-s", plistURL.path])
-        _ = try? run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", launcher.path])
-        _ = try? run("/usr/bin/codesign", ["--force", "--sign", "-", launcher.path])
     }
 
     /// Installs Apple's GPTK4 / D3DMetal (the user's own mounted DMG) over CrossOver's bundled
@@ -838,15 +1089,26 @@ final class PatcherEngine: ObservableObject {
         return Data(SHA256.hash(data: data))
     }
 
+    /// Mach-O payload modules that need a signature of their own to load on Apple Silicon.
+    /// `wineserver` has no extension but is a signed Mach-O executable like the `.so`/`.dylib`
+    /// libraries, so it must be treated the same when signing and when stripping for comparison.
+    /// `rundll32.exe` is likewise an exec'd Mach-O (the PE header rides inside); unlike the other
+    /// PE builtins it is never only mapped, so an unsigned copy gets killed before main().
+    private nonisolated static func requiresOwnSignature(_ url: URL) -> Bool {
+        let ext = url.pathExtension
+        return ext == "so" || ext == "dylib"
+            || url.lastPathComponent == "wineserver" || url.lastPathComponent == "rundll32.exe"
+    }
+
     /// Content hash of a module with any embedded code signature removed. The Mach-O modules
-    /// (ntdll.so, libMoltenVK.dylib) are ad-hoc re-signed after the swap; because codesign's
-    /// ad-hoc signature bytes differ across macOS/codesign versions, comparing the signed file
-    /// directly would report a false mismatch. Stripping the signature makes the comparison
-    /// depend only on the actual code. PE modules carry no embedded signature and are hashed
-    /// as-is. Falls back to a plain hash if the signature can't be removed.
-    private nonisolated static func contentHash(_ url: URL) -> Data? {
+    /// (ntdll.so, libMoltenVK.dylib, wineserver) are ad-hoc re-signed after the swap; because
+    /// codesign's ad-hoc signature bytes differ across macOS/codesign versions, comparing the
+    /// signed file directly would report a false mismatch. Stripping the signature makes the
+    /// comparison depend only on the actual code. PE modules carry no embedded signature and are
+    /// hashed as-is.
+    nonisolated static func contentHash(_ url: URL) -> Data? {
         guard let raw = try? Data(contentsOf: url, options: .alwaysMapped) else { return nil }
-        guard url.pathExtension == "so" || url.pathExtension == "dylib" else {
+        guard requiresOwnSignature(url) else {
             return Data(SHA256.hash(data: raw))
         }
         let fm = FileManager.default
@@ -857,11 +1119,23 @@ final class PatcherEngine: ObservableObject {
         defer { try? fm.removeItem(at: tmp) }
         do {
             try fm.copyItem(at: url, to: tmp)
-            _ = try? run("/usr/bin/codesign", ["--remove-signature", tmp.path])
+            // Removing a signature does not fully undo signing: codesign records the signature's
+            // allocation in the Mach-O's __LINKEDIT vmsize, and stripping from a CI/Developer-ID
+            // signed payload can leave different header bytes than stripping a locally ad-hoc
+            // signed copy. Re-sign both sides with the local ad-hoc identity first, so the
+            // signature layout (and therefore the stripped bytes) is canonical.
+            guard (try? run("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier",
+                                                   "io.github.stoicswe.FineWinePatcher.content-hash",
+                                                   tmp.path])) != nil else {
+                return nil
+            }
+            guard (try? run("/usr/bin/codesign", ["--remove-signature", tmp.path])) != nil else {
+                return nil
+            }
             let stripped = try Data(contentsOf: tmp, options: .alwaysMapped)
             return Data(SHA256.hash(data: stripped))
         } catch {
-            return Data(SHA256.hash(data: raw))
+            return nil
         }
     }
 
