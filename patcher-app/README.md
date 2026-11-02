@@ -68,6 +68,20 @@ Windows code inside native processes. So for an ARM source the patcher:
 A bottle created any other way runs CrossOver's unpatched x86_64 tree, and the ARM payload never
 loads.
 
+**CI doesn't build the ARM payload yet, and two things block it:**
+
+1. **There is no matching source.** CodeWeavers has not published CrossOver ARM sources, and the
+   preview is built from an unpublished `wine-11.17` commit. Modules built from another tree risk
+   a Wine protocol mismatch at launch.
+2. **The module list needs correcting.** In an `arm64` bottle, `bin/wine` puts only
+   `aarch64-windows` on the DLL path, and those modules are ARM64. The list installs `kernel32.dll`
+   and `ntoskrnl.exe` into `x86_64-windows`, so those fixes would never load. It also needs
+   `wineserver-arm64`, because the ARM app has no plain `bin/wineserver`. Whether ACE's x86_64
+   driver can load in an ARM64 `winedevice.exe` at all is still an open question.
+
+`scripts/verify-app-payload.py` (in `patcher-app/`) rejects a partial ARM payload, but it only checks the list above,
+so fix the list before bundling one.
+
 Detection is structural: an app carrying `lib/wine/aarch64-unix/ntdll.so` is the ARM variant,
 otherwise an app with `lib/wine/x86_64-unix/ntdll.so` + `lib64/libMoltenVK.dylib` is x64.
 Selecting an unrecognized app disables patching.

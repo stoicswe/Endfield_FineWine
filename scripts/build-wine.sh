@@ -25,7 +25,8 @@
 #   scripts/build-wine.sh build     # make -j
 #   scripts/build-wine.sh all       # deps -> fetch -> apply -> configure -> build
 #
-# Env: CX_VER (default 26.3.0), BUILD_DIR (default ./build), JOBS (default: all cores)
+# Env: CX_VER (default 26.3.0), BUILD_DIR (default ./build), JOBS (default: all cores),
+#      CX_SHA256 (expected source tarball SHA-256, for a CX_VER with no pinned checksum)
 
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -57,6 +58,33 @@ cmd_deps() {
   ui_end
 }
 
+# SHA-256 of the CrossOver source tarballs this project has been built from.
+pinned_source_sha256() {
+  case "$1" in
+    26.3.0) echo ac99c8ca4b3848f3e81784135f023df266b61c2345726ea55a50b3e030dd6872 ;;
+  esac
+}
+
+verify_source() { # tarball
+  local expected="${CX_SHA256:-$(pinned_source_sha256 "$CX_VER")}" actual
+  actual="$(shasum -a 256 "$1" | cut -d ' ' -f 1)"
+  if [ -z "$expected" ]; then
+    echo "ERROR: no checksum pinned for CrossOver $CX_VER."
+    echo "  Its SHA-256 is $actual"
+    echo "  Add it to pinned_source_sha256 in scripts/build-wine.sh, or set CX_SHA256 to try it once."
+    exit 1
+  fi
+  if [ "$actual" != "$expected" ]; then
+    echo "ERROR: checksum mismatch for $1"
+    echo "  expected $expected"
+    echo "  actual   $actual"
+    echo "  The file is damaged or CodeWeavers changed it. Delete it and re-run, or review the new"
+    echo "  source before updating the pin."
+    exit 1
+  fi
+  echo "Source checksum OK: $actual"
+}
+
 cmd_fetch() {
   ui_begin fetch 15 "Fetching CrossOver ${CX_VER} source (~150 MB)"
   mkdir -p "$BUILD_DIR"
@@ -80,6 +108,7 @@ cmd_fetch() {
     fi
     [ "$rc" -eq 0 ] || { echo "download failed ($SRC_URL) — see $BUILD_DIR/download.log"; exit 1; }
   fi
+  verify_source "$tgz"
   rm -rf "$WINE_SRC" "$BUILD_DIR/sources"; mkdir -p "$WINE_SRC"
   ui_run "$BUILD_DIR/extract.log" "extracting sources/wine" \
     tar xzf "$tgz" -C "$BUILD_DIR" sources/wine \
