@@ -84,7 +84,9 @@ if not pairs:
 for payload_path, app_path in pairs:
     target = os.path.join(payload, payload_path)
     os.makedirs(os.path.dirname(target), exist_ok=True)
-    shutil.copy2(os.path.join(root, app_path), target)
+    source = os.path.join(root, app_path)
+    if os.path.exists(source):  # wdfldr.sys is ours, and stock CrossOver ARM doesn't ship it.
+        shutil.copy2(source, target)
 print(f"copied {len(pairs)} unmodified modules")
 PY
 }

@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: FineWine
+Subject: [PATCH] ntoskrnl: Emulate shared data reads on aarch64.
+
+ACE-CORE's ARM64 drivers read the kernel-mode alias of the shared page, which
+only instr.c's x86 emulators handled.
+---
+--- a/dlls/ntoskrnl.exe/instr.c
++++ b/dlls/ntoskrnl.exe/instr.c
+@@ -953,4 +953,53 @@
+     return EXCEPTION_CONTINUE_SEARCH;
+ }
+ 
+-#endif  /* __x86_64__ */
++#elif defined(__aarch64__)  /* __x86_64__ */
++
++WINE_DEFAULT_DEBUG_CHANNEL(int);
++
++static const BYTE *wine_user_shared_data = (BYTE *)0x7ffe0000;
++static const BYTE *user_shared_data      = (BYTE *)0xfffff78000000000;
++
++/* Drivers read the kernel-mode alias of the shared page, which can't be mapped here. */
++LONG CALLBACK vectored_handler( EXCEPTION_POINTERS *ptrs )
++{
++    EXCEPTION_RECORD *record = ptrs->ExceptionRecord;
++    CONTEXT *context = ptrs->ContextRecord;
++    const BYTE *data = (const BYTE *)record->ExceptionInformation[1];
++    ULONG64 value = 0;
++    SIZE_T offset;
++    DWORD instr;
++    UINT size, opc, rt;
++
++    if (record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION ||
++        record->ExceptionInformation[0] != EXCEPTION_READ_FAULT)
++        return EXCEPTION_CONTINUE_SEARCH;
++    if (data < user_shared_data || (offset = data - user_shared_data) >= KSHARED_USER_DATA_PAGE_SIZE)
++        return EXCEPTION_CONTINUE_SEARCH;
++
++    /* integer load with an immediate or register offset and no writeback */
++    instr = *(const DWORD *)context->Pc;
++    if ((instr & 0x3f000000) != 0x39000000 && (instr & 0x3f200c00) != 0x38000000 &&
++        (instr & 0x3f200c00) != 0x38200800)
++        return EXCEPTION_CONTINUE_SEARCH;
++
++    size = 1 << (instr >> 30);
++    opc = (instr >> 22) & 3;
++    rt = instr & 0x1f;
++    if (!opc || (opc == 3 && size == 8) || offset + size > KSHARED_USER_DATA_PAGE_SIZE)
++        return EXCEPTION_CONTINUE_SEARCH;
++
++    memcpy( &value, wine_user_shared_data + offset, size );
++    if (opc >= 2 && size < 8)
++    {
++        value = (ULONG64)((LONG64)(value << (64 - size * 8)) >> (64 - size * 8));
++        if (opc == 3) value = (DWORD)value;
++    }
++    if (rt != 31) context->X[rt] = value;
++    context->Pc += 4;
++
++    TRACE( "shared data offset %Ix -> x%u=%I64x\n", offset, rt, value );
++    return EXCEPTION_CONTINUE_EXECUTION;
++}
++
++#endif  /* __aarch64__ */
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -5460,7 +5460,7 @@
+     {
+     case DLL_PROCESS_ATTACH:
+         DisableThreadLibraryCalls( inst );
+-#if defined(__i386__) || defined(__x86_64__)
++#if defined(__i386__) || defined(__x86_64__) || defined(__aarch64__)
+         handler = RtlAddVectoredExceptionHandler( TRUE, vectored_handler );
+ #endif
+         KeQueryTickCount( &count );  /* initialize the global KeTickCount */

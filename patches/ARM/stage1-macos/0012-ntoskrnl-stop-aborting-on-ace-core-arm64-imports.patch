@@ -1,0 +1,153 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: FineWine
+Subject: [PATCH] ntoskrnl: Stop aborting on imports used by ACE-CORE's ARM64 drivers.
+
+A spec stub aborts the driver host when called. Fail these cleanly instead,
+and implement PsGetProcessPeb.
+---
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -2018,9 +2018,53 @@
+ PDEVICE_OBJECT WINAPI IoGetRelatedDeviceObject( PFILE_OBJECT obj )
+ {
+     FIXME( "stub: %p\n", obj );
++    return NULL;
++}
++
++/* Called by ACE-CORE's ARM64 drivers. These fail cleanly, because a spec stub aborts the driver host. */
++PDEVICE_OBJECT WINAPI IoGetBaseFileSystemDeviceObject( FILE_OBJECT *file )
++{
++    FIXME( "%p: stub\n", file );
++    return NULL;
++}
++
++PDEVICE_OBJECT WINAPI IoGetLowerDeviceObject( DEVICE_OBJECT *device )
++{
++    FIXME( "%p: stub\n", device );
+     return NULL;
+ }
+ 
++NTSTATUS WINAPI IoQueryFileInformation( FILE_OBJECT *file, FILE_INFORMATION_CLASS class, ULONG length,
++                                        void *info, ULONG *result_length )
++{
++    FIXME( "%p, %u, %lu, %p, %p: stub\n", file, class, length, info, result_length );
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++NTSTATUS WINAPI IoCreateFileSpecifyDeviceObjectHint(void)
++{
++    FIXME( "stub\n" );
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++void * WINAPI RtlInsertElementGenericTableFullAvl(void)
++{
++    FIXME( "stub\n" );
++    return NULL;
++}
++
++NTSTATUS WINAPI SeCaptureSecurityDescriptor(void)
++{
++    FIXME( "stub\n" );
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++NTSTATUS WINAPI SeQueryInformationToken( void *token, TOKEN_INFORMATION_CLASS class, void **info )
++{
++    FIXME( "%p, %u, %p: stub\n", token, class, info );
++    return STATUS_NOT_IMPLEMENTED;
++}
++
+ static CONFIGURATION_INFORMATION configuration_information;
+ 
+ /***********************************************************************
+@@ -4992,6 +5036,15 @@
+ {
+     FIXME("stub: %ld %ld\n", component, level);
+     return STATUS_NOT_IMPLEMENTED;
++}
++
++/*********************************************************************
++ *           PsGetProcessPeb    (NTOSKRNL.@)
++ */
++PEB *WINAPI PsGetProcessPeb( PEPROCESS process )
++{
++    TRACE( "%p -> %p\n", process, process->info.PebBaseAddress );
++    return process->info.PebBaseAddress;
+ }
+ 
+ /*********************************************************************
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -366,7 +366,7 @@
+ @ stdcall IoCreateDriver(ptr ptr)
+ @ stdcall IoCreateFileEx(ptr long ptr ptr ptr long long long long ptr long long ptr long ptr)
+ @ stdcall IoCreateFile(ptr long ptr ptr ptr long long long long ptr long long ptr long)
+-@ stub IoCreateFileSpecifyDeviceObjectHint
++@ stdcall IoCreateFileSpecifyDeviceObjectHint()
+ @ stdcall IoCreateNotificationEvent(ptr ptr)
+ @ stub IoCreateStreamFileObject
+ @ stub IoCreateStreamFileObjectEx
+@@ -401,7 +401,7 @@
+ @ stdcall IoFreeWorkItem(ptr)
+ @ stdcall IoGetAttachedDevice(ptr)
+ @ stdcall IoGetAttachedDeviceReference(ptr)
+-@ stub IoGetBaseFileSystemDeviceObject
++@ stdcall IoGetBaseFileSystemDeviceObject(ptr)
+ @ stub IoGetBootDiskInformation
+ @ stdcall IoGetConfigurationInformation()
+ @ stdcall IoGetCurrentProcess()
+@@ -418,7 +418,7 @@
+ @ stdcall IoGetDriverObjectExtension(ptr ptr)
+ @ stub IoGetFileObjectGenericMapping
+ @ stub IoGetInitialStack
+-@ stub IoGetLowerDeviceObject
++@ stdcall IoGetLowerDeviceObject(ptr)
+ @ stdcall IoGetRelatedDeviceObject(ptr)
+ @ stdcall IoGetRequestorProcess(ptr)
+ @ stdcall IoGetRequestorProcessId(ptr)
+@@ -443,7 +443,7 @@
+ @ stub IoPnPDeliverServicePowerNotification
+ @ stdcall IoQueryDeviceDescription(ptr ptr ptr ptr ptr ptr ptr ptr)
+ @ stub IoQueryFileDosDeviceName
+-@ stub IoQueryFileInformation
++@ stdcall IoQueryFileInformation(ptr long long ptr ptr)
+ @ stub IoQueryVolumeInformation
+ @ stub IoQueueThreadIrp
+ @ stdcall IoQueueWorkItem(ptr ptr long ptr)
+@@ -933,7 +933,7 @@
+ @ stdcall PsGetProcessImageFileName(ptr)
+ @ stdcall PsGetProcessInheritedFromUniqueProcessId(ptr)
+ @ stub PsGetProcessJob
+-@ stub PsGetProcessPeb
++@ stdcall PsGetProcessPeb(ptr)
+ @ stub PsGetProcessPriorityClass
+ @ stdcall PsGetProcessSectionBaseAddress(ptr)
+ @ stub PsGetProcessSecurityPort
+@@ -1163,7 +1163,7 @@
+ @ stdcall RtlInsertElementGenericTable(ptr ptr long ptr)
+ @ stdcall RtlInsertElementGenericTableAvl(ptr ptr long ptr)
+ @ stub RtlInsertElementGenericTableFull
+-@ stub RtlInsertElementGenericTableFullAvl
++@ stdcall RtlInsertElementGenericTableFullAvl()
+ @ stub RtlInsertUnicodePrefix
+ @ stdcall RtlInt64ToUnicodeString(int64 long ptr)
+ @ stdcall RtlIntegerToChar(long long long ptr)
+@@ -1346,7 +1346,7 @@
+ @ stub SeAuditingFileOrGlobalEvents
+ @ stub SeAuditingHardLinkEvents
+ @ stub SeAuditingHardLinkEventsWithContext
+-@ stub SeCaptureSecurityDescriptor
++@ stdcall SeCaptureSecurityDescriptor()
+ @ stub SeCaptureSubjectContext
+ @ stub SeCloseObjectAuditAlarm
+ @ stub SeCreateAccessState
+@@ -1369,7 +1369,7 @@
+ @ stub SePrivilegeObjectAuditAlarm
+ @ stub SePublicDefaultDacl
+ @ stub SeQueryAuthenticationIdToken
+-@ stub SeQueryInformationToken
++@ stdcall SeQueryInformationToken(ptr long ptr)
+ @ stub SeQuerySecurityDescriptorInfo
+ @ stub SeQuerySessionIdToken
+ @ stub SeRegisterLogonSessionTerminatedRoutine

@@ -8,6 +8,7 @@
 #
 #   aarch64-windows/ntoskrnl.exe
 #   aarch64-windows/rundll32.exe
+#   aarch64-windows/wdfldr.sys
 #
 # The ARM variant is EXPERIMENTAL: the load-bearing `#ifdef __x86_64__` dispatcher spoof is
 # absent on the aarch64 unix side, so this payload is the platform for that experiment — it is
@@ -206,7 +207,7 @@ cmd_build() {
   log "Building ARM modules (make -j$JOBS)"
   [ -f "$WINE_BUILD/Makefile" ] || { echo "run 'configure' first"; exit 1; }
   use_bison; use_pe_toolchain
-  local modules="dlls/ntoskrnl.exe/aarch64-windows/ntoskrnl.exe programs/rundll32/aarch64-windows/rundll32.exe"
+  local modules="dlls/ntoskrnl.exe/aarch64-windows/ntoskrnl.exe dlls/wdfldr.sys/aarch64-windows/wdfldr.sys programs/rundll32/aarch64-windows/rundll32.exe"
   # shellcheck disable=SC2086
   ( cd "$WINE_BUILD" && make -j"$JOBS" $modules ) 2>&1 | tee "$BUILD_DIR/build-arm.log"
   [ "${PIPESTATUS[0]}" = 0 ] || { echo "make failed — see $BUILD_DIR/build-arm.log"; exit 1; }

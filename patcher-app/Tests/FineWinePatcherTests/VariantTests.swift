@@ -215,10 +215,12 @@ final class VariantTests: XCTestCase {
         XCTAssertEqual(arm.sorted(), [
             "lib/wine/aarch64-windows/ntoskrnl.exe",
             "lib/wine/aarch64-windows/rundll32.exe",
+            "lib/wine/aarch64-windows/wdfldr.sys",
         ])
         // Upstream's ntdll.so and wineserver can't run inside CrossOver ARM (protocol 961 vs 1809).
         XCTAssertFalse(arm.contains { $0.contains("ntdll") || $0.contains("wineserver") })
         XCTAssertFalse(arm.contains { $0.contains("x86_64-windows") })
-        XCTAssertTrue(CrossOverVariant.arm.modules.filter(\.isNew).isEmpty)
+        XCTAssertEqual(CrossOverVariant.arm.modules.filter(\.isNew).map(\.crossoverSubpath),
+                       ["lib/wine/aarch64-windows/wdfldr.sys"])
     }
 }
