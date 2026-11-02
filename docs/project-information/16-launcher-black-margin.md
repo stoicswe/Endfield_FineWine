@@ -1,6 +1,6 @@
 # 16 — The black margin around the Gryphline launcher
 
-> **Status: fixed by `patches/stage1-macos/0009`, tested on one machine (Nov 2026).** The launcher's
+> **Status: fixed by `patches/x64/stage1-macos/0009`, tested on one machine (Nov 2026).** The launcher's
 > rounded window used to sit inside a square black box. It now has real transparent corners and
 > its soft shadow, and the game still starts from it and stays opaque.
 

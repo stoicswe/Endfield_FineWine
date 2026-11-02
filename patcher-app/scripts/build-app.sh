@@ -246,19 +246,6 @@ if [ -d "$ARM_PAYLOAD_DIR" ]; then
   mkdir -p "$P_ARM"
   # ditto to preserve any symlinks/permissions in the payload tree.
   ditto "$ARM_PAYLOAD_DIR/" "$P_ARM/"
-  NT_ARM="$P_ARM/aarch64-unix/ntdll.so"
-  if [ -f "$NT_ARM" ] && otool -l "$NT_ARM" >/dev/null 2>&1; then
-    if ! otool -l "$NT_ARM" | grep -A2 LC_RPATH | grep -q 'lib/aarch64'; then
-      install_name_tool -add_rpath "@loader_path/../../../lib/aarch64" "$NT_ARM"
-    fi
-    otool -l "$NT_ARM" | grep -A2 LC_RPATH | grep -q 'lib/aarch64' \
-      || { echo "ERROR: could not add the lib/aarch64 rpath to the ARM ntdll.so"; exit 1; }
-    ok "ARM ntdll.so LC_RPATH -> lib/aarch64"
-  fi
-  # Ad-hoc sign the Mach-O halves (aarch64 ntdll.so, aarch64 libMoltenVK.dylib).
-  while IFS= read -r f; do
-    case "$f" in *.so|*.dylib) codesign --force --sign "$CODESIGN_ID" "$f" 2>/dev/null || true ;; esac
-  done < <(find "$P_ARM" -type f)
   ok "ARM payload staged from $ARM_PAYLOAD_DIR ($(find "$P_ARM" -type f | wc -l | tr -d ' ') files)"
 else
   warn "no ARM payload at $ARM_PAYLOAD_DIR — building x64-only (build it with scripts/build-wine-arm.sh)"

@@ -129,7 +129,7 @@ cmd_fetch() {
 cmd_apply() {
   ui_begin apply 3 "Applying patches (em-backports -> misc -> ace-core -> macOS)"
   [ -d "$WINE_SRC/.git" ] || { echo "run 'fetch' first"; exit 1; }
-  local P="$REPO/patches" list n unit
+  local P="$REPO/patches/x64" list n unit
   list="$(ls "$P"/stage2-dwproton/em-backports/*.patch 2>/dev/null | sort)
 $(ls "$P"/stage2-dwproton/misc/*.patch 2>/dev/null | sort)
 $(ls "$P"/stage2-dwproton/ace-core/*.patch 2>/dev/null | sort)

@@ -11,13 +11,14 @@ Usage: verify-app-payload.py "path/to/FineWine Patcher.app" [path/to/PatcherEngi
 """
 import os
 import re
+import struct
 import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LAUNCHER_PATCH_MARKER = "\\GRYPHLINK\\".encode("utf-16-le")
 X64_RPATH = "@loader_path/../../../lib64"
-ARM_RPATH = "@loader_path/../../../lib/aarch64"
+PE_MACHINE_ARM64 = 0xaa64
 
 
 def module_lists(engine_source):
@@ -33,6 +34,13 @@ def module_lists(engine_source):
 
 def tool(*args):
     return subprocess.run(args, capture_output=True, text=True).stdout
+
+
+def pe_machine(path):
+    with open(path, "rb") as handle:
+        header = handle.read(4096)
+    pe_offset = struct.unpack_from("<I", header, 60)[0]
+    return struct.unpack_from("<H", header, pe_offset + 4)[0]
 
 
 def check_mach_o(path, arch, rpath, errors):
@@ -56,7 +64,7 @@ def verify_x64(payload, modules, errors):
     with open(winemac, "rb") as handle:
         if LAUNCHER_PATCH_MARKER not in handle.read():
             errors.append("winemac.so doesn't contain the launcher alpha patch "
-                          "(patches/stage1-macos/0009 was not applied)")
+                          "(patches/x64/stage1-macos/0009 was not applied)")
 
 
 def verify_arm(payload, modules, errors):
@@ -66,8 +74,9 @@ def verify_arm(payload, modules, errors):
         return False
     missing = [m for m in modules if not os.path.isfile(os.path.join(root, m))]
     errors.extend(f"partial ARM payload, missing: {m}" for m in missing)
-    if not missing:
-        check_mach_o(os.path.join(root, "aarch64-unix/ntdll.so"), "arm64", ARM_RPATH, errors)
+    for module in set(modules) - set(missing):
+        if pe_machine(os.path.join(root, module)) != PE_MACHINE_ARM64:
+            errors.append(f"ARM module isn't an ARM64 PE: {module}")
     return True
 
 

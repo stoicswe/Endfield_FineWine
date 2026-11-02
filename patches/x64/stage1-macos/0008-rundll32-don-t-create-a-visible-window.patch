@@ -1,0 +1,19 @@
+diff --git a/programs/rundll32/rundll32.c b/programs/rundll32/rundll32.c
+index 2ab635a..3b5050b 100644
+--- a/programs/rundll32/rundll32.c
++++ b/programs/rundll32/rundll32.c
+@@ -271,7 +271,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE hOldInstance, LPWSTR szCmdLine
+ 
+     /* Initialize the rundll32 class */
+     register_class();
+-    hWnd = CreateWindowW(L"class_rundll32", L"rundll32", WS_OVERLAPPEDWINDOW|WS_VISIBLE,
++    /* WineHQ bug 59595: on macOS 26 (Tahoe) a *visible* window here makes winemac.drv
++     * foreground the process; the activation callbacks re-post display-change events and the
++     * clipboard manager's 2 s timer, which re-enter the CreateWindowW message pump, so rundll32
++     * never reaches InstallHinfSection and bottle creation dies at 'winNNInstall crossover.inf'.
++     * The window is only a message sink for the called entry point — keep it hidden everywhere
++     * (this also stops rundll32 stealing focus during bottle creation). */
++    hWnd = CreateWindowW(L"class_rundll32", L"rundll32", WS_OVERLAPPEDWINDOW,
+           CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, NULL, NULL, NULL, NULL);
+ 
+     /* Get the dll name and API EntryPoint */

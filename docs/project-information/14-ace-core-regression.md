@@ -240,7 +240,7 @@ done first anyway (it also silences the loader warnings).
 ## 8. Patch plan — the missing exports (necessary plumbing; probably *not* sufficient)
 
 **✅ IMPLEMENTED (staged, compiles; needs a hardware test).** The new imports live in
-[`patches/stage2-dwproton/ace-core/0001-ntoskrnl-Implement-ACE-CORE-new-imports.patch`](../../patches/stage2-dwproton/ace-core/0001-ntoskrnl-Implement-ACE-CORE-new-imports.patch)
+[`patches/x64/stage2-dwproton/ace-core/0001-ntoskrnl-Implement-ACE-CORE-new-imports.patch`](../../patches/x64/stage2-dwproton/ace-core/0001-ntoskrnl-Implement-ACE-CORE-new-imports.patch)
 (applied by `scripts/build-wine.sh` between the `misc` and `stage1-macos` sets). It adds each
 export to `ntoskrnl.exe.spec` and a faithful / semi-stub implementation to `ntoskrnl.c` /
 `sync.c`. Verified to `git apply` cleanly on the whole series and to compile
@@ -331,7 +331,7 @@ New in this doc:
 
 Existing sources are consolidated in [references.md](references.md).
 
-## 11. The downstream fix — ported into `patches/stage2-dwproton/ace-core/`
+## 11. The downstream fix — ported into `patches/x64/stage2-dwproton/ace-core/`
 
 `mary-ext/crossover-wine-endfield` (forked from this project) already runs the new ACE-CORE.
 It fetches **pinned commits** from `dawn.wine/dawn-winery/wine-dwproton` branches `_upstream`
@@ -339,7 +339,7 @@ It fetches **pinned commits** from `dawn.wine/dawn-winery/wine-dwproton` branche
 `scripts/fetch-wine-patches.sh`, then applies `upstream/* → dwproton/* → macos/*`.
 
 **Status: the ACE-CORE fix is ported into this repo** as
-`patches/stage2-dwproton/ace-core/0002…0007` (see [patches/README.md](../../patches/README.md)).
+`patches/x64/stage2-dwproton/ace-core/0002…0007` (see [patches/README.md](../../patches/README.md)).
 The whole series (31 patches) applies cleanly, and `ntoskrnl.exe`, `lsass.exe` and
 `wineboot.exe` build (`make dlls/ntoskrnl.exe/all programs/lsass/all programs/wineboot/all`).
 
@@ -400,7 +400,7 @@ fixme:ntoskrnl:alloc_kernel_object set_object_reference failed: 0xc0000008
 fixme:ntoskrnl:ObReferenceObject failed to grab 0x000000003FD10 reference
 ```
 
-- Added `patches/stage2-dwproton/ace-core/0008` (token) + `0009` (directory), ported from the
+- Added `patches/x64/stage2-dwproton/ace-core/0008` (token) + `0009` (directory), ported from the
   downstream's `upstream/0024` + `0002` (`server/token.c`, `server/change.c` —
   `get_kernel_obj_list` instead of `no_kernel_obj_list`).
 - **The `wineserver` must be shipped for this to take effect** (unlike the other modules,
@@ -505,7 +505,7 @@ returns `NULL`; `MmProbeAndLockPages`/`MmUnlockPages`/`MmUnmapLockedPages` do no
 
 Ported `upstream/0037,0039,0040,0042` (the MDL implementations) + `dwproton/0007`
 (keep section views mapped while a locked MDL uses them) as
-**`patches/stage2-dwproton/ace-core/0010`**. They conflict as raw patches (our base is
+**`patches/x64/stage2-dwproton/ace-core/0010`**. They conflict as raw patches (our base is
 newer), so the change was applied by hand and re‑exported as a clean patch.
 
 - `MmProbeAndLockPages`/`MmUnlockPages` set/clear `MDL_PAGES_LOCKED`.
@@ -683,7 +683,7 @@ that later requires a live CORE driver would still fail.
 #### Experimental lever (`ace-core/0017`)
 
 Supply the event the watchdog is waiting on before its 1 s timeout by making the notify routines
-real. `patches/stage2-dwproton/ace-core/0017-ntoskrnl-Implement-process-and-thread-notify-routines.patch`:
+real. `patches/x64/stage2-dwproton/ace-core/0017-ntoskrnl-Implement-process-and-thread-notify-routines.patch`:
 
 - makes `PsSetCreateProcessNotifyRoutine[Ex]`, `PsSetCreateThreadNotifyRoutine`, and
   `PsRemoveCreateThreadNotifyRoutine` register/remove real callbacks; and

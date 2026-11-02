@@ -6,22 +6,19 @@
 #
 # Usage:  scripts/build-local.sh
 # Env:
-#   ARM_MODE  stock (default)  copy CrossOver ARM's own unmodified modules. This tests the ARM flow
-#                              (detection, bundle ID, shortcuts, arm64 bottle, installer) but has
-#                              NO anti-cheat fixes, so the game shouldn't get past ACE.
-#             source           build scripts/build-wine-arm.sh from ARM_WINE_TAG (default
-#                              wine-11.17). Expected to fail until the patches are rebased.
+#   ARM_MODE  source (default) build patches/ARM with scripts/build-wine-arm.sh.
+#             stock            copy CrossOver ARM's own unmodified modules, with no patches.
 #             skip             build an x64-only app.
 #   ARM_APP   CrossOver ARM to copy from (default "/Applications/CrossOver ARM Preview.app")
 #   FORCE=1   rebuild everything
 #
-# The stock payload is for local testing only. CI never builds one, so it can't reach a release.
+# ARM payloads are for local testing. CI doesn't build one, so they can't reach a release.
 
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 BUILD_DIR="$REPO/build"
-ARM_MODE="${ARM_MODE:-stock}"
+ARM_MODE="${ARM_MODE:-source}"
 ARM_APP="${ARM_APP:-/Applications/CrossOver ARM Preview.app}"
 ARM_PAYLOAD="$BUILD_DIR/wine-arm-payload"
 FORCE="${FORCE:-0}"
@@ -47,14 +44,14 @@ fi
 echo "Xcode: $(xcodebuild -version | head -1)"
 
 log "x64 Wine modules"
-if stale "$BUILD_DIR/wine-out/winemac.so" patches/stage1-macos patches/stage2-dwproton scripts/build-wine.sh; then
+if stale "$BUILD_DIR/wine-out/winemac.so" patches/x64/stage1-macos patches/x64/stage2-dwproton scripts/build-wine.sh; then
   ./scripts/build-wine.sh all
 else
   echo "up to date"
 fi
 
 log "x64 MoltenVK"
-if stale "$BUILD_DIR/moltenvk-out/libMoltenVK.dylib" patches/moltenvk scripts/build-moltenvk.sh; then
+if stale "$BUILD_DIR/moltenvk-out/libMoltenVK.dylib" patches/x64/moltenvk scripts/build-moltenvk.sh; then
   ./scripts/build-moltenvk.sh all
 else
   echo "up to date"
@@ -82,9 +79,7 @@ print(f"copied {len(pairs)} unmodified modules")
 PY
     ;;
   source)
-    export ARM_WINE_TAG="${ARM_WINE_TAG:-wine-11.17}"
     ./scripts/build-wine-arm.sh all
-    MVK_ARCH=aarch64 ./scripts/build-moltenvk.sh all
     ;;
   skip) echo "skipped" ;;
 esac
@@ -97,7 +92,4 @@ python3 patcher-app/scripts/verify-app-payload.py "$APP"
 
 echo
 echo "Built: $APP"
-if [ "$ARM_MODE" = "stock" ]; then
-  echo "NOTE: the ARM payload is stock CrossOver with no anti-cheat fixes. Use it to test the"
-  echo "      ARM flow only. The game isn't expected to get past ACE."
-fi
+[ "$ARM_MODE" = "skip" ] || echo "NOTE: the ARM payload is for testing. It isn't expected to get past ACE yet."

@@ -134,7 +134,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: build/wine-out
-          key: wine-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.hash }}-cx${{ env.CX_VER }}-${{ hashFiles('patches/stage1-macos/**', 'patches/stage2-dwproton/**', 'scripts/build-wine.sh', '.github/workflows/build-wine.yml') }}
+          key: wine-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.hash }}-cx${{ env.CX_VER }}-${{ hashFiles('patches/x64/stage1-macos/**', 'patches/x64/stage2-dwproton/**', 'scripts/build-wine.sh', '.github/workflows/build-wine.yml') }}
 
       - name: Install Rosetta 2
         if: steps.cache.outputs.cache-hit != 'true'
@@ -257,7 +257,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: build/moltenvk-out
-          key: moltenvk-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.hash }}-${{ hashFiles('patches/moltenvk/**', 'scripts/build-moltenvk.sh', '.github/workflows/build-wine.yml') }}
+          key: moltenvk-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.hash }}-${{ hashFiles('patches/x64/moltenvk/**', 'scripts/build-moltenvk.sh', '.github/workflows/build-wine.yml') }}
 
       - name: Fetch MoltenVK source
         if: steps.cache.outputs.cache-hit != 'true'

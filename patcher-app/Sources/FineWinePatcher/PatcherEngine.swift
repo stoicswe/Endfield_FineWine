@@ -155,32 +155,17 @@ enum CrossOverVariant: String, CaseIterable, Sendable {
                               crossoverSubpath: "lib64/libMoltenVK.dylib"),
             ]
         case .arm:
-            // Endfield and ACE run as x86_64 Windows code (emulated by Wine's FEX) on an aarch64
-            // Wine host. Two different PE arches are therefore in play:
-            //   * the *game* process is x86_64, so kernel32/ntoskrnl come from x86_64-windows;
-            //   * the prefix's own host programs (wineboot, and the lsass stub wineboot starts)
-            //     are built for HOST_ARCH only (Wine: enable_wineboot/lsass=${...:-$HOST_ARCH}),
-            //     i.e. aarch64-windows.
-            // Built by scripts/build-wine-arm.sh.
+            // An arm64 bottle only loads `aarch64-windows`, so these are ARM64 PE modules. Only
+            // modules that stay compatible with stock CrossOver ARM are swapped: its ntdll.so and
+            // wineserver use a much newer protocol (1809) than public Wine 11.17 (961), and a
+            // mixed ntdll won't start. Built by scripts/build-wine-arm.sh from patches/ARM.
             return [
-                PayloadModule(payloadSubpath: "aarch64-unix/ntdll.so",
-                              crossoverSubpath: "lib/wine/aarch64-unix/ntdll.so"),
-                // KiUser*Dispatcher int3 spoof (x86_64 PE — the emulated game process)
-                PayloadModule(payloadSubpath: "x86_64-windows/kernel32.dll",
-                              crossoverSubpath: "lib/wine/x86_64-windows/kernel32.dll"),
-                // ntoskrnl.exe em-backports + ACE-CORE DriverInit/return-address fix (x86_64 PE)
-                PayloadModule(payloadSubpath: "x86_64-windows/ntoskrnl.exe",
-                              crossoverSubpath: "lib/wine/x86_64-windows/ntoskrnl.exe"),
-                // ACE requires a running lsass.exe; stock Wine 11.17 ships one, but our stub
-                // (the one wineboot starts) is the host-arch aarch64-windows build.
-                PayloadModule(payloadSubpath: "aarch64-windows/lsass.exe",
-                              crossoverSubpath: "lib/wine/aarch64-windows/lsass.exe"),
-                // Patched wineboot.exe (aarch64-windows) starts the lsass.exe stub at boot.
-                PayloadModule(payloadSubpath: "aarch64-windows/wineboot.exe",
-                              crossoverSubpath: "lib/wine/aarch64-windows/wineboot.exe"),
-                // Patched aarch64 MoltenVK (Vulkan/DXVK/vkd3d paths; replaces CrossOver's copy).
-                PayloadModule(payloadSubpath: "lib/aarch64/libMoltenVK.dylib",
-                              crossoverSubpath: "lib/aarch64/libMoltenVK.dylib"),
+                // ntoskrnl.exe em-backports + ACE-CORE DriverInit/return-address fix
+                PayloadModule(payloadSubpath: "aarch64-windows/ntoskrnl.exe",
+                              crossoverSubpath: "lib/wine/aarch64-windows/ntoskrnl.exe"),
+                // Drops the visible helper window that hangs prefix creation on macOS 26.
+                PayloadModule(payloadSubpath: "aarch64-windows/rundll32.exe",
+                              crossoverSubpath: "lib/wine/aarch64-windows/rundll32.exe"),
             ]
         }
     }

@@ -27,13 +27,13 @@ Applied to CrossOver 26.3's Wine 11.0 (`build/wine-src`):
 
 | File | Origin | Purpose |
 |---|---|---|
-| `dlls/ntdll/unix/signal_x86_64.c` | **NEW — our fixes** ([patches/stage1-macos/](../patches/stage1-macos/)) | `0F 1F` NOP-skip **+** privileged-instruction (`mov cr3`) → `PRIV_INSTRUCTION`. The two Rosetta fixes. |
+| `dlls/ntdll/unix/signal_x86_64.c` | **NEW — our fixes** ([patches/x64/stage1-macos/](../patches/x64/stage1-macos/)) | `0F 1F` NOP-skip **+** privileged-instruction (`mov cr3`) → `PRIV_INSTRUCTION`. The two Rosetta fixes. |
 | `dlls/kernel32/module.c` | dw-proton | int3-stub `KiUser*Dispatcher` spoof (fired 2×). |
 | `dlls/ntdll/unix/sync.c` | dw-proton | `NtDelayExecution` via QPC (timing). |
 | `dlls/ntoskrnl.exe/{ntoskrnl.c,.spec,_private.h,sync.c}` | dw-proton | 17 `ntoskrnl.exe` em-backports ACE's driver calls. |
 | `dlls/win32u/vulkan.c` | build fix | `SONAME_LIBVULKAN` fallback (minimal build compiles). |
 
-Patches: [patches/stage1-macos/](../patches/stage1-macos/) (our Rosetta fixes) + [patches/stage2-dwproton/](../patches/stage2-dwproton/) (dw-proton set). The `signal_x86_64.c` patch also contains an optional `CWC-ILLEGAL-INSTR` debug `ERR` line — harmless (fires 0×), remove for production.
+Patches: [patches/x64/stage1-macos/](../patches/x64/stage1-macos/) (our Rosetta fixes) + [patches/x64/stage2-dwproton/](../patches/x64/stage2-dwproton/) (dw-proton set). The `signal_x86_64.c` patch also contains an optional `CWC-ILLEGAL-INSTR` debug `ERR` line — harmless (fires 0×), remove for production.
 
 ## How it's deployed (the swap into CrossOver)
 

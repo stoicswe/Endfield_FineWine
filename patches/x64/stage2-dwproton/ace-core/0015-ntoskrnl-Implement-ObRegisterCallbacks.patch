@@ -1,0 +1,197 @@
+diff --git a/include/ddk/wdm.h b/include/ddk/wdm.h
+--- a/include/ddk/wdm.h
++++ b/include/ddk/wdm.h
+@@ -1629,6 +1629,9 @@
+ #define OB_FLT_REGISTRATION_VERSION_0100  0x0100
+ #define OB_FLT_REGISTRATION_VERSION OB_FLT_REGISTRATION_VERSION_0100
+ 
++#define OB_OPERATION_HANDLE_CREATE       0x00000001
++#define OB_OPERATION_HANDLE_DUPLICATE    0x00000002
++
+ typedef enum _DIRECTORY_NOTIFY_INFORMATION_CLASS {
+     DirectoryNotifyInformation = 1,
+     DirectoryNotifyExtendedInformation
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.c b/dlls/ntoskrnl.exe/ntoskrnl.c
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -73,6 +73,26 @@
+ static PLOAD_IMAGE_NOTIFY_ROUTINE load_image_notify_routines[8];
+ static unsigned int load_image_notify_routine_count;
+ 
++/* ObRegisterCallbacks support. ACE-CORE registers process/thread
++ * handle-operation callbacks; Wine stubbed this out entirely, so the callbacks
++ * (and any event they signal) never fired. We store the registrations and
++ * invoke them from the handle-open paths. */
++struct ob_op_registration
++{
++    ULONG_PTR group;
++    POBJECT_TYPE *object_type;
++    OB_OPERATION operations;
++    POB_PRE_OPERATION_CALLBACK pre;
++    POB_POST_OPERATION_CALLBACK post;
++    void *context;
++};
++
++static struct ob_op_registration ob_op_registrations[16];
++static unsigned int ob_op_registration_count;
++static ULONG_PTR ob_last_group;
++DECLARE_CRITICAL_SECTION(ob_callback_cs);
++static LONG ob_callback_in_progress;
++
+ struct irp_data
+ {
+     HANDLE handle;
+@@ -353,6 +373,70 @@
+     LeaveCriticalSection( &handle_map_cs );
+     if (!status) *ret = obj;
+     return status;
++}
++
++/* Invoke the registered OB_PRE_OPERATION callbacks. The callbacks may shrink
++ * (or, for protected processes, zero) DesiredAccess; we propagate it back. */
++static void ob_call_pre_operation_callbacks( POBJECT_TYPE type, OB_OPERATION operation,
++                                             void *object, ACCESS_MASK *desired )
++{
++    OB_PRE_OPERATION_PARAMETERS parameters;
++    OB_PRE_OPERATION_INFORMATION information;
++    unsigned int i;
++
++    if (InterlockedCompareExchange( &ob_callback_in_progress, 1, 0 )) return;
++
++    memset( &parameters, 0, sizeof(parameters) );
++    parameters.CreateHandleInformation.DesiredAccess = *desired;
++    parameters.CreateHandleInformation.OriginalDesiredAccess = *desired;
++
++    memset( &information, 0, sizeof(information) );
++    information.Operation = operation;
++    information.Object = object;
++    information.ObjectType = type;
++    information.Parameters = &parameters;
++
++    for (i = 0; i < ob_op_registration_count; i++)
++    {
++        if (!ob_op_registrations[i].object_type || *ob_op_registrations[i].object_type != type) continue;
++        if (!(ob_op_registrations[i].operations & operation)) continue;
++        if (!ob_op_registrations[i].pre) continue;
++        ob_op_registrations[i].pre( ob_op_registrations[i].context, &information );
++    }
++
++    *desired = parameters.CreateHandleInformation.DesiredAccess;
++
++    InterlockedExchange( &ob_callback_in_progress, 0 );
++}
++
++static void ob_call_post_operation_callbacks( POBJECT_TYPE type, OB_OPERATION operation,
++                                              void *object, ACCESS_MASK granted, NTSTATUS status )
++{
++    OB_POST_OPERATION_PARAMETERS parameters;
++    OB_POST_OPERATION_INFORMATION information;
++    unsigned int i;
++
++    if (InterlockedCompareExchange( &ob_callback_in_progress, 1, 0 )) return;
++
++    memset( &parameters, 0, sizeof(parameters) );
++    parameters.CreateHandleInformation.GrantedAccess = granted;
++
++    memset( &information, 0, sizeof(information) );
++    information.Operation = operation;
++    information.Object = object;
++    information.ObjectType = type;
++    information.ReturnStatus = status;
++    information.Parameters = &parameters;
++
++    for (i = 0; i < ob_op_registration_count; i++)
++    {
++        if (!ob_op_registrations[i].object_type || *ob_op_registrations[i].object_type != type) continue;
++        if (!(ob_op_registrations[i].operations & operation)) continue;
++        if (!ob_op_registrations[i].post) continue;
++        ob_op_registrations[i].post( ob_op_registrations[i].context, &information );
++    }
++
++    InterlockedExchange( &ob_callback_in_progress, 0 );
+ }
+ 
+ /***********************************************************************
+@@ -374,7 +458,14 @@
+     }
+ 
+     status = kernel_object_from_handle( handle, type, ptr );
+-    if (!status) ObReferenceObject( *ptr );
++    if (!status)
++    {
++        POBJECT_TYPE object_type = ObGetObjectType( *ptr );
++
++        ob_call_pre_operation_callbacks( object_type, OB_OPERATION_HANDLE_CREATE, *ptr, &access );
++        ObReferenceObject( *ptr );
++        ob_call_post_operation_callbacks( object_type, OB_OPERATION_HANDLE_CREATE, *ptr, access, STATUS_SUCCESS );
++    }
+     return status;
+ }
+ 
+@@ -3626,11 +3717,42 @@
+  */
+ NTSTATUS WINAPI ObRegisterCallbacks(POB_CALLBACK_REGISTRATION callback, void **handle)
+ {
+-    FIXME( "callback %p, handle %p.\n", callback, handle );
++    OB_OPERATION_REGISTRATION *op;
++    ULONG_PTR group;
++    unsigned int i;
+ 
+-    if(handle)
+-        *handle = UlongToHandle(0xdeadbeaf);
++    TRACE( "callback %p, handle %p.\n", callback, handle );
+ 
++    if (!callback || !handle) return STATUS_INVALID_PARAMETER;
++    if (callback->Version != OB_FLT_REGISTRATION_VERSION)
++        FIXME( "unexpected version %#x\n", callback->Version );
++
++    EnterCriticalSection( &ob_callback_cs );
++
++    if (ob_op_registration_count + callback->OperationRegistrationCount > ARRAY_SIZE(ob_op_registrations))
++    {
++        LeaveCriticalSection( &ob_callback_cs );
++        return STATUS_INSUFFICIENT_RESOURCES;
++    }
++
++    group = ++ob_last_group;
++    for (i = 0; i < callback->OperationRegistrationCount; i++)
++    {
++        op = &callback->OperationRegistration[i];
++        TRACE( "  op type %p, operations %#lx, pre %p, post %p.\n",
++               op->ObjectType, op->Operations, op->PreOperation, op->PostOperation );
++        ob_op_registrations[ob_op_registration_count].group = group;
++        ob_op_registrations[ob_op_registration_count].object_type = op->ObjectType;
++        ob_op_registrations[ob_op_registration_count].operations = op->Operations;
++        ob_op_registrations[ob_op_registration_count].pre = op->PreOperation;
++        ob_op_registrations[ob_op_registration_count].post = op->PostOperation;
++        ob_op_registrations[ob_op_registration_count].context = callback->RegistrationContext;
++        ob_op_registration_count++;
++    }
++
++    LeaveCriticalSection( &ob_callback_cs );
++
++    *handle = UlongToHandle( group );
+     return STATUS_SUCCESS;
+ }
+ 
+@@ -3639,7 +3761,19 @@
+  */
+ void WINAPI ObUnRegisterCallbacks(void *handle)
+ {
+-    FIXME( "stub: %p\n", handle );
++    ULONG_PTR group = HandleToUlong( handle );
++    unsigned int i = 0, w = 0;
++
++    TRACE( "(%p)\n", handle );
++
++    EnterCriticalSection( &ob_callback_cs );
++    while (i < ob_op_registration_count)
++    {
++        if (ob_op_registrations[i].group == group) { i++; continue; }
++        ob_op_registrations[w++] = ob_op_registrations[i++];
++    }
++    ob_op_registration_count = w;
++    LeaveCriticalSection( &ob_callback_cs );
+ }
+ 
+ /***********************************************************************

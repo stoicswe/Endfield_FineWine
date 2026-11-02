@@ -1,6 +1,6 @@
 # 12 — Stage 1: the `EndfieldBase.dll` protector fault (the critical path)
 
-> ⚠️ **Solved — kept as the investigation record.** The fault is fixed by the `0F 1F` NOP-skip in [patches/stage1-macos/](../patches/stage1-macos/); the outcome and final patch set are in [13-working-solution.md](13-working-solution.md). Read on for how the root cause was found.
+> ⚠️ **Solved — kept as the investigation record.** The fault is fixed by the `0F 1F` NOP-skip in [patches/x64/stage1-macos/](../patches/x64/stage1-macos/); the outcome and final patch set are in [13-working-solution.md](13-working-solution.md). Read on for how the root cause was found.
 
 > The macOS-specific blocker that must be cracked before dw-proton (stage 2) matters. Background: [10](10-milestone-1-results.md) (capture), [11](11-linux-vs-macos-comparison.md) (Linux vs macOS). **Updated 2026-07-14 with a prior-art hunt + Wine-source analysis — the mechanism is now understood and there is a concrete #1 experiment.**
 
@@ -16,7 +16,7 @@ Built a custom x86_64 CrossOver-26.3 Wine, reproduced the fault, instrumented th
 ```
 **Rosetta 2 raises an illegal-instruction fault on a plain NOP.** Wine's `segv_handler` (`TRAP_x86_PRIVINFLT`) already has a CrossOver hack, `handle_cet_nop`, that skips CET-space `0F 1E` (RDSSP) NOPs Rosetta wrongly faults on — **but it has no case for `0F 1F`.** So our NOP fell through to `c000001d`. VMProtect emits `0F 1F` NOPs *pervasively* (23,227 of them fire in one launch), and each one Rosetta rejects.
 
-**The fix** (`patches/stage1-macos/`, applied to `dlls/ntdll/unix/signal_x86_64.c`): add a `case 0x1F` to `handle_cet_nop` that decodes the multi-byte NOP's length (modrm + optional SIB + displacement) and advances `RIP` past it. A `0F 1F /0` NOP has **zero side effects**, so skipping it is semantically exact and safe.
+**The fix** (`patches/x64/stage1-macos/`, applied to `dlls/ntdll/unix/signal_x86_64.c`): add a `case 0x1F` to `handle_cet_nop` that decodes the multi-byte NOP's length (modrm + optional SIB + displacement) and advances `RIP` past it. A `0F 1F /0` NOP has **zero side effects**, so skipping it is semantically exact and safe.
 
 **Result:** `c000001d` = 0, `0x6CD268` = 0, stack overflow = 0. **The protector runs, and ACE fully loads** — `ACE-Base64.dll`, `ACE-Setup64.exe`, `ACE-Service64.exe`, and the kernel driver `ACE-BASE.sys` (registering `\Device\ACE-BASE`). **This is exact parity with working Linux/dw-proton** — the game then hits the *stage-2* `ntoskrnl.exe.KeAcquireGuardedMutex` abort that dw-proton's em-backports fix ([02](02-dwproton-ace-patches.md), [11](11-linux-vs-macos-comparison.md)).
 
@@ -63,7 +63,7 @@ Earlier docs said "on Linux the same protector runs fine." **The Linux control w
 
 ## The candidate FIX (we already have it staged)
 
-The **dw-proton "workaround for tpshell"** int3 spoof — [patches/stage2-dwproton/misc/0009…](../patches/) + `0010…` (already fetched):
+The **dw-proton "workaround for tpshell"** int3 spoof — [patches/x64/stage2-dwproton/misc/0009…](../patches/) + `0010…` (already fetched):
 - In `dlls/kernel32/module.c` `get_proc_address()`, when the process is `Endfield.exe` and it resolves **`KiUserApcDispatcher`** or **`KiUserCallbackDispatcher`**, return a naked 4×`int3` (`0xCC`) stub instead of Wine's real dispatcher.
 - **Why it plausibly fixes `0x6CD268`:** Wine's dispatchers differ from Windows in **both address and prologue bytes**. tpshell reads them and **computes a branch target from their contents/address** → under Wine it derives a *wrong constant target* (the shape of `0x6CD268`). The int3 stub short-circuits that computation with a controlled breakpoint the protector expects to catch in its own SEH.
 - `#ifdef __x86_64__`-guarded → applies mechanically to CrossOver's x86_64-under-Rosetta tree.

@@ -9,7 +9,7 @@
 Milestones 0–1 (and 1b) are **done** ([docs/10](10-milestone-1-results.md), [docs/11](11-linux-vs-macos-comparison.md)). The failure is **two stages**, and the roadmap now reflects that:
 
 - **STAGE 1 — the `EndfieldBase.dll` `0x6CD268` protector fault (CRITICAL PATH, unsolved).** macOS-specific; not fixed by dw-proton. Investigation + experiments: **[docs/12](12-stage1-protector-fault.md)**. Everything below (milestone 4 build platform) exists to enable this.
-- **STAGE 2 — the dw-proton port (deferred).** Milestones 3/6 apply the staged patches ([patches/stage2-dwproton/](../patches/)) — but only *after* stage 1 is cleared, since we never reach the ACE stage today.
+- **STAGE 2 — the dw-proton port (deferred).** Milestones 3/6 apply the staged patches ([patches/x64/stage2-dwproton/](../patches/)) — but only *after* stage 1 is cleared, since we never reach the ACE stage today.
 
 **Immediate next actions:** Milestone 4 (build + swap a vanilla 64-bit CrossOver Wine, prove parity) → then the stage-1 experiments in [docs/12](12-stage1-protector-fault.md). Milestones 2 (free spoofs) and 3 (Linux bisect) are **lower value now**: OS-version spoof is already applied (bottle = Windows 11 Pro), and the user has no Linux box. Skip/defer them.
 

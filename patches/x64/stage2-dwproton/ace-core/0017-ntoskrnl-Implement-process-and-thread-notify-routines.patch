@@ -1,0 +1,194 @@
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.c b/dlls/ntoskrnl.exe/ntoskrnl.c
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -92,6 +92,19 @@
+ static ULONG_PTR ob_last_group;
+ DECLARE_CRITICAL_SECTION(ob_callback_cs);
+ static LONG ob_callback_in_progress;
++
++#define MAX_PROCESS_NOTIFY_ROUTINES 8
++#define MAX_THREAD_NOTIFY_ROUTINES 8
++
++static PCREATE_PROCESS_NOTIFY_ROUTINE process_notify_routines[MAX_PROCESS_NOTIFY_ROUTINES];
++static unsigned int process_notify_routine_count;
++static PCREATE_PROCESS_NOTIFY_ROUTINE_EX process_notify_routines_ex[MAX_PROCESS_NOTIFY_ROUTINES];
++static unsigned int process_notify_routine_ex_count;
++static PCREATE_THREAD_NOTIFY_ROUTINE thread_notify_routines[MAX_THREAD_NOTIFY_ROUTINES];
++static unsigned int thread_notify_routine_count;
++/* A notify callback may itself reference/create kernel objects, which would
++ * re-enter the dispatch below; a single in-flight flag breaks that recursion. */
++static LONG notify_in_progress;
+ 
+ struct irp_data
+ {
+@@ -2673,7 +2686,65 @@
+     FIXME("(%p %p %d): stub\n", MupHandle, RedirDevName, MailslotsSupported);
+     return STATUS_NOT_IMPLEMENTED;
+ }
++
++
++/* Call the registered process-creation notification routines. Wine builds a
++ * kernel process object lazily (when a process handle is first referenced), so
++ * this is the closest available "process seen by the kernel" hook; it can fire
++ * more than once for the same process. */
++static void call_process_notify_routines( PEPROCESS process )
++{
++    UNICODE_STRING name, command_line;
++    PS_CREATE_NOTIFY_INFO info;
++    WCHAR name_buf[64];
++    const WCHAR empty[] = L"";
++    HANDLE parent = (HANDLE)process->info.InheritedFromUniqueProcessId;
++    HANDLE pid = (HANDLE)process->info.UniqueProcessId;
++    unsigned int i;
++    ULONG len;
++
++    if (InterlockedCompareExchange( &notify_in_progress, 1, 0 )) return;
++
++    TRACE( "process %p (%s): %u Ex + %u legacy routines\n", process, process->imageName,
++           process_notify_routine_ex_count, process_notify_routine_count );
++
++    for (len = 0; len < ARRAY_SIZE(name_buf) - 1 && process->imageName[len]; len++)
++        name_buf[len] = process->imageName[len];
++    name_buf[len] = 0;
++    RtlInitUnicodeString( &name, name_buf );
++    RtlInitUnicodeString( &command_line, empty );
++
++    memset( &info, 0, sizeof(info) );
++    info.Size = sizeof(info);
++    info.ParentProcessId = parent;
++    info.ImageFileName = &name;
++    info.CommandLine = &command_line;
++    info.CreationStatus = STATUS_SUCCESS;
++
++    for (i = 0; i < process_notify_routine_ex_count; i++)
++        process_notify_routines_ex[i]( process, pid, &info );
++
++    for (i = 0; i < process_notify_routine_count; i++)
++        process_notify_routines[i]( parent, pid, TRUE );
++
++    InterlockedExchange( &notify_in_progress, 0 );
++}
++
++/* Call the registered thread-creation notification routines. */
++static void call_thread_notify_routines( struct _KTHREAD *thread )
++{
++    CLIENT_ID id = thread->id;
++    unsigned int i;
++
++    if (InterlockedCompareExchange( &notify_in_progress, 1, 0 )) return;
++
++    TRACE( "thread %p: %u routines\n", thread, thread_notify_routine_count );
++
++    for (i = 0; i < thread_notify_routine_count; i++)
++        thread_notify_routines[i]( id.UniqueProcess, id.UniqueThread, TRUE );
+ 
++    InterlockedExchange( &notify_in_progress, 0 );
++}
+ 
+ static void *create_process_object( HANDLE handle )
+ {
+@@ -2718,6 +2789,8 @@
+     NtOpenProcessToken( handle, TOKEN_ALL_ACCESS, &token );
+     ObReferenceObjectByHandle( token, 0, SeTokenObjectType, KernelMode, &process->token, NULL );
+     NtClose(token);
++
++    call_process_notify_routines( process );
+ 
+     return process;
+ }
+@@ -2932,6 +3005,7 @@
+         }
+     }
+ 
++    call_thread_notify_routines( thread );
+ 
+     return thread;
+ }
+@@ -3913,7 +3987,25 @@
+  */
+ NTSTATUS WINAPI PsSetCreateProcessNotifyRoutine( PCREATE_PROCESS_NOTIFY_ROUTINE callback, BOOLEAN remove )
+ {
+-    FIXME( "stub: %p %d\n", callback, remove );
++    unsigned int i;
++
++    TRACE( "(%p, %d)\n", callback, remove );
++
++    if (remove)
++    {
++        for (i = 0; i < process_notify_routine_count; i++)
++            if (process_notify_routines[i] == callback)
++            {
++                process_notify_routines[i] = process_notify_routines[--process_notify_routine_count];
++                return STATUS_SUCCESS;
++            }
++        return STATUS_PROCEDURE_NOT_FOUND;
++    }
++
++    if (process_notify_routine_count == MAX_PROCESS_NOTIFY_ROUTINES)
++        return STATUS_INSUFFICIENT_RESOURCES;
++
++    process_notify_routines[process_notify_routine_count++] = callback;
+     return STATUS_SUCCESS;
+ }
+ 
+@@ -3923,7 +4015,25 @@
+  */
+ NTSTATUS WINAPI PsSetCreateProcessNotifyRoutineEx( PCREATE_PROCESS_NOTIFY_ROUTINE_EX callback, BOOLEAN remove )
+ {
+-    FIXME( "stub: %p %d\n", callback, remove );
++    unsigned int i;
++
++    TRACE( "(%p, %d)\n", callback, remove );
++
++    if (remove)
++    {
++        for (i = 0; i < process_notify_routine_ex_count; i++)
++            if (process_notify_routines_ex[i] == callback)
++            {
++                process_notify_routines_ex[i] = process_notify_routines_ex[--process_notify_routine_ex_count];
++                return STATUS_SUCCESS;
++            }
++        return STATUS_PROCEDURE_NOT_FOUND;
++    }
++
++    if (process_notify_routine_ex_count == MAX_PROCESS_NOTIFY_ROUTINES)
++        return STATUS_INSUFFICIENT_RESOURCES;
++
++    process_notify_routines_ex[process_notify_routine_ex_count++] = callback;
+     return STATUS_SUCCESS;
+ }
+ 
+@@ -3933,7 +4043,12 @@
+  */
+ NTSTATUS WINAPI PsSetCreateThreadNotifyRoutine( PCREATE_THREAD_NOTIFY_ROUTINE NotifyRoutine )
+ {
+-    FIXME( "stub: %p\n", NotifyRoutine );
++    TRACE( "(%p)\n", NotifyRoutine );
++
++    if (thread_notify_routine_count == MAX_THREAD_NOTIFY_ROUTINES)
++        return STATUS_INSUFFICIENT_RESOURCES;
++
++    thread_notify_routines[thread_notify_routine_count++] = NotifyRoutine;
+     return STATUS_SUCCESS;
+ }
+ 
+@@ -3943,8 +4058,17 @@
+  */
+ NTSTATUS WINAPI PsRemoveCreateThreadNotifyRoutine( PCREATE_THREAD_NOTIFY_ROUTINE NotifyRoutine )
+ {
+-    FIXME( "stub: %p\n", NotifyRoutine );
+-    return STATUS_SUCCESS;
++    unsigned int i;
++
++    TRACE( "(%p)\n", NotifyRoutine );
++
++    for (i = 0; i < thread_notify_routine_count; i++)
++        if (thread_notify_routines[i] == NotifyRoutine)
++        {
++            thread_notify_routines[i] = thread_notify_routines[--thread_notify_routine_count];
++            return STATUS_SUCCESS;
++        }
++    return STATUS_PROCEDURE_NOT_FOUND;
+ }
+ 
+ 

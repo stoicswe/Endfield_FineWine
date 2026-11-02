@@ -71,19 +71,17 @@ Windows code inside native processes. So for an ARM source the patcher:
 A bottle created any other way runs CrossOver's unpatched x86_64 tree, and the ARM payload never
 loads.
 
-**CI doesn't build the ARM payload yet, and two things block it:**
+**The ARM payload is experimental, and CI doesn't build it.** It holds only `ntoskrnl.exe` and
+`rundll32.exe`, built from `patches/ARM` on public Wine 11.17. Both are ARM64 modules, because an
+`arm64` bottle only loads `aarch64-windows`. They run inside stock CrossOver ARM, which keeps its
+own `ntdll.so` and `wineserver`:
 
-1. **There is no matching source.** CodeWeavers has not published CrossOver ARM sources, and the
-   preview is built from an unpublished `wine-11.17` commit. Modules built from another tree risk
-   a Wine protocol mismatch at launch.
-2. **The module list needs correcting.** In an `arm64` bottle, `bin/wine` puts only
-   `aarch64-windows` on the DLL path, and those modules are ARM64. The list installs `kernel32.dll`
-   and `ntoskrnl.exe` into `x86_64-windows`, so those fixes would never load. It also needs
-   `wineserver-arm64`, because the ARM app has no plain `bin/wineserver`. Whether ACE's x86_64
-   driver can load in an ARM64 `winedevice.exe` at all is still an open question.
-
-`scripts/verify-app-payload.py` (in `patcher-app/`) rejects a partial ARM payload, but it only checks the list above,
-so fix the list before bundling one.
+- CodeWeavers has not published CrossOver ARM sources, and its protocol version (1809) is far from
+  public Wine 11.17's (961). Swapping `ntdll.so` fails with a version mismatch. Swapping
+  `wineserver` too gets past that, but CrossOver's other modules then can't start.
+- So the `ntdll.so` patches (the Rosetta fixes and `msync`) don't apply here. The `kernel32`
+  dispatcher spoof is `#ifdef __x86_64__`, so it doesn't apply to an ARM64 module either.
+- Whether ACE's x86_64 driver can load in an ARM64 `winedevice.exe` is still an open question.
 
 Detection is structural: an app carrying `lib/wine/aarch64-unix/ntdll.so` is the ARM variant,
 otherwise an app with `lib/wine/x86_64-unix/ntdll.so` + `lib64/libMoltenVK.dylib` is x64.
@@ -385,7 +383,7 @@ third-party image libraries), centering the artwork on a transparent square with
   for authorship).
 - **The bundled `libMoltenVK.dylib`**: **Apache-2.0** — MoltenVK, built from the Khronos Group
   [MoltenVK](https://github.com/KhronosGroup/MoltenVK) sources with this repo's
-  [patches/moltenvk](../patches/moltenvk/) applied.
+  [patches/x64/moltenvk](../patches/x64/moltenvk/) applied.
 - The app's **Licenses…** window shows all of this, with the full license texts, offline.
 
 If you publish a built `FineWine Patcher.app` (e.g. a GitHub Release), LGPL-2.1 requires you to

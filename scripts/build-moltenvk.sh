@@ -29,7 +29,7 @@ if [ "$MVK_ARCH" = "x86_64" ]; then
 else
   MVK_OUT="${MVK_OUT:-$BUILD_DIR/moltenvk-out-$MVK_ARCH}"
 fi
-P="$REPO/patches/moltenvk"
+P="$REPO/patches/x64/moltenvk"  # the same MoltenVK patches serve both architectures
 
 # Terminal dashboard (progress bars + live log tail). Must be sourced before any
 # real work so `zsh scripts/build-moltenvk.sh` can hand over to /bin/bash cleanly.
@@ -65,7 +65,7 @@ cmd_fetch() {
 }
 
 cmd_apply() {
-  ui_begin apply 1 "Applying patches/moltenvk"
+  ui_begin apply 1 "Applying patches/x64/moltenvk"
   [ -d "$MVK_SRC/.git" ] || { echo "run 'fetch' first"; exit 1; }
   local list n unit
   list=$(ls "$P"/spirv-cross/*.patch 2>/dev/null)
