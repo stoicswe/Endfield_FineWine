@@ -23,6 +23,9 @@ folders and numbering. Only `ntoskrnl.exe` and `rundll32.exe` are shipped from i
 `ntdll`, `wintrust` and `win32u` patches there have no effect yet. See "CrossOver variants" in
 [`patcher-app/README.md`](../patcher-app/README.md).
 
+`stage1-macos/0010` adds a `wdfldr.sys` stub for ACE's ARM64 drivers. It's built from source but not
+shipped yet. See [17-arm-logo-freeze.md](../docs/project-information/17-arm-logo-freeze.md).
+
 ## `stage1-macos/` — our macOS/Rosetta-2 fixes (+ build + msync fixes)
 
 Original to this project. The two Rosetta fixes live in `dlls/ntdll/unix/signal_x86_64.c` (`segv_handler`, `TRAP_x86_PRIVINFLT`):

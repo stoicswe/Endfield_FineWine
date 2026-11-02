@@ -72,6 +72,68 @@ final class VariantTests: XCTestCase {
         XCTAssertEqual(arm.utf8.count, original.utf8.count)
     }
 
+    /// A seed Menu Helper must not depend on a bundle ID or signature, so it holds a script, and that
+    /// script must run the command CrossOver writes into each launcher.
+    func testMenuHelperSeedsRunTheirLauncherCommand() throws {
+        try checkMenuHelperSeed("Menu Helper", variant: .x64)
+        try checkMenuHelperSeed("Menu Helper arm64", variant: .arm)
+    }
+
+    private func checkMenuHelperSeed(_ name: String, variant: CrossOverVariant) throws {
+        let fm = FileManager.default
+        let root = tempDir.appendingPathComponent(name, isDirectory: true)
+        let app = root.appendingPathComponent("Patched.app", isDirectory: true)
+        let resources = app.appendingPathComponent("Contents/Resources", isDirectory: true)
+        try fm.createDirectory(at: resources, withIntermediateDirectories: true)
+        let plist: [String: Any] = ["CFBundleIdentifier": "com.codeweavers.CrossOver"]
+        try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+            .write(to: app.appendingPathComponent("Contents/Info.plist"))
+
+        let seed = root.appendingPathComponent("seed", isDirectory: true)
+        let macOS = seed.appendingPathComponent("Contents/MacOS", isDirectory: true)
+        try fm.createDirectory(at: macOS, withIntermediateDirectories: true)
+        fm.createFile(atPath: macOS.appendingPathComponent(name).path, contents: Data("stock\n".utf8))
+        let archive = resources.appendingPathComponent("\(name).cpbz2")
+        try shell("cd '\(seed.path)' && find . | cpio -o -H odc 2>/dev/null | bzip2 -c > '\(archive.path)'")
+
+        try PatcherEngine.patchBundleIdentifier(in: app, variant: variant)
+
+        let launcher = root.appendingPathComponent("Launcher (Test).app", isDirectory: true)
+        let contents = launcher.appendingPathComponent("Contents", isDirectory: true)
+        try fm.createDirectory(at: contents, withIntermediateDirectories: true)
+        try shell("cd '\(contents.path)/..' && bzip2 -dc '\(archive.path)' | cpio -idm 2>/dev/null")
+        let helper = contents.appendingPathComponent("MacOS/\(name)")
+        XCTAssertTrue(fm.isExecutableFile(atPath: helper.path))
+
+        let marker = root.appendingPathComponent("launched")
+        let command = root.appendingPathComponent("Bottle Dir/Game^5E3A.lnk")
+        try fm.createDirectory(at: command.deletingLastPathComponent(), withIntermediateDirectories: true)
+        fm.createFile(atPath: command.path, contents: Data("#!/bin/sh\ntouch '\(marker.path)'\n".utf8))
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: command.path)
+        let launcherPlist: [String: Any] = ["CrossOverHelperCommand": "\"\(command.path)\""]
+        try PropertyListSerialization.data(fromPropertyList: launcherPlist, format: .xml, options: 0)
+            .write(to: contents.appendingPathComponent("Info.plist"))
+
+        try shell("'\(helper.path)'")
+        XCTAssertTrue(fm.fileExists(atPath: marker.path), name)
+    }
+
+    func testMenuHelperScriptMatchesTheRepoScript() throws {
+        let repoScript = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("scripts/lib/menu-helper.sh")
+        XCTAssertEqual(try String(contentsOf: repoScript, encoding: .utf8), PatcherEngine.menuHelperScript)
+    }
+
+    private func shell(_ command: String) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", command]
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0, command)
+    }
+
     func testAliasFollowsTheBottleArchitecture() throws {
         let write = { (name: String, conf: String) throws -> URL in
             let bottle = self.tempDir.appendingPathComponent(name, isDirectory: true)

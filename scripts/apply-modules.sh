@@ -12,6 +12,7 @@
 
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+MENU_HELPER="$REPO/scripts/lib/menu-helper.sh"
 MODULES="${1:-$REPO/dist/endfield-wine-modules}"
 SRC_APP="${SRC_APP:-/Applications/CrossOver.app}"
 DEST_APP="${DEST_APP:-/Applications/CrossOver_Endfield_Patch.app}"
@@ -179,7 +180,12 @@ for helper in "Menu Helper" "Bottle Helper"; do
         sed -i '' "s/$ORIG_BUNDLE_ID/$BUNDLE_ID/g" "Contents/Info.plist" 2>/dev/null || true
       fi
       bin="Contents/MacOS/$helper"
-      if [ -f "$bin" ]; then
+      if [ "$helper" = "Menu Helper" ] && [ -f "$bin" ]; then
+        # Launchers run their own command, so they never open the wrong CrossOver copy.
+        cp "$MENU_HELPER" "$bin" || exit 1
+        chmod 755 "$bin"
+        rm -rf Contents/_CodeSignature Contents/CodeResources
+      elif [ -f "$bin" ]; then
         python3 -c "
 with open('$bin', 'rb') as f: data = f.read()
 target = b'$ORIG_BUNDLE_ID\x00'

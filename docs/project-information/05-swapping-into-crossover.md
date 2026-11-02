@@ -87,8 +87,16 @@ If the patched app keeps `CFBundleIdentifier` as `com.codeweavers.CrossOver`, ma
 
 To isolate the patched environment:
 1. `CFBundleIdentifier` in `Contents/Info.plist` is changed to `com.codeweavers.CrossOvEF` (25 characters, byte-identical length to stock `com.codeweavers.CrossOver`).
-2. The seed launcher templates (`Contents/Resources/Menu Helper.cpbz2` and `Bottle Helper.cpbz2`) are unpacked, their internal `Contents/Info.plist` and Mach-O binaries (`Contents/MacOS/Menu Helper`, `Contents/MacOS/Bottle Helper`) patched to target `com.codeweavers.CrossOvEF`, re-signed ad-hoc, and repacked.
+2. The seed launcher templates (`Contents/Resources/Menu Helper.cpbz2` and `Bottle Helper.cpbz2`) are unpacked, their internal `Contents/Info.plist` and `Contents/MacOS/Bottle Helper` binary patched to target `com.codeweavers.CrossOvEF`, re-signed ad-hoc, and repacked. `Contents/MacOS/Menu Helper` is replaced, as described below.
 3. Newly created app launchers from the patched CrossOver automatically target `com.codeweavers.CrossOvEF`, ensuring they always launch with the patched build.
+
+The `Menu Helper` binaries are replaced rather than patched. Each is now a short script ([`scripts/lib/menu-helper.sh`](../../scripts/lib/menu-helper.sh)) that runs the launcher's `CrossOverHelperCommand`, for three reasons:
+
+- CrossOver refreshes every bottle's launchers from whichever copy ran last, so a hardcoded bundle ID sends all bottles to that copy. The `.lnk` a launcher runs already names the right copy for its bottle.
+- CrossOver ARM's `Menu Helper arm64` is laid out like Wine's loader, with a custom `__PAGEZERO` and a `WINE_TOP_DOWN` segment. macOS kills it at exec unless it keeps CodeWeavers' signature and `com.apple.developer.cross-architecture-support` entitlement, and an ad-hoc signature fails even on the unmodified bytes.
+- The x86_64 `Menu Helper` would otherwise need Rosetta on a Mac using the ARM copy.
+
+`Bottle Helper` opens CrossOver itself, so it stays a patched binary.
 
 ## Bottle structure (for reference)
 

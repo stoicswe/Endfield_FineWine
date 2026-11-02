@@ -1,0 +1,166 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: FineWine
+Subject: [PATCH] wdfldr.sys: Add a loader stub for KMDF clients.
+
+ACE-CORE's ARM64 drivers import wdfldr.sys, which Wine does not provide. Bind
+clients to a table of stubs, written through FuncTable as a single pointer,
+so their DriverEntry runs. WDF calls still fail.
+---
+diff --git a/configure b/configure
+index 50b8006..ad7d138 100755
+--- a/configure
++++ b/configure
+@@ -1520,6 +1520,7 @@ enable_vulkan_1
+ enable_w32skrnl
+ enable_wbemdisp
+ enable_wbemprox
++enable_wdfldr_sys
+ enable_wdscore
+ enable_webservices
+ enable_websocket
+@@ -22859,6 +22860,7 @@ wine_fn_config_makefile dlls/wbemdisp enable_wbemdisp
+ wine_fn_config_makefile dlls/wbemdisp/tests enable_tests
+ wine_fn_config_makefile dlls/wbemprox enable_wbemprox
+ wine_fn_config_makefile dlls/wbemprox/tests enable_tests
++wine_fn_config_makefile dlls/wdfldr.sys enable_wdfldr_sys
+ wine_fn_config_makefile dlls/wdscore enable_wdscore
+ wine_fn_config_makefile dlls/webservices enable_webservices
+ wine_fn_config_makefile dlls/webservices/tests enable_tests
+diff --git a/configure.ac b/configure.ac
+index eae581f..1686d5c 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -3304,6 +3304,7 @@ WINE_CONFIG_MAKEFILE(dlls/wbemdisp)
+ WINE_CONFIG_MAKEFILE(dlls/wbemdisp/tests)
+ WINE_CONFIG_MAKEFILE(dlls/wbemprox)
+ WINE_CONFIG_MAKEFILE(dlls/wbemprox/tests)
++WINE_CONFIG_MAKEFILE(dlls/wdfldr.sys)
+ WINE_CONFIG_MAKEFILE(dlls/wdscore)
+ WINE_CONFIG_MAKEFILE(dlls/webservices)
+ WINE_CONFIG_MAKEFILE(dlls/webservices/tests)
+diff --git a/dlls/wdfldr.sys/Makefile.in b/dlls/wdfldr.sys/Makefile.in
+new file mode 100644
+index 0000000..378d95f
+--- /dev/null
++++ b/dlls/wdfldr.sys/Makefile.in
+@@ -0,0 +1,7 @@
++MODULE    = wdfldr.sys
++EXTRADLLFLAGS = -Wl,--subsystem,native
++IMPORTS = ntoskrnl
++
++SOURCES = \
++	main.c \
++	wdfldr.sys.spec
+diff --git a/dlls/wdfldr.sys/main.c b/dlls/wdfldr.sys/main.c
+new file mode 100644
+index 0000000..42cc123
+--- /dev/null
++++ b/dlls/wdfldr.sys/main.c
+@@ -0,0 +1,97 @@
++/*
++ * wdfldr.sys
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#include <stdarg.h>
++
++#include "ntstatus.h"
++#define WIN32_NO_STATUS
++#include "windef.h"
++#include "winbase.h"
++#include "winternl.h"
++#include "ddk/wdm.h"
++
++#include "wine/debug.h"
++
++WINE_DEFAULT_DEBUG_CHANNEL(wdfldr);
++
++typedef void (WINAPI *WDFFUNC)(void);
++
++typedef struct
++{
++    ULONG Major;
++    ULONG Minor;
++    ULONG Build;
++} WDF_VERSION;
++
++typedef struct
++{
++    ULONG        Size;
++    WCHAR       *Component;
++    WDF_VERSION  Version;
++    ULONG        FuncCount;
++    WDFFUNC     *FuncTable;
++    void        *Module;
++} WDF_BIND_INFO;
++
++/* WDF_DRIVER_GLOBALS. A client stub only reads DisplaceDriverUnload, which stays FALSE. */
++static BYTE driver_globals[256];
++static WDFFUNC wdf_functions[1024];
++
++NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *path )
++{
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS WINAPI wdf_function_stub(void)
++{
++    FIXME( "unimplemented WDF function called from %p\n", __builtin_return_address(0) );
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++NTSTATUS WINAPI WdfVersionBind( DRIVER_OBJECT *driver, UNICODE_STRING *path, WDF_BIND_INFO *info, void **globals )
++{
++    ULONG i;
++
++    if (info->FuncCount > ARRAY_SIZE(wdf_functions)) return STATUS_NOT_SUPPORTED;
++
++    FIXME( "(%p, %s, %p, %p): %s %lu.%lu, %lu functions\n", driver, debugstr_wn(path->Buffer, path->Length / sizeof(WCHAR)), info, globals,
++           debugstr_w(info->Component), info->Version.Major, info->Version.Minor, info->FuncCount );
++
++    for (i = 0; i < info->FuncCount; ++i) wdf_functions[i] = (WDFFUNC)wdf_function_stub;
++    *(WDFFUNC **)info->FuncTable = wdf_functions;
++    *globals = driver_globals;
++    return STATUS_SUCCESS;
++}
++
++NTSTATUS WINAPI WdfVersionUnbind( UNICODE_STRING *path, WDF_BIND_INFO *info, void *globals )
++{
++    TRACE( "(%s, %p, %p)\n", debugstr_wn(path->Buffer, path->Length / sizeof(WCHAR)), info, globals );
++    return STATUS_SUCCESS;
++}
++
++NTSTATUS WINAPI WdfVersionBindClass( void *a, void *b, void *c )
++{
++    FIXME( "(%p, %p, %p): stub\n", a, b, c );
++    return STATUS_NOT_IMPLEMENTED;
++}
++
++NTSTATUS WINAPI WdfVersionUnbindClass( void *a, void *b, void *c )
++{
++    FIXME( "(%p, %p, %p): stub\n", a, b, c );
++    return STATUS_SUCCESS;
++}
+diff --git a/dlls/wdfldr.sys/wdfldr.sys.spec b/dlls/wdfldr.sys/wdfldr.sys.spec
+new file mode 100644
+index 0000000..0210a70
+--- /dev/null
++++ b/dlls/wdfldr.sys/wdfldr.sys.spec
+@@ -0,0 +1,4 @@
++@ stdcall WdfVersionBind(ptr ptr ptr ptr)
++@ stdcall WdfVersionBindClass(ptr ptr ptr)
++@ stdcall WdfVersionUnbind(ptr ptr ptr)
++@ stdcall WdfVersionUnbindClass(ptr ptr ptr)

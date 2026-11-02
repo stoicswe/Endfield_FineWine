@@ -897,6 +897,7 @@ final class PatcherEngine: ObservableObject {
 
                 await begin(index)
                 try Self.installModules(into: app, from: payloadDir, variant: variant)
+                if variant == .arm { try ArmNtdllFix.apply(toCrossOverRoot: Self.cxRoot(app)) }
                 await finish(index); index += 1
 
                 if let gptk {
@@ -1192,6 +1193,9 @@ final class PatcherEngine: ObservableObject {
                 throw PatchError("\(module.crossoverSubpath) does not match the bundled payload after the swap.")
             }
         }
+        if variant == .arm && !ArmNtdllFix.isApplied(inCrossOverRoot: cxr) {
+            throw PatchError("The ntdll.dll fix is missing after patching.")
+        }
         // If the user supplied GPTK, confirm the D3DMetal external half really came across (the
         // installed libd3dshared.dylib must be byte-identical to the source they selected).
         if let gptk {
@@ -1234,12 +1238,27 @@ final class PatcherEngine: ObservableObject {
         }
     }
 
+    /// Replaces the Menu Helper binaries in the seed launchers. CrossOver refreshes every bottle's
+    /// launchers from whichever copy ran last, so a helper with a hardcoded bundle ID sends other
+    /// bottles to that copy; the launcher's own command always names the right one. It also spares
+    /// ARM the x86_64 helper's Rosetta dependency. `Menu Helper arm64` can't be patched at all: it
+    /// is laid out like Wine's loader, so macOS kills it at exec under any other signature.
+    /// Keep in sync with scripts/lib/menu-helper.sh.
+    nonisolated static let menuHelperScript = """
+    #!/bin/sh
+    # Stands in for CrossOver's Menu Helper. The launcher's command names the right CrossOver copy.
+    contents=$(cd "$(dirname "$0")/.." && pwd)
+    command=$(/usr/bin/plutil -extract CrossOverHelperCommand raw "$contents/Info.plist") || exit 1
+    eval "exec $command"
+
+    """
+
     /// Patches the app's CFBundleIdentifier in Info.plist to the variant's patched ID and
     /// patches the seed launcher templates (`Contents/Resources/Menu Helper.cpbz2`, `Bottle
     /// Helper.cpbz2` and, on CrossOver ARM, `Menu Helper arm64.cpbz2`) so that launcher app
     /// bundles created by this patched CrossOver reference its bundle ID and always launch
-    /// with the patched version.
-    private nonisolated static func patchBundleIdentifier(in app: URL, variant: CrossOverVariant) throws {
+    /// with the patched version. The Menu Helpers are replaced instead: see `menuHelperScript`.
+    nonisolated static func patchBundleIdentifier(in app: URL, variant: CrossOverVariant) throws {
         let patchedBundleIdentifier = variant.patchedBundleIdentifier
         let fm = FileManager.default
         let infoPlist = app.appendingPathComponent("Contents/Info.plist")
@@ -1285,7 +1304,14 @@ final class PatcherEngine: ObservableObject {
 
             // Patch Mach-O binary
             let bin = tmpDir.appendingPathComponent("Contents/MacOS/\(helper)")
-            if fm.fileExists(atPath: bin.path) {
+            if helper.hasPrefix("Menu Helper"), fm.fileExists(atPath: bin.path) {
+                try Data(menuHelperScript.utf8).write(to: bin, options: .atomic)
+                try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
+                for sealPath in ["Contents/_CodeSignature", "Contents/CodeResources"] {
+                    let bundleSeal = tmpDir.appendingPathComponent(sealPath)
+                    if fm.fileExists(atPath: bundleSeal.path) { try fm.removeItem(at: bundleSeal) }
+                }
+            } else if fm.fileExists(atPath: bin.path) {
                 var binData = try Data(contentsOf: bin)
                 guard let target = (originalBundleIdentifier + "\0").data(using: .utf8),
                       let replacement = (patchedBundleIdentifier + "\0").data(using: .utf8),
