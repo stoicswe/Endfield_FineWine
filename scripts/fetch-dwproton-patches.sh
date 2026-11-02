@@ -15,7 +15,7 @@ set -uo pipefail
 SHA="${DWPROTON_SHA:-b816be489049a10453b470c6a12dcf552ea41773}"
 REPO="dawn-winery/dwproton-mirror"
 BASE="https://raw.githubusercontent.com/${REPO}/${SHA}/patches/wine"
-DEST="patches/stage2-dwproton"
+DEST="patches/x64/stage2-dwproton"
 
 mkdir -p "$DEST/misc" "$DEST/em-backports"
 echo "Fetching dw-proton patches from ${REPO}@${SHA:0:12} ..."

@@ -20,7 +20,7 @@ Searches performed (2026-09-20):
   `base`): **0 hits**.
 
 The ACE patches dwproton *does* carry (and which this repository ports in
-`patches/stage2-dwproton/`) are anti-cheat **launch** patches, not mod-loading patches — they
+`patches/x64/stage2-dwproton/`) are anti-cheat **launch** patches, not mod-loading patches — they
 implement `ntoskrnl.exe` exports and spoof dispatcher probes. Nothing in them concerns DLL
 injection or mod loaders. `[confidence: high]`
 

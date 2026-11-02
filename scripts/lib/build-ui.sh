@@ -23,6 +23,7 @@
 #   UI_SELF="$0"                       # must precede sourcing (zsh handoff, below)
 #   . "$REPO/scripts/lib/build-ui.sh"
 #   ui_init "FineWine — title"                       # once, before any step
+#   ui_plan <label> <weight> <description>           # optional: list upcoming steps
 #   ui_begin <label> <weight> <description>          # at the start of each step
 #   ui_run <logfile> <sublabel> cmd args...          # long command, logged + pane
 #   ui_end                                           # closes the step (✓ line)
@@ -276,6 +277,7 @@ ui_draw() {
   # overall percent: completed steps count fully, the running step by its pct
   local total_w=0 done_w=0 i
   for ((i = 0; i < UI_N; i++)); do
+    [ "${UI_ST[i]}" = "skip" ] && continue   # work that won't happen isn't part of the total
     total_w=$((total_w + ${UI_W[i]}))
     case "${UI_ST[i]}" in
       ok)  done_w=$((done_w + ${UI_W[i]})) ;;
@@ -404,11 +406,20 @@ ui_init() { # [title] — enable the dashboard when stdout is an interactive TTY
   return 0
 }
 
+ui_plan() { # label [weight] [description] — list an upcoming step, so the checklist and overall
+            # bar show the whole build from the start; ui_begin starts it later
+  local label="$1" w="${2:-10}" desc="${3:-$1}" i=$UI_N
+  UI_LBL[i]="$label"; UI_W[i]="$w"; UI_DESC[i]="$desc"
+  UI_ST[i]="pending"; UI_TM[i]=0
+  UI_N=$((UI_N + 1))
+  return 0
+}
+
 ui_begin() { # label [weight] [description] — register/start a checklist step
   local label="$1" w="${2:-10}" desc="${3:-$1}"
   local i=-1 j
   for ((j = 0; j < UI_N; j++)); do
-    if [ "${UI_LBL[j]}" = "$label" ]; then i=$j; break; fi
+    if [ "${UI_LBL[j]}" = "$label" ]; then i=$j; desc="${UI_DESC[j]}"; break; fi
   done
   if [ "$i" -lt 0 ]; then
     i=$UI_N

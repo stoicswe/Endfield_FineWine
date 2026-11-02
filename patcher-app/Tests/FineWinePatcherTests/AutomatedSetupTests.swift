@@ -221,6 +221,18 @@ final class AutomatedSetupTests: XCTestCase {
         XCTAssertEqual(on["D3DM_ENABLE_METALFX"], off["D3DM_ENABLE_METALFX"])
     }
 
+    func testCxbottleArgumentsRequestArm64BottleOnArm() {
+        let args = SetupEngine.cxbottleArguments(
+            bottle: "B", template: "win11_64", wineArch: CrossOverVariant.arm.bottleWineArch, environment: [])
+        XCTAssertEqual(args, [
+            "--bottle", "B",
+            "--create",
+            "--template", "win11_64",
+            "--description", "Arknights: Endfield (Endfield_FineWine)",
+            "--winearch", "arm64",
+        ])
+    }
+
     // MARK: - Preflight (Rosetta + wine smoke exec)
 
     /// A fake CrossOver root whose `bin/wine` prints a version and exits with `status`.
@@ -270,6 +282,15 @@ final class AutomatedSetupTests: XCTestCase {
         ) { error in
             XCTAssertTrue("\(error)".contains("Rosetta"), "\(error)")
         }
+    }
+
+    func testArmPreflightPassesWithoutRosetta() throws {
+        let cxr = try fakeCrossOverRoot(status: 0)
+        let log = tempLog(in: cxr)
+        try SetupEngine.runPreflight(cxr: cxr, log: log, requiresRosetta: false, archPath: try fakeArch(status: 1))
+        let text = try String(contentsOf: log, encoding: .utf8)
+        XCTAssertTrue(text.contains("preflight ok"), text)
+        XCTAssertFalse(text.contains("Rosetta"), text)
     }
 
     func testPreflightFailsWhenWineCannotStart() throws {

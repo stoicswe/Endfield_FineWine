@@ -39,6 +39,93 @@ MoltenVK **is** bundled (it is Apache-2.0), since the game's Vulkan/DXVK/vkd3d p
 **End users need no developer tools** — the `lib64` rpath is baked into the payload at app-build
 time, so at patch time the app only uses `codesign`, `ditto` and `xattr`, which ship with macOS.
 
+## CrossOver variants: x64 and ARM (experimental)
+
+One patcher handles both CrossOver products. It **detects the variant from the selected app's
+layout** and installs the matching payload — the x64 path is never affected by the ARM payload
+and vice-versa:
+
+| | x64 | ARM |
+|---|---|---|
+| app | CrossOver 26.x | CrossOver ARM (27 preview) |
+| host Wine | x86_64 under Rosetta 2 | **native aarch64, no Rosetta** |
+| Wine tree | `lib/wine/x86_64-unix` | `lib/wine/aarch64-unix` host · `x86_64-windows` game PE · `aarch64-windows` wineboot/lsass |
+| host libs | `lib64/…` | `lib/aarch64/…` |
+| ntdll rpath | `@loader_path/../../../lib64` | `@loader_path/../../../lib/aarch64` |
+| D3DMetal | `lib64/apple_gptk` | `lib/apple_gptk` |
+| payload | `Resources/payload/` | `Resources/payload/arm/` |
+
+**ARM needs no Rosetta 2, but only in an `arm64` bottle.** CrossOver ARM also ships a full x86_64
+Wine tree, and its `bin/wine` runs a default `win64` bottle on that tree under Rosetta. Only a
+bottle created with `cxbottle --winearch arm64` uses the aarch64 host, with FEX emulating x86_64
+Windows code inside native processes. So for an ARM source the patcher:
+
+- skips the Rosetta 2 step when patching and in the Automated Setup preflight,
+- applies a 9-byte fix to CrossOver ARM's `ntdll.dll`, without which the game freezes at the logo
+  (see [17-arm-logo-freeze.md](../docs/project-information/17-arm-logo-freeze.md)),
+- creates `arm64` bottles,
+- hides GPTK and D3DMetal, which are x86_64-only even in CrossOver ARM (DXMT is the default),
+- names the copy `CrossOver_Endfield_Patch_ARM.app`, and only reuses a copy of the same variant,
+- gives it the bundle ID `com.codeweavers.CrsEF.ARM`, so shortcuts open the right copy when both
+  variants are installed. CrossOver's helpers hardcode the ID in a fixed-size slot, so it has to
+  stay 25 characters, which rules out `com.codeweavers.CrossOvEF.ARM`.
+
+Both variants replace the `Menu Helper` binaries in the launcher template with a script that runs
+the launcher's own command, so a shortcut always opens the copy its bottle was set up with. See
+[05-swapping-into-crossover.md](../docs/project-information/05-swapping-into-crossover.md).
+
+A bottle created any other way runs CrossOver's unpatched x86_64 tree, and the ARM payload never
+loads.
+
+**The ARM payload is experimental, and CI doesn't build it.** It holds only `ntoskrnl.exe` and
+`rundll32.exe`, built from `patches/ARM` on public Wine 11.17. Both are ARM64 modules, because an
+`arm64` bottle only loads `aarch64-windows`. They run inside stock CrossOver ARM, which keeps its
+own `ntdll.so` and `wineserver`:
+
+- CodeWeavers has not published CrossOver ARM sources, and its protocol version (1809) is far from
+  public Wine 11.17's (961). Swapping `ntdll.so` fails with a version mismatch. Swapping
+  `wineserver` too gets past that, but CrossOver's other modules then can't start.
+- So the `ntdll.so` patches (the Rosetta fixes and `msync`) don't apply here. The `kernel32`
+  dispatcher spoof is `#ifdef __x86_64__`, so it doesn't apply to an ARM64 module either.
+- Whether ACE's x86_64 driver can load in an ARM64 `winedevice.exe` is still an open question.
+
+Detection is structural: an app carrying `lib/wine/aarch64-unix/ntdll.so` is the ARM variant,
+otherwise an app with `lib/wine/x86_64-unix/ntdll.so` + `lib64/libMoltenVK.dylib` is x64.
+Selecting an unrecognized app disables patching.
+
+The **ARM variant is experimental**: the load-bearing `#ifdef __x86_64__` dispatcher spoof is
+absent on the aarch64 unix side, so whether it gets past ACE is the open question — it is *not*
+expected to behave like x64. ARM modules are built by a **separate pipeline**,
+[`scripts/build-wine-arm.sh`](../scripts/build-wine-arm.sh), so the known-good x64 build is
+untouched; the app simply reports "no ARM payload" until one is built and staged. The pipeline
+prefers the **CrossOver ARM source** (`CX_ARM_VER=…`) so the module ABI matches the app; until
+CodeWeavers publishes preview sources it falls back to upstream Wine (experimental ABI).
+
+**There is no public CrossOver ARM source tarball** — only `crossover-sources-26.3.0.tar.gz`
+(the x64 base) is published, and every preview version string 404s on
+`media.codeweavers.com`. CodeWeavers is **upstreaming the native-ARM64 Wine support to Wine**
+itself (FEX for i386/x86_64 emulation; Brendan Shanks, wine-devel, Aug 2026), so the correct
+long-term source for the ARM pipeline is **upstream Wine 11.17+ / master**, not a CrossOver-only
+tree — `scripts/build-wine-arm.sh check` against the newest Wine you can as those MRs land.
+
+**FEX is not a separate layer on macOS.** CrossOver's x86/x86_64 emulation is not a standalone
+`FEXLoader` (the Linux model): FEXCore is compiled *into* Wine's own modules — `xtajit64.dll`
+(`aarch64-windows` PE, ~3.8 MB, carries `FEXJIT`/`fex-emu`) plus the Wine-side unixlibs
+`libwow64fex.so` / `libarm64ecfex.so` that service FEX's host callbacks (mmap, JIT, TSO control).
+Upstream Wine's `dlls/xtajit64` is only a stub (`x64 emulation not implemented`), so a plain
+upstream Wine build has **no** x86 emulation at all — the emulator exists only in CrossOver's
+build. The ARM payload therefore does **not** build or bundle FEX: the patched modules run *on
+top of* the FEX-embedded `xtajit64.dll` already inside your CrossOver app. Building/vendoring FEX
+separately only makes sense if we ever ship a **full ARM Wine engine** (like the Sikarugir path),
+where `xtajit64`/`wow64` would have to be built with FEX embedded.
+
+`scripts/build-wine-arm.sh check` reports how far the (CrossOver-26.3-era) `patches/` series gets
+against whatever source you point it at. Against **upstream Wine 11.17** (CrossOver ARM preview's
+base) it is a rebase project, not a drop-in: ~20 of 44 patches apply (16 clean + 4 with `-F3`
+fuzz), the rest need rebasing, and the `msync` patches cannot apply at all because
+`dlls/ntdll/unix/msync.c` is a CrossOver-only file — so the real CrossOver ARM sources are
+required for a faithful build.
+
 ## Automated Setup
 
 **Automated Setup…** (next to *Create Patched Copy…*) is the one-click path. It uses the CrossOver
@@ -267,6 +354,16 @@ Requires the Xcode Command Line Tools only (no Xcode):
 open "patcher-app/build/FineWine Patcher.app"
 ```
 
+To also bundle the experimental ARM payload (optional), build it with the separate pipeline
+first; `build-app.sh` stages `build/wine-arm-payload` automatically when it exists:
+
+```bash
+# aarch64 MoltenVK (optional) and the ARM Wine modules
+MVK_ARCH=aarch64 ./scripts/build-moltenvk.sh all
+CX_ARM_VER=<crossover-arm-version> ./scripts/build-wine-arm.sh all   # or ARM_SRC_DIR/ARM_SRC_TARBALL
+./patcher-app/scripts/build-app.sh
+```
+
 `PAYLOAD_DIR` overrides where the Wine modules come from (the `build/wine-build64` tree layout or
 a flat directory with the three files); `MOLTENVK_DIR` overrides where `libMoltenVK.dylib` comes
 from (default `build/moltenvk-out`, or a copy inside `PAYLOAD_DIR`). `CODESIGN_ID` sets a real
@@ -292,7 +389,7 @@ third-party image libraries), centering the artwork on a transparent square with
   for authorship).
 - **The bundled `libMoltenVK.dylib`**: **Apache-2.0** — MoltenVK, built from the Khronos Group
   [MoltenVK](https://github.com/KhronosGroup/MoltenVK) sources with this repo's
-  [patches/moltenvk](../patches/moltenvk/) applied.
+  [patches/x64/moltenvk](../patches/x64/moltenvk/) applied.
 - The app's **Licenses…** window shows all of this, with the full license texts, offline.
 
 If you publish a built `FineWine Patcher.app` (e.g. a GitHub Release), LGPL-2.1 requires you to
@@ -329,6 +426,7 @@ Sources/FineWinePatcher/
   LicensesView.swift              the Licenses window + component metadata
 Tests/FineWinePatcherTests/
   ModChainTests.swift             the mod-chain ini-editing rules (swift test)
+  VariantTests.swift              x64-vs-ARM detection + the per-variant path table (swift test)
   MetalHUDTests.swift             bottle env editing, related-app discovery, apply/revert
   UsageTelemetryTests.swift       per-run prompt schema + metadata allowlist checks (swift test)
 Resources/licenses/               license texts bundled into the app

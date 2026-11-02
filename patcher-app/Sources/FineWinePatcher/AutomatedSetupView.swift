@@ -18,7 +18,6 @@ struct AutomatedSetupView: View {
     /// The GPTK / D3DMetal selection from the main window.
     let gptk: GPTKSource?
 
-    private static let defaultName = "CrossOver_Endfield_Patch.app"
 
     private enum Page: Int, Equatable {
         case crossOver, graphics, installer, bottle, progress
@@ -79,8 +78,11 @@ struct AutomatedSetupView: View {
         .fixedSize(horizontal: false, vertical: true)
         .interactiveDismissDisabled(isPatching || setup.isRunning)
         .onAppear {
-            existingPatched = engine.patchedApp ?? Self.detectDefaultPatchedApp()
+            let variant = source?.variant
+            let engineCopy = engine.patchedApp.flatMap { CrossOverInfo(url: $0).variant == variant ? $0 : nil }
+            existingPatched = engineCopy ?? Self.detectDefaultPatchedApp(variant: variant)
             patchedApp = existingPatched
+            if !BottleBackend.available(for: variant).contains(settings.backend) { settings.backend = .dxmt }
             // Reusing an existing copy keeps whatever GPTK it already has; only preselect the
             // main window's GPTK when a fresh copy is going to be created.
             selectedGPTK = existingPatched == nil ? gptk : nil
@@ -224,7 +226,7 @@ struct AutomatedSetupView: View {
                 }
 
                 if let source, !source.isExpectedVersion {
-                    Text("CrossOver \(source.displayVersion) is not \(CrossOverInfo.expectedVersion) — the bundled modules need that Wine ABI. Install CrossOver \(CrossOverInfo.expectedVersion), or use “Create Patched Copy…” on the main window to patch anyway.")
+                    Text("CrossOver \(source.displayVersion) is not \(CrossOverVariant.x64.expectedVersion) — the bundled modules need that Wine ABI. Install CrossOver \(CrossOverVariant.x64.expectedVersion), or use “Create Patched Copy…” on the main window to patch anyway.")
                         .font(.caption)
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
@@ -256,6 +258,11 @@ struct AutomatedSetupView: View {
                 if !engine.steps.isEmpty { StepsListView(steps: engine.steps) }
                 if let error = engine.errorMessage { ErrorBox(message: error) }
             }
+        } else if source?.variant?.supportsD3DMetal == false {
+            Text("D3DMetal is x86_64-only, so it isn't used on ARM CrossOver. The bottle uses DXMT by default, with no Rosetta 2 needed.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 GroupBox {
@@ -404,7 +411,7 @@ struct AutomatedSetupView: View {
                         Text("Graphics backend")
                         Spacer()
                         Picker("", selection: $settings.backend) {
-                            ForEach(BottleBackend.allCases) { backend in
+                            ForEach(BottleBackend.available(for: source?.variant)) { backend in
                                 Text(backend.displayName).tag(backend)
                             }
                         }
@@ -524,18 +531,21 @@ struct AutomatedSetupView: View {
     /// The patched copy lives next to the apps (`/Applications`, falling back to `~/Applications`).
     private var destination: URL {
         let fm = FileManager.default
+        let name = "\((source?.variant ?? .x64).patchedAppName).app"
         let applications = URL(fileURLWithPath: "/Applications", isDirectory: true)
         if fm.isWritableFile(atPath: applications.path) {
-            return applications.appendingPathComponent(Self.defaultName, isDirectory: true)
+            return applications.appendingPathComponent(name, isDirectory: true)
         }
         let userApplications = fm.homeDirectoryForCurrentUser
             .appendingPathComponent("Applications", isDirectory: true)
         try? fm.createDirectory(at: userApplications, withIntermediateDirectories: true)
-        return userApplications.appendingPathComponent(Self.defaultName, isDirectory: true)
+        return userApplications.appendingPathComponent(name, isDirectory: true)
     }
 
-    private static func detectDefaultPatchedApp() -> URL? {
-        let apps = SetupValidation.findPatchedCrossOvers()
+    /// Finds a patched copy of the selected variant; the other variant's copy can't be reused.
+    private static func detectDefaultPatchedApp(variant: CrossOverVariant?) -> URL? {
+        let apps = SetupValidation.findPatchedCrossOvers().filter { CrossOverInfo(url: $0).variant == variant }
+        let defaultName = "\((variant ?? .x64).patchedAppName).app"
         let standard = URL(fileURLWithPath: "/Applications", isDirectory: true)
             .appendingPathComponent(defaultName, isDirectory: true)
         if apps.contains(standard) { return standard }
@@ -549,12 +559,12 @@ struct AutomatedSetupView: View {
 
     /// Runs the patch (if one is needed) with the chosen GPTK, then continues to the installer.
     private func applyGraphicsAndContinue() {
-        guard let source else { return }
+        guard let source, let variant = source.variant else { return }
         if needsPatch {
             isPatching = true
             // The Automated Setup report at the end covers this run; a separate patch report
             // inside the wizard would duplicate it.
-            engine.patch(source: source.url, destination: destination, gptk: selectedGPTK, reportTelemetry: false)
+            engine.patch(source: source.url, variant: variant, destination: destination, gptk: selectedGPTK, reportTelemetry: false)
         } else {
             page = .installer
         }

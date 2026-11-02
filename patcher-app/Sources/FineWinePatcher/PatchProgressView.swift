@@ -30,7 +30,7 @@ struct PatchProgressView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Creating the patched CrossOver")
                 .font(.title2.weight(.semibold))
-            Text("Copies CrossOver \(CrossOverInfo.expectedVersion), swaps in the patched Wine modules and MoltenVK, re-seals the copy and verifies it. Your original CrossOver is never touched.")
+            Text("Copies CrossOver, swaps in the patched Wine modules and MoltenVK, re-seals the copy and verifies it. Your original CrossOver is never touched.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -60,7 +60,7 @@ struct PatchProgressView: View {
                 Label("Created \(url.lastPathComponent)", systemImage: "checkmark.seal.fill")
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.green)
-                Text("Important: in the game's launcher settings, set the rendering API to DirectX 11 — DirectX 12 renders a white screen under CrossOver \(CrossOverInfo.expectedVersion). Re-check after game updates.")
+                Text("Important: in the game's launcher settings, set the rendering API to DirectX 11 — DirectX 12 renders a white screen under CrossOver. Re-check after game updates.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

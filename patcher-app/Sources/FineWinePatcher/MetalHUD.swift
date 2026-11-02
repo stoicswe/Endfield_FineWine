@@ -300,11 +300,15 @@ enum MetalHUD {
             URL(fileURLWithPath: "/Applications/CrossOver.app/Contents/SharedSupport/CrossOver"),
         ].compactMap { $0 }
 
-        guard let cxr = candidates.first(where: { FileManager.default.fileExists(atPath: $0.appendingPathComponent("bin/wineserver").path) }) else {
+        // CrossOver 26 ships `wineserver`; CrossOver 27 ships `wineserver-arm64` / `wineserver-x86`.
+        // An arm64 bottle runs on the arm64 server, which is why it comes first.
+        let names = ["wineserver", "wineserver-arm64", "wineserver-x86"]
+        let servers = candidates.lazy.flatMap { cxr in names.lazy.map { cxr.appendingPathComponent("bin/\($0)") } }
+        guard let wineserver = servers.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
             throw PatchError("Could not locate wineserver in CrossOver bundle")
         }
+        let cxr = wineserver.deletingLastPathComponent().deletingLastPathComponent()
 
-        let wineserver = cxr.appendingPathComponent("bin/wineserver")
         let proc = Process()
         proc.executableURL = wineserver
         proc.arguments = ["-k"]

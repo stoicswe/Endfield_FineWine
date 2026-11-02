@@ -9,7 +9,7 @@ import XCTest
 final class PayloadModuleTests: XCTestCase {
 
     private func destinations(of payloadSubpath: String) -> [String] {
-        Payload.modules.filter { $0.payloadSubpath == payloadSubpath }.map(\.crossoverSubpath)
+        CrossOverVariant.x64.modules.filter { $0.payloadSubpath == payloadSubpath }.map(\.crossoverSubpath)
     }
 
     func testSwapsWineserverAtBothCrossOverPaths() {
@@ -21,7 +21,7 @@ final class PayloadModuleTests: XCTestCase {
     }
 
     func testSwapsEveryCoreModuleFromTheShellScript() {
-        let dests = Set(Payload.modules.map(\.crossoverSubpath))
+        let dests = Set(CrossOverVariant.x64.modules.map(\.crossoverSubpath))
         for dest in [
             "lib/wine/x86_64-unix/ntdll.so",
             "lib/wine/x86_64-unix/winemac.so",

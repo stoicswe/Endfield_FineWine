@@ -53,7 +53,7 @@ Not measured, but worth trying for sharpness: macOS **Displays → Default** siz
 
 ## Vulkan renderer
 
-Same Mac, 2026-09-24, CrossOver 26.2, launched with `GFXARGS=-force-vulkan scripts/launch-endfield.sh` ([what it needs](graphics-performance.md#the-vulkan-renderer)). Each column is a few minutes of sampling in the open world, and the settings differed between sessions, so treat it as a rough comparison. The patched MoltenVK from `patches/moltenvk` wasn't measured.
+Same Mac, 2026-09-24, CrossOver 26.2, launched with `GFXARGS=-force-vulkan scripts/launch-endfield.sh` ([what it needs](graphics-performance.md#the-vulkan-renderer)). Each column is a few minutes of sampling in the open world, and the settings differed between sessions, so treat it as a rough comparison. The patched MoltenVK from `patches/x64/moltenvk` wasn't measured.
 
 | | Vulkan, CrossOver's MoltenVK 1.2.10 | Vulkan, stock MoltenVK 1.4.2 | DX11, GPTK 4.0b2 (session 2) |
 |---|---|---|---|

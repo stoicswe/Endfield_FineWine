@@ -2,8 +2,8 @@
 #
 # What it runs:
 #   1. `build-wine`  — the patched CrossOver Wine modules, via the shared
-#      build-wine.yml reusable workflow. The Patcher.app is NOT assembled here
-#      by default, and nothing is tagged or published — releases are the
+#      build-wine.yml reusable workflow, which also assembles and verifies
+#      the Patcher.app. Nothing is tagged or published — releases are the
 #      nightly workflow's job (nightly.yml). This workflow keeps the "default
 #      build is green" promise the nightly depends on: both reuse the same
 #      build-wine.yml pipeline.
@@ -71,7 +71,9 @@ jobs:
     with:
       cx_version: ${{ inputs.cx_version || '26.3.0' }}
       runner: ${{ inputs.runner || 'xcode-27' }}
-      build_patcher_app: ${{ inputs.build_patcher_app || false }}
+      # Always assembled on pull requests and pushes, so a broken payload fails before merge
+      # instead of in the nightly. Manual runs can still opt out.
+      build_patcher_app: ${{ github.event_name != 'workflow_dispatch' || inputs.build_patcher_app }}
 
   lint-swift:
     name: Lint Swift (FineWine Patcher · typecheck only)

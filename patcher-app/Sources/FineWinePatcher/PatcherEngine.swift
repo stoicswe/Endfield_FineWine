@@ -22,69 +22,182 @@ struct PayloadModule {
     }
 }
 
-enum Payload {
-    static let modules: [PayloadModule] = [
-        // Rosetta NOP + privileged-instruction fixes, NtDelayExecution QPC timing
-        PayloadModule(payloadSubpath: "x86_64-unix/ntdll.so",
-                      crossoverSubpath: "lib/wine/x86_64-unix/ntdll.so"),
-        // Keeps the GRYPHLINK launcher's window alpha, so no black margin surrounds it.
-        // The patched build applies it to that launcher only; the game stays opaque.
-        PayloadModule(payloadSubpath: "x86_64-unix/winemac.so",
-                      crossoverSubpath: "lib/wine/x86_64-unix/winemac.so"),
-        // KiUser*Dispatcher int3 spoof
-        PayloadModule(payloadSubpath: "x86_64-windows/kernel32.dll",
-                      crossoverSubpath: "lib/wine/x86_64-windows/kernel32.dll"),
-        // ntoskrnl.exe em-backports + ACE-CORE DriverInit/return-address fix
-        PayloadModule(payloadSubpath: "x86_64-windows/ntoskrnl.exe",
-                      crossoverSubpath: "lib/wine/x86_64-windows/ntoskrnl.exe"),
-        // ACE-CORE scans the process list for lsass.exe; stock CrossOver 26.3 ships none, so add it.
-        PayloadModule(payloadSubpath: "x86_64-windows/lsass.exe",
-                      crossoverSubpath: "lib/wine/x86_64-windows/lsass.exe", isNew: true),
-        // Patched wineboot.exe starts the lsass.exe stub at boot.
-        PayloadModule(payloadSubpath: "x86_64-windows/wineboot.exe",
-                      crossoverSubpath: "lib/wine/x86_64-windows/wineboot.exe"),
-        // rundll32.exe is EXEC'd by cxbottle for the 'win11Install crossover.inf' step that
-        // creates every bottle. Our rebuild drops the visible helper window that hangs/fails
-        // prefix creation on macOS 26 (WineHQ bug 59595) — upstream Wine has not merged a fix,
-        // so we ship the patched builtin. Like wineserver it is an exec'd Mach-O and needs its
-        // own signature (see requiresOwnSignature).
-        PayloadModule(payloadSubpath: "x86_64-windows/rundll32.exe",
-                      crossoverSubpath: "lib/wine/x86_64-windows/rundll32.exe"),
-        // wineserver: its server-side protocol version must match the swapped ntdll.so's client
-        // version. Stock CrossOver ships an older wineserver, so leaving it in place makes every
-        // wine process die with "wine client error:0: version mismatch …" before any window shows.
-        // CrossOver installs the same binary at two paths; both must be replaced. This is also the
-        // module that carries the ACE-CORE token-object fix (see docs/14-ace-core-regression.md).
-        PayloadModule(payloadSubpath: "server/wineserver",
-                      crossoverSubpath: "bin/wineserver"),
-        PayloadModule(payloadSubpath: "server/wineserver",
-                      crossoverSubpath: "CrossOver-Hosted Application/wineserver"),
-        // Patched MoltenVK (Vulkan/DXVK/vkd3d paths; replaces CrossOver's bundled copy).
-        // Built by scripts/build-moltenvk.sh and baked into the payload by build-app.sh.
-        PayloadModule(payloadSubpath: "lib64/libMoltenVK.dylib",
-                      crossoverSubpath: "lib64/libMoltenVK.dylib"),
-    ]
+/// Which CrossOver build the patcher targets. The two products differ in Wine version, bundle
+/// layout and host architecture, so almost every path the patcher touches derives from this.
+///
+/// The patcher detects the variant from the selected app's layout (`CrossOverInfo`) and only
+/// installs the payload that matches — the x64 path is never affected by the ARM payload and
+/// vice-versa.
+enum CrossOverVariant: String, CaseIterable, Sendable {
+    /// CrossOver 26.x — Wine 11.0, `lib64/…`, x86_64 Wine under Rosetta 2.
+    case x64
+    /// CrossOver ARM / 27 preview — Wine 11.17, `lib/<host>/…`, native aarch64 Wine (no Rosetta).
+    /// Experimental: the load-bearing `#ifdef __x86_64__` dispatcher spoof is absent on the
+    /// aarch64 unix side, so getting past ACE on this variant is the open question.
+    case arm
 
-    /// The rpath the payload ntdll.so must carry so CrossOver's cxcompatdb.so
-    /// (and through it D3DMetal) keeps working. Added at app-build time by
-    /// scripts/build-app.sh so end users never need Xcode tools.
-    static let requiredNtdllRpath = "@loader_path/../../../lib64"
-
-    /// Directory containing the bundled pre-built modules.
-    /// FINEWINE_PAYLOAD_DIR overrides it for development (`swift run`).
-    static var directory: URL? {
-        if let override = ProcessInfo.processInfo.environment["FINEWINE_PAYLOAD_DIR"] {
-            let url = URL(fileURLWithPath: override, isDirectory: true)
-            if FileManager.default.fileExists(atPath: url.path) { return url }
+    var displayName: String {
+        switch self {
+        case .x64: return "x64"
+        case .arm: return "ARM"
         }
-        guard let resources = Bundle.main.resourceURL else { return nil }
-        let url = resources.appendingPathComponent("payload", isDirectory: true)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    static var isComplete: Bool {
-        guard let dir = directory else { return false }
-        return modules.allSatisfy {
+    var isExperimental: Bool { self == .arm }
+
+    /// Version the variant's bundled modules are built against. For x64 this is exact (the Wine
+    /// ABI must match). ARM releases are date-versioned previews, so the variant is detected from
+    /// the app layout instead and this is used for display/download hints only.
+    var expectedVersion: String {
+        switch self {
+        case .x64: return "26.3"
+        case .arm: return "27 preview"
+        }
+    }
+
+    /// Host (unix) architecture Wine runs as for this variant. The ARM variant intentionally
+    /// targets `aarch64` with no Rosetta.
+    var hostArch: String {
+        switch self {
+        case .x64: return "x86_64"
+        case .arm: return "aarch64"
+        }
+    }
+
+    /// Directory (relative to `Contents/SharedSupport/CrossOver/`) holding the host libraries
+    /// (gnutls, MoltenVK). 26.x uses `lib64`; CrossOver 27 uses `lib/<host>`.
+    var hostLibSubpath: String { self == .x64 ? "lib64" : "lib/\(hostArch)" }
+
+    /// The rpath the payload ntdll.so must carry so CrossOver's cxcompatdb.so (and through it
+    /// D3DMetal) keeps working. Added at app-build time; differs per variant because the host lib
+    /// dir moved.
+    var requiredNtdllRpath: String { "@loader_path/../../../\(hostLibSubpath)" }
+
+    /// CrossOver's D3DMetal tree. 26.x: `lib64/apple_gptk`; CrossOver 27: `lib/apple_gptk`.
+    var gptkPrefixSubpath: String { self == .x64 ? "lib64/apple_gptk" : "lib/apple_gptk" }
+
+    /// Whether this variant's Wine runs as x86_64 and therefore needs Rosetta 2. The ARM variant
+    /// runs native aarch64 Wine; x86_64 Windows code is emulated by FEX inside those processes.
+    var requiresRosetta: Bool { self == .x64 }
+
+    /// The `cxbottle --winearch` value this variant's bottles need. CrossOver ARM also ships an
+    /// x86_64 Wine tree and runs a default `win64` bottle on it under Rosetta, so only an `arm64`
+    /// bottle reaches the aarch64 host (and this variant's payload).
+    var bottleWineArch: String? { self == .arm ? "arm64" : nil }
+
+    /// D3DMetal is x86_64-only, even inside CrossOver ARM, so an aarch64 Wine process can't load it.
+    var supportsD3DMetal: Bool { self == .x64 }
+
+    /// Default name of the patched copy. They differ so patching one variant never replaces the
+    /// other's copy.
+    var patchedAppName: String {
+        switch self {
+        case .x64: return "CrossOver_Endfield_Patch"
+        case .arm: return "CrossOver_Endfield_Patch_ARM"
+        }
+    }
+
+    /// Bundle identifier of this variant's patched copy. Shortcuts find their app by this ID, so
+    /// each variant needs its own or shortcuts could open the wrong copy. The helpers hardcode the
+    /// ID in a fixed-size slot, so it must stay the same length as CrossOver's own.
+    var patchedBundleIdentifier: String {
+        switch self {
+        case .x64: return PatcherEngine.patchedBundleIdentifier
+        case .arm: return "com.codeweavers.CrsEF.ARM"
+        }
+    }
+
+    /// Modules this variant swaps, in install order. `crossoverSubpath` is relative to
+    /// `Contents/SharedSupport/CrossOver/`; `payloadSubpath` is relative to the variant's payload
+    /// directory (see `Payload.directory(for:)`).
+    var modules: [PayloadModule] {
+        switch self {
+        case .x64:
+            return [
+                // Rosetta NOP + privileged-instruction fixes, NtDelayExecution QPC timing
+                PayloadModule(payloadSubpath: "x86_64-unix/ntdll.so",
+                              crossoverSubpath: "lib/wine/x86_64-unix/ntdll.so"),
+                // Keeps the GRYPHLINK launcher's window alpha, so no black margin surrounds it.
+                // The patched build applies it to that launcher only; the game stays opaque.
+                PayloadModule(payloadSubpath: "x86_64-unix/winemac.so",
+                              crossoverSubpath: "lib/wine/x86_64-unix/winemac.so"),
+                // KiUser*Dispatcher int3 spoof
+                PayloadModule(payloadSubpath: "x86_64-windows/kernel32.dll",
+                              crossoverSubpath: "lib/wine/x86_64-windows/kernel32.dll"),
+                // ntoskrnl.exe em-backports + ACE-CORE DriverInit/return-address fix
+                PayloadModule(payloadSubpath: "x86_64-windows/ntoskrnl.exe",
+                              crossoverSubpath: "lib/wine/x86_64-windows/ntoskrnl.exe"),
+                // ACE-CORE scans the process list for lsass.exe; stock CrossOver 26.3 ships none, so add it.
+                PayloadModule(payloadSubpath: "x86_64-windows/lsass.exe",
+                              crossoverSubpath: "lib/wine/x86_64-windows/lsass.exe", isNew: true),
+                // Patched wineboot.exe starts the lsass.exe stub at boot.
+                PayloadModule(payloadSubpath: "x86_64-windows/wineboot.exe",
+                              crossoverSubpath: "lib/wine/x86_64-windows/wineboot.exe"),
+                // rundll32.exe is EXEC'd by cxbottle for the 'win11Install crossover.inf' step that
+                // creates every bottle. Our rebuild drops the visible helper window that hangs/fails
+                // prefix creation on macOS 26 (WineHQ bug 59595) — upstream Wine has not merged a fix,
+                // so we ship the patched builtin. Like wineserver it is an exec'd Mach-O and needs its
+                // own signature (see requiresOwnSignature).
+                PayloadModule(payloadSubpath: "x86_64-windows/rundll32.exe",
+                              crossoverSubpath: "lib/wine/x86_64-windows/rundll32.exe"),
+                // wineserver: its server-side protocol version must match the swapped ntdll.so's client
+                // version. Stock CrossOver ships an older wineserver, so leaving it in place makes every
+                // wine process die with "wine client error:0: version mismatch …" before any window shows.
+                // CrossOver installs the same binary at two paths; both must be replaced. This is also the
+                // module that carries the ACE-CORE token-object fix (see docs/14-ace-core-regression.md).
+                PayloadModule(payloadSubpath: "server/wineserver",
+                              crossoverSubpath: "bin/wineserver"),
+                PayloadModule(payloadSubpath: "server/wineserver",
+                              crossoverSubpath: "CrossOver-Hosted Application/wineserver"),
+                // Patched MoltenVK (Vulkan/DXVK/vkd3d paths; replaces CrossOver's bundled copy).
+                // Built by scripts/build-moltenvk.sh and baked into the payload by build-app.sh.
+                PayloadModule(payloadSubpath: "lib64/libMoltenVK.dylib",
+                              crossoverSubpath: "lib64/libMoltenVK.dylib"),
+            ]
+        case .arm:
+            // An arm64 bottle only loads `aarch64-windows`, so these are ARM64 PE modules. Only
+            // modules that stay compatible with stock CrossOver ARM are swapped: its ntdll.so and
+            // wineserver use a much newer protocol (1809) than public Wine 11.17 (961), and a
+            // mixed ntdll won't start. Built by scripts/build-wine-arm.sh from patches/ARM.
+            return [
+                // ntoskrnl.exe em-backports + ACE-CORE DriverInit/return-address fix
+                PayloadModule(payloadSubpath: "aarch64-windows/ntoskrnl.exe",
+                              crossoverSubpath: "lib/wine/aarch64-windows/ntoskrnl.exe"),
+                // Drops the visible helper window that hangs prefix creation on macOS 26.
+                PayloadModule(payloadSubpath: "aarch64-windows/rundll32.exe",
+                              crossoverSubpath: "lib/wine/aarch64-windows/rundll32.exe"),
+            ]
+        }
+    }
+}
+
+enum Payload {
+    /// Directory containing the bundled pre-built modules for a variant.
+    ///
+    /// x64 keeps the legacy root layout (`Resources/payload/…`) so existing builds are untouched;
+    /// ARM lives in a subdirectory (`Resources/payload/arm/…`). `FINEWINE_PAYLOAD_DIR` overrides
+    /// the x64 root for development (`swift run`).
+    static func directory(for variant: CrossOverVariant) -> URL? {
+        switch variant {
+        case .x64:
+            if let override = ProcessInfo.processInfo.environment["FINEWINE_PAYLOAD_DIR"] {
+                let url = URL(fileURLWithPath: override, isDirectory: true)
+                if FileManager.default.fileExists(atPath: url.path) { return url }
+            }
+            guard let resources = Bundle.main.resourceURL else { return nil }
+            let url = resources.appendingPathComponent("payload", isDirectory: true)
+            return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        case .arm:
+            guard let resources = Bundle.main.resourceURL else { return nil }
+            let url = resources.appendingPathComponent("payload", isDirectory: true)
+                .appendingPathComponent(variant.rawValue, isDirectory: true)
+            return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
+    }
+
+    static func isComplete(for variant: CrossOverVariant) -> Bool {
+        guard let dir = directory(for: variant) else { return false }
+        return variant.modules.allSatisfy {
             FileManager.default.fileExists(atPath: dir.appendingPathComponent($0.payloadSubpath).path)
         }
     }
@@ -283,10 +396,9 @@ struct GPTKSource: Identifiable, Hashable, Sendable {
     }
 }
 
-/// What we know about a selected CrossOver.app.
+/// What we know about a selected CrossOver.app — including which variant (x64 vs ARM/aarch64)
+/// it is, detected from the bundle layout.
 struct CrossOverInfo {
-    static let expectedVersion = "26.3"
-
     let url: URL
     let version: String?
     /// CFBundleVersion — CrossOver's exact build. Point builds of "26.3" ship different Wine
@@ -294,9 +406,20 @@ struct CrossOverInfo {
     /// a report only works on one build. Reported (anonymously) with patch statistics.
     let build: String?
     let bundleIdentifier: String?
+    /// `nil` when this looks like neither known CrossOver layout.
+    let variant: CrossOverVariant?
     let hasWineModules: Bool
 
-    var isExpectedVersion: Bool { version?.hasPrefix(Self.expectedVersion) == true }
+    /// For x64 the Wine ABI must match, so a non-26.3 version is a warning. ARM releases are
+    /// date-versioned previews detected structurally, so any detected ARM app counts as expected.
+    var isExpectedVersion: Bool {
+        switch variant {
+        case .x64: return version?.hasPrefix(CrossOverVariant.x64.expectedVersion) == true
+        case .arm: return true
+        case nil:  return false
+        }
+    }
+
     var displayName: String { url.deletingPathExtension().lastPathComponent }
     /// "26.3.0 (39832)" — version and build for the UI and reports.
     var displayVersion: String {
@@ -315,12 +438,28 @@ struct CrossOverInfo {
         version = plist["CFBundleShortVersionString"] as? String
         build = plist["CFBundleVersion"] as? String
         bundleIdentifier = plist["CFBundleIdentifier"] as? String
+
+        let fm = FileManager.default
         let cxr = url.appendingPathComponent("Contents/SharedSupport/CrossOver")
-        // `isNew` modules (e.g. lsass.exe) are added by us and are absent from stock CrossOver,
-        // so only the modules CrossOver already ships decide whether this looks like a CrossOver app.
-        hasWineModules = Payload.modules.filter { !$0.isNew }.allSatisfy {
-            FileManager.default.fileExists(atPath: cxr.appendingPathComponent($0.crossoverSubpath).path)
+        // Detect the variant structurally: the ARM app is the one carrying an aarch64 Wine tree.
+        let armTree = cxr.appendingPathComponent("lib/wine/aarch64-unix/ntdll.so")
+        let x64Tree = cxr.appendingPathComponent("lib/wine/x86_64-unix/ntdll.so")
+        let x64Libs = cxr.appendingPathComponent("lib64/libMoltenVK.dylib")
+        if fm.fileExists(atPath: armTree.path) {
+            variant = .arm
+        } else if fm.fileExists(atPath: x64Tree.path), fm.fileExists(atPath: x64Libs.path) {
+            variant = .x64
+        } else {
+            variant = nil
         }
+
+        // `isNew` modules (e.g. lsass.exe) are added by us and are absent from stock CrossOver,
+        // so only the modules CrossOver already ships decide whether this looks patchable.
+        hasWineModules = variant.map { v in
+            v.modules.filter { !$0.isNew }.allSatisfy {
+                fm.fileExists(atPath: cxr.appendingPathComponent($0.crossoverSubpath).path)
+            }
+        } ?? false
     }
 }
 
@@ -625,6 +764,14 @@ final class PatcherEngine: ObservableObject {
     /// without re-running the full copy+patch pipeline.
     func upgradeGPTK(in patchedApp: URL, from gptk: GPTKSource) {
         guard !isRunning, !gptkUpgradeIsRunning else { return }
+        guard let variant = CrossOverInfo(url: patchedApp).variant else {
+            gptkUpgradeError = "\(patchedApp.lastPathComponent) is not a recognized CrossOver layout."
+            return
+        }
+        guard variant.supportsD3DMetal else {
+            gptkUpgradeError = "D3DMetal is x86_64-only, so it can't run on the \(variant.displayName) variant."
+            return
+        }
         gptkUpgradeError = nil
         gptkUpgradeIsRunning = true
         gptkUpgradeSteps = Self.gptkUpgradeLabels.enumerated().map { Step(id: $0.offset, label: $0.element) }
@@ -640,7 +787,7 @@ final class PatcherEngine: ObservableObject {
             }
             do {
                 await begin(0)
-                try Self.installGPTK(into: patchedApp, from: gptk.url)
+                try Self.installGPTK(into: patchedApp, from: gptk.url, variant: variant)
                 await finish(0)
 
                 await begin(1)
@@ -649,10 +796,10 @@ final class PatcherEngine: ObservableObject {
 
                 await begin(2)
                 // Verify only the GPTK half — the Wine modules haven't changed.
-                guard let payloadDir = Payload.directory else {
+                guard let payloadDir = Payload.directory(for: variant) else {
                     throw PatchError("Payload directory not available for verification.")
                 }
-                try Self.verify(patchedApp, payloadDir: payloadDir, gptk: gptk)
+                try Self.verify(patchedApp, payloadDir: payloadDir, gptk: gptk, variant: variant)
                 await finish(2)
 
                 await MainActor.run {
@@ -678,9 +825,9 @@ final class PatcherEngine: ObservableObject {
         return "com.codeweavers.CrossOvEF"
     }
 
-    private static func stepLabels(includingGPTK: Bool) -> [String] {
-        var labels = [
-            "Checking / installing Rosetta 2",
+    private static func stepLabels(includingRosetta: Bool, includingGPTK: Bool) -> [String] {
+        var labels = includingRosetta ? ["Checking / installing Rosetta 2"] : []
+        labels += [
             "Copying CrossOver",
             "Installing the patched modules",
         ]
@@ -703,15 +850,18 @@ final class PatcherEngine: ObservableObject {
 
     /// - Parameter reportTelemetry: `false` for a patch run that is part of a larger Automated
     ///   Setup run — that run asks once at the end instead of prompting twice.
-    func patch(source: URL, destination: URL, gptk: GPTKSource? = nil, reportTelemetry: Bool = true) {
+    func patch(source: URL, variant: CrossOverVariant, destination: URL, gptk: GPTKSource? = nil, reportTelemetry: Bool = true) {
         guard !isRunning else { return }
-        guard let payloadDir = Payload.directory, Payload.isComplete else {
-            errorMessage = "This build of the patcher does not include the module payload (Wine + MoltenVK). Rebuild it with patcher-app/scripts/build-app.sh after scripts/build-wine.sh all and scripts/build-moltenvk.sh all."
+        guard let payloadDir = Payload.directory(for: variant), Payload.isComplete(for: variant) else {
+            errorMessage = variant.isExperimental
+                ? "This build of the patcher has no \(variant.displayName) module payload yet. Build it with scripts/build-wine-arm.sh (and stage it with build-app.sh). The \(CrossOverVariant.x64.displayName) payload is unaffected."
+                : "This build of the patcher does not include the module payload (Wine + MoltenVK). Rebuild it with patcher-app/scripts/build-app.sh after scripts/build-wine.sh all and scripts/build-moltenvk.sh all."
             return
         }
+        let gptk = variant.supportsD3DMetal ? gptk : nil
         reset()
         isRunning = true
-        steps = Self.stepLabels(includingGPTK: gptk != nil)
+        steps = Self.stepLabels(includingRosetta: variant.requiresRosetta, includingGPTK: gptk != nil)
             .enumerated().map { Step(id: $0.offset, label: $0.element) }
         let patchStartedAt = Date()
         // Recorded with the (optional) statistics: CrossOver point builds of the same version can
@@ -734,9 +884,11 @@ final class PatcherEngine: ObservableObject {
             do {
                 var index = 0
 
-                await begin(index)
-                try RosettaSupport.ensureInstalled()
-                await finish(index); index += 1
+                if variant.requiresRosetta {
+                    await begin(index)
+                    try RosettaSupport.ensureInstalled()
+                    await finish(index); index += 1
+                }
 
                 await begin(index)
                 let app = try Self.copyBundle(from: source, to: destination)
@@ -744,17 +896,18 @@ final class PatcherEngine: ObservableObject {
                 await finish(index); index += 1
 
                 await begin(index)
-                try Self.installModules(into: app, from: payloadDir)
+                try Self.installModules(into: app, from: payloadDir, variant: variant)
+                if variant == .arm { try ArmNtdllFix.apply(toCrossOverRoot: Self.cxRoot(app)) }
                 await finish(index); index += 1
 
                 if let gptk {
                     await begin(index)
-                    try Self.installGPTK(into: app, from: gptk.url)
+                    try Self.installGPTK(into: app, from: gptk.url, variant: variant)
                     await finish(index); index += 1
                 }
 
                 await begin(index)
-                try Self.patchBundleIdentifier(in: app)
+                try Self.patchBundleIdentifier(in: app, variant: variant)
                 await finish(index); index += 1
 
                 await begin(index)
@@ -762,7 +915,7 @@ final class PatcherEngine: ObservableObject {
                 await finish(index); index += 1
 
                 await begin(index)
-                try Self.verify(app, payloadDir: payloadDir, gptk: gptk)
+                try Self.verify(app, payloadDir: payloadDir, gptk: gptk, variant: variant)
                 await finish(index); index += 1
 
                 await begin(index)
@@ -835,14 +988,14 @@ final class PatcherEngine: ObservableObject {
         return staged
     }
 
-    private nonisolated static func installModules(into app: URL, from payloadDir: URL) throws {
+    private nonisolated static func installModules(into app: URL, from payloadDir: URL, variant: CrossOverVariant) throws {
         let fm = FileManager.default
         let cxr = cxRoot(app)
-        for module in Payload.modules {
+        for module in variant.modules {
             let src = payloadDir.appendingPathComponent(module.payloadSubpath)
             let dst = cxr.appendingPathComponent(module.crossoverSubpath)
             guard fm.fileExists(atPath: src.path) else {
-                throw PatchError("The bundled payload is missing \(module.payloadSubpath).")
+                throw PatchError("The bundled \(variant.displayName) payload is missing \(module.payloadSubpath).")
             }
             if fm.fileExists(atPath: dst.path) {
                 // Move the stock module aside under the same backup name the shell script uses, so
@@ -854,7 +1007,7 @@ final class PatcherEngine: ObservableObject {
                     try fm.moveItem(at: dst, to: backup)
                 }
             } else if !module.isNew {
-                throw PatchError("\(module.crossoverSubpath) not found in the copied app — is this really CrossOver \(CrossOverInfo.expectedVersion)?")
+                throw PatchError("\(module.crossoverSubpath) not found in the copied app — is this really CrossOver \(variant.expectedVersion) (\(variant.displayName))?")
             }
             try fm.copyItem(at: src, to: dst)
             // Only the Mach-O modules (ntdll.so, libMoltenVK.dylib, wineserver) need a signature
@@ -872,12 +1025,13 @@ final class PatcherEngine: ObservableObject {
     /// stack upgrades at once — and no `lib/wine/.../{d3d11,d3d12,dxgi}.dll` is touched (dropping
     /// Apple's DLLs there breaks `unityplayer.dll`, Windows error 1114). Mirrors
     /// scripts/swap-into-crossover.sh step 3.
-    private nonisolated static func installGPTK(into app: URL, from gptkExternal: URL) throws {
+    private nonisolated static func installGPTK(into app: URL, from gptkExternal: URL, variant: CrossOverVariant) throws {
         let fm = FileManager.default
         let cxr = cxRoot(app)
-        let dest = cxr.appendingPathComponent("lib64/apple_gptk/external", isDirectory: true)
+        let gptkPrefix = cxr.appendingPathComponent(variant.gptkPrefixSubpath, isDirectory: true)
+        let dest = gptkPrefix.appendingPathComponent("external", isDirectory: true)
         guard fm.fileExists(atPath: dest.path) else {
-            throw PatchError("lib64/apple_gptk/external not found in the copied app — is this really CrossOver \(CrossOverInfo.expectedVersion)?")
+            throw PatchError("\(variant.gptkPrefixSubpath)/external not found in the copied app — is this really CrossOver \(variant.expectedVersion)?")
         }
         let lib = gptkExternal.appendingPathComponent("libd3dshared.dylib")
         let framework = gptkExternal.appendingPathComponent("D3DMetal.framework", isDirectory: true)
@@ -887,7 +1041,7 @@ final class PatcherEngine: ObservableObject {
         // Re-running the patcher with the same GPTK already installed is a no-op.
         if externalMatches(source: gptkExternal, destination: dest) { return }
 
-        let backup = cxr.appendingPathComponent("lib64/apple_gptk/external.cxorig", isDirectory: true)
+        let backup = gptkPrefix.appendingPathComponent("external.cxorig", isDirectory: true)
         if fm.fileExists(atPath: backup.path) { try? fm.removeItem(at: backup) }
         try fm.moveItem(at: dest, to: backup)
         do {
@@ -1024,9 +1178,9 @@ final class PatcherEngine: ObservableObject {
         try fm.moveItem(at: staged, to: destination)
     }
 
-    private nonisolated static func verify(_ app: URL, payloadDir: URL, gptk: GPTKSource?) throws {
+    private nonisolated static func verify(_ app: URL, payloadDir: URL, gptk: GPTKSource?, variant: CrossOverVariant) throws {
         let cxr = cxRoot(app)
-        for module in Payload.modules {
+        for module in variant.modules {
             let src = payloadDir.appendingPathComponent(module.payloadSubpath)
             let dst = cxr.appendingPathComponent(module.crossoverSubpath)
             // Compare module *content*, not raw bytes. The Mach-O modules are re-signed
@@ -1039,10 +1193,13 @@ final class PatcherEngine: ObservableObject {
                 throw PatchError("\(module.crossoverSubpath) does not match the bundled payload after the swap.")
             }
         }
+        if variant == .arm && !ArmNtdllFix.isApplied(inCrossOverRoot: cxr) {
+            throw PatchError("The ntdll.dll fix is missing after patching.")
+        }
         // If the user supplied GPTK, confirm the D3DMetal external half really came across (the
         // installed libd3dshared.dylib must be byte-identical to the source they selected).
         if let gptk {
-            let external = cxr.appendingPathComponent("lib64/apple_gptk/external", isDirectory: true)
+            let external = cxr.appendingPathComponent("\(variant.gptkPrefixSubpath)/external", isDirectory: true)
             let installed = external.appendingPathComponent("libd3dshared.dylib")
             guard FileManager.default.fileExists(atPath: installed.path),
                   FileManager.default.fileExists(atPath: external.appendingPathComponent("D3DMetal.framework/Versions/A/D3DMetal").path) else {
@@ -1054,23 +1211,23 @@ final class PatcherEngine: ObservableObject {
             }
         }
         // ntdll.so is the module the kernel actually checks; make sure its ad-hoc
-        // signature is valid and that it carries the lib64 rpath (baked in at
+        // signature is valid and that it carries the host-lib rpath (baked in at
         // app-build time) — without that rpath cxcompatdb.so can't load and
         // D3DMetal never engages.
-        let ntdll = cxr.appendingPathComponent("lib/wine/x86_64-unix/ntdll.so")
+        let ntdll = cxr.appendingPathComponent("lib/wine/\(variant.hostArch)-unix/ntdll.so")
         try run("/usr/bin/codesign", ["--verify", ntdll.path])
         let data = try Data(contentsOf: ntdll, options: .alwaysMapped)
-        guard let needle = Payload.requiredNtdllRpath.data(using: .utf8),
+        guard let needle = variant.requiredNtdllRpath.data(using: .utf8),
               data.range(of: needle) != nil else {
-            throw PatchError("ntdll.so is missing the lib64 rpath — D3DMetal would not work. Rebuild the patcher with scripts/build-app.sh (it adds the rpath to the payload).")
+            throw PatchError("ntdll.so is missing the \(variant.hostLibSubpath) rpath — D3DMetal would not work. Rebuild the patcher with scripts/build-app.sh (it adds the rpath to the payload).")
         }
         // Verify bundle identifier
         let infoPlist = app.appendingPathComponent("Contents/Info.plist")
         guard let plistData = try? Data(contentsOf: infoPlist),
               let plist = (try? PropertyListSerialization.propertyList(from: plistData, format: nil)) as? [String: Any],
               let bid = plist["CFBundleIdentifier"] as? String,
-              bid == patchedBundleIdentifier else {
-            throw PatchError("The patched app's CFBundleIdentifier was not set to \(patchedBundleIdentifier).")
+              bid == variant.patchedBundleIdentifier else {
+            throw PatchError("The patched app's CFBundleIdentifier was not set to \(variant.patchedBundleIdentifier).")
         }
 
         // The whole bundle must verify, or macOS reports it as damaged and kills its binaries.
@@ -1081,11 +1238,28 @@ final class PatcherEngine: ObservableObject {
         }
     }
 
-    /// Patches the app's CFBundleIdentifier in Info.plist to `com.codeweavers.CrossOvEF`
-    /// and patches the seed launcher templates (`Contents/Resources/Menu Helper.cpbz2`
-    /// and `Bottle Helper.cpbz2`) so that launcher app bundles created by this patched
-    /// CrossOver will reference its bundle ID and always launch with the patched version.
-    private nonisolated static func patchBundleIdentifier(in app: URL) throws {
+    /// Replaces the Menu Helper binaries in the seed launchers. CrossOver refreshes every bottle's
+    /// launchers from whichever copy ran last, so a helper with a hardcoded bundle ID sends other
+    /// bottles to that copy; the launcher's own command always names the right one. It also spares
+    /// ARM the x86_64 helper's Rosetta dependency. `Menu Helper arm64` can't be patched at all: it
+    /// is laid out like Wine's loader, so macOS kills it at exec under any other signature.
+    /// Keep in sync with scripts/lib/menu-helper.sh.
+    nonisolated static let menuHelperScript = """
+    #!/bin/sh
+    # Stands in for CrossOver's Menu Helper. The launcher's command names the right CrossOver copy.
+    contents=$(cd "$(dirname "$0")/.." && pwd)
+    command=$(/usr/bin/plutil -extract CrossOverHelperCommand raw "$contents/Info.plist") || exit 1
+    eval "exec $command"
+
+    """
+
+    /// Patches the app's CFBundleIdentifier in Info.plist to the variant's patched ID and
+    /// patches the seed launcher templates (`Contents/Resources/Menu Helper.cpbz2`, `Bottle
+    /// Helper.cpbz2` and, on CrossOver ARM, `Menu Helper arm64.cpbz2`) so that launcher app
+    /// bundles created by this patched CrossOver reference its bundle ID and always launch
+    /// with the patched version. The Menu Helpers are replaced instead: see `menuHelperScript`.
+    nonisolated static func patchBundleIdentifier(in app: URL, variant: CrossOverVariant) throws {
+        let patchedBundleIdentifier = variant.patchedBundleIdentifier
         let fm = FileManager.default
         let infoPlist = app.appendingPathComponent("Contents/Info.plist")
         guard fm.fileExists(atPath: infoPlist.path) else {
@@ -1100,7 +1274,7 @@ final class PatcherEngine: ObservableObject {
         try newData.write(to: infoPlist, options: .atomic)
 
         let resDir = app.appendingPathComponent("Contents/Resources", isDirectory: true)
-        let helpers = ["Menu Helper", "Bottle Helper"]
+        let helpers = ["Menu Helper", "Menu Helper arm64", "Bottle Helper"]
         for helper in helpers {
             let cpbz2 = resDir.appendingPathComponent("\(helper).cpbz2")
             guard fm.fileExists(atPath: cpbz2.path) else { continue }
@@ -1130,7 +1304,14 @@ final class PatcherEngine: ObservableObject {
 
             // Patch Mach-O binary
             let bin = tmpDir.appendingPathComponent("Contents/MacOS/\(helper)")
-            if fm.fileExists(atPath: bin.path) {
+            if helper.hasPrefix("Menu Helper"), fm.fileExists(atPath: bin.path) {
+                try Data(menuHelperScript.utf8).write(to: bin, options: .atomic)
+                try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
+                for sealPath in ["Contents/_CodeSignature", "Contents/CodeResources"] {
+                    let bundleSeal = tmpDir.appendingPathComponent(sealPath)
+                    if fm.fileExists(atPath: bundleSeal.path) { try fm.removeItem(at: bundleSeal) }
+                }
+            } else if fm.fileExists(atPath: bin.path) {
                 var binData = try Data(contentsOf: bin)
                 guard let target = (originalBundleIdentifier + "\0").data(using: .utf8),
                       let replacement = (patchedBundleIdentifier + "\0").data(using: .utf8),

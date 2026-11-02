@@ -6,6 +6,8 @@
 #   scripts/build-moltenvk.sh <step>   # fetch | apply | deps | build
 #
 # Env: MVK_TAG (default v1.4.2, the patch target),
+#      MVK_ARCH (default x86_64 — CrossOver 26.x loads the x86_64 build; the ARM/aarch64
+#               pipeline sets MVK_ARCH=aarch64),
 #      BUILD_DIR (default <repo>/build)
 # Needs full Xcode; set DEVELOPER_DIR if xcode-select points at the Command Line Tools.
 #
@@ -16,12 +18,18 @@
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 MVK_TAG="${MVK_TAG:-v1.4.2}"
+MVK_ARCH="${MVK_ARCH:-x86_64}"
 BUILD_DIR="${BUILD_DIR:-$REPO/build}"
 MVK_SRC="$BUILD_DIR/moltenvk-src"
 SPVC_SRC="$BUILD_DIR/spirv-cross-src"      # patched, linked into MoltenVK's External/
 VKH_SRC="$BUILD_DIR/vulkan-headers-src"
-MVK_OUT="$BUILD_DIR/moltenvk-out"
-P="$REPO/patches/moltenvk"
+# Keep the x86_64 output path stable (build/moltenvk-out); suffix only non-default arches.
+if [ "$MVK_ARCH" = "x86_64" ]; then
+  MVK_OUT="${MVK_OUT:-$BUILD_DIR/moltenvk-out}"
+else
+  MVK_OUT="${MVK_OUT:-$BUILD_DIR/moltenvk-out-$MVK_ARCH}"
+fi
+P="$REPO/patches/x64/moltenvk"  # the same MoltenVK patches serve both architectures
 
 # Terminal dashboard (progress bars + live log tail). Must be sourced before any
 # real work so `zsh scripts/build-moltenvk.sh` can hand over to /bin/bash cleanly.
@@ -57,7 +65,7 @@ cmd_fetch() {
 }
 
 cmd_apply() {
-  ui_begin apply 1 "Applying patches/moltenvk"
+  ui_begin apply 1 "Applying patches/x64/moltenvk"
   [ -d "$MVK_SRC/.git" ] || { echo "run 'fetch' first"; exit 1; }
   local list n unit
   list=$(ls "$P"/spirv-cross/*.patch 2>/dev/null)
@@ -91,9 +99,9 @@ cmd_deps() {
   ui_begin deps 42 "Building MoltenVK's external dependencies"
   [ -d "$MVK_SRC/.git" ] || { echo "run 'fetch' first"; exit 1; }
   # Use local roots so fetchDependencies preserves the patches.
-  # CrossOver only loads x86_64; override the default universal build.
-  local xcconfig="$BUILD_DIR/moltenvk-x86_64.xcconfig"
-  echo "ARCHS = x86_64" > "$xcconfig"
+  # CrossOver 26.x only loads x86_64; the ARM pipeline builds aarch64.
+  local xcconfig="$BUILD_DIR/moltenvk-$MVK_ARCH.xcconfig"
+  echo "ARCHS = $MVK_ARCH" > "$xcconfig"
   _learned "$BUILD_DIR/.ui-mvk-deps-lines"
   ui_run "$BUILD_DIR/moltenvk-deps.log" "fetchDependencies --macos" \
     sh -c 'cd "$1" || exit 1; shift
@@ -110,16 +118,19 @@ cmd_build() {
   xcodebuild -version >/dev/null 2>&1 \
     || { echo "xcodebuild needs full Xcode; set DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer"; exit 1; }
   _learned "$BUILD_DIR/.ui-mvk-build-lines"
-  ui_run "$BUILD_DIR/moltenvk-build.log" "xcodebuild — MoltenVK Package (macOS only), x86_64" \
+  ui_run "$BUILD_DIR/moltenvk-build.log" "xcodebuild — MoltenVK Package (macOS only), $MVK_ARCH" \
     sh -c 'cd "$1" || exit 1; shift
            exec xcodebuild build -project MoltenVKPackaging.xcodeproj \
                 -scheme "MoltenVK Package (macOS only)" \
-                -destination generic/platform=macOS ARCHS=x86_64' \
-    ui_sh "$MVK_SRC" \
+                -destination generic/platform=macOS ARCHS="$1"' \
+    ui_sh "$MVK_SRC" "$MVK_ARCH" \
     || { echo "MoltenVK build failed — see $BUILD_DIR/moltenvk-build.log"; exit 1; }
   ui_learn "$BUILD_DIR/.ui-mvk-build-lines" "$(wc -l < "$BUILD_DIR/moltenvk-build.log" | tr -d ' ')"
   local dylib="$MVK_SRC/Package/Release/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib"
-  file -b "$dylib" | grep -q "shared library x86_64" || { echo "no x86_64 $dylib"; exit 1; }
+  # `file` prints "arm64" for an aarch64 Mach-O; accept either spelling.
+  local archpat="$MVK_ARCH"
+  [ "$MVK_ARCH" = "aarch64" ] && archpat="arm64|aarch64"
+  file -b "$dylib" | grep -Eq "$archpat" || { echo "no $MVK_ARCH $dylib"; exit 1; }
   rm -rf "$MVK_OUT"; mkdir -p "$MVK_OUT"
   cp "$dylib" "$MVK_OUT/" && cp "$MVK_SRC/LICENSE" "$MVK_OUT/LICENSE.MoltenVK" || exit 1
   echo "https://github.com/KhronosGroup/MoltenVK/tree/$(git -C "$MVK_SRC" rev-parse HEAD)" > "$MVK_OUT/SOURCE_URL"
@@ -127,7 +138,7 @@ cmd_build() {
   ui_end
 }
 
-ui_init "FineWine — MoltenVK ${MVK_TAG} (x86_64)"
+ui_init "FineWine — MoltenVK ${MVK_TAG} ($MVK_ARCH)"
 mkdir -p "$BUILD_DIR"   # every step logs into build/*.log
 case "${1:-all}" in
   fetch|apply|deps|build) "cmd_$1" ;;

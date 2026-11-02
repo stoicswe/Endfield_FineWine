@@ -9,6 +9,23 @@ STAGE 2  ACE init: missing ntoskrnl exports + KiUser*Dispatcher detection + timi
          CR3 read Rosetta mis-reports.                                        ✅ FIXED (dwproton + stage1-macos)
 ```
 
+## Layout
+
+```
+patches/x64/   the full series for CrossOver 26.3 (x86_64 Wine under Rosetta 2)
+patches/ARM/   the series for the ARM variant, on public Wine 11.17
+```
+
+`patches/x64/moltenvk` serves both variants. The sections below describe `patches/x64/`.
+
+`patches/ARM/` starts from the 21 x64 patches that apply unchanged to Wine 11.17, keeping their
+folders and numbering. Only `ntoskrnl.exe` and `rundll32.exe` are shipped from it, so the `kernel32`,
+`ntdll`, `wintrust` and `win32u` patches there have no effect yet. See "CrossOver variants" in
+[`patcher-app/README.md`](../patcher-app/README.md).
+
+`stage1-macos/0010` adds a `wdfldr.sys` stub for ACE's ARM64 drivers. It's built from source but not
+shipped yet. See [17-arm-logo-freeze.md](../docs/project-information/17-arm-logo-freeze.md).
+
 ## `stage1-macos/` — our macOS/Rosetta-2 fixes (+ build + msync fixes)
 
 Original to this project. The two Rosetta fixes live in `dlls/ntdll/unix/signal_x86_64.c` (`segv_handler`, `TRAP_x86_PRIVINFLT`):

@@ -9,6 +9,11 @@ enum BottleBackend: String, CaseIterable, Identifiable, Hashable {
 
     var id: String { rawValue }
 
+    /// The backends a variant can run. D3DMetal is x86_64-only.
+    static func available(for variant: CrossOverVariant?) -> [BottleBackend] {
+        variant?.supportsD3DMetal == false ? allCases.filter { $0 != .d3dmetal } : allCases
+    }
+
     var displayName: String {
         switch self {
         case .d3dmetal: return "D3DMetal (recommended)"
@@ -130,7 +135,8 @@ enum SetupValidation {
         let plist = app.appendingPathComponent("Contents/Info.plist")
         guard let data = try? Data(contentsOf: plist),
               let parsed = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              parsed["CFBundleIdentifier"] as? String == PatcherEngine.patchedBundleIdentifier
+              let identifier = parsed["CFBundleIdentifier"] as? String,
+              CrossOverVariant.allCases.contains(where: { $0.patchedBundleIdentifier == identifier })
         else { return false }
         return FileManager.default.isExecutableFile(
             atPath: app.appendingPathComponent("Contents/SharedSupport/CrossOver/bin/wine").path)
@@ -247,6 +253,11 @@ final class SetupEngine: ObservableObject {
             errorMessage = "Only the Windows 11 64-bit bottle template is supported."
             return
         }
+        let variant = CrossOverInfo(url: patchedApp).variant
+        guard BottleBackend.available(for: variant).contains(settings.backend) else {
+            errorMessage = "\(settings.backend.displayName) can't run on the ARM variant of CrossOver."
+            return
+        }
 
         isRunning = true
         installerExit = nil
@@ -276,12 +287,14 @@ final class SetupEngine: ObservableObject {
                 // its stderr instead of a cryptic 'win11Install crossover.inf failed'.
                 let preflightLog = Self.logURL("preflight-\(Self.slug(bottle))")
                 await MainActor.run { self.logFiles.append(preflightLog) }
-                try Self.runPreflight(cxr: cxr, log: preflightLog)
+                try Self.runPreflight(cxr: cxr, log: preflightLog,
+                                      requiresRosetta: variant?.requiresRosetta ?? true)
 
                 do {
                     try Self.runToCompletion(
                         executable: cxr.appendingPathComponent("bin/cxbottle"),
                         Self.cxbottleArguments(bottle: bottle, template: settings.template,
+                                               wineArch: variant?.bottleWineArch,
                                                environment: settings.environment),
                         log: bottleLog)
                 } catch let firstError {
@@ -301,6 +314,7 @@ final class SetupEngine: ObservableObject {
                     try Self.runToCompletion(
                         executable: cxr.appendingPathComponent("bin/cxbottle"),
                         Self.cxbottleArguments(bottle: bottle, template: settings.template,
+                                               wineArch: variant?.bottleWineArch,
                                                environment: settings.environment(msyncOverride: false)),
                         log: bottleLog)
                 }
@@ -404,7 +418,7 @@ final class SetupEngine: ObservableObject {
 
     /// The cxbottle argument vector, in one place so the first attempt, the MSync-off fallback
     /// retry and the tests all build it the same way.
-    nonisolated static func cxbottleArguments(bottle: String, template: String,
+    nonisolated static func cxbottleArguments(bottle: String, template: String, wineArch: String? = nil,
                                               environment: [(key: String, value: String)]) -> [String] {
         var args = [
             "--bottle", bottle,
@@ -412,6 +426,9 @@ final class SetupEngine: ObservableObject {
             "--template", template,
             "--description", "Arknights: Endfield (Endfield_FineWine)",
         ]
+        if let wineArch {
+            args += ["--winearch", wineArch]
+        }
         for (key, value) in environment {
             args += ["--param", "EnvironmentVariables:\(key)=\(value)"]
         }
@@ -427,10 +444,12 @@ final class SetupEngine: ObservableObject {
     ///    launches stock CrossOver first, so nothing else triggers the Rosetta install prompt.
     /// 2. `wine --version` really runs: it exercises the Rosetta exec, dyld and the winetemp
     ///    ntdll.so loader path end to end (the macOS 26 loader-kill class shows up here).
+    /// `requiresRosetta` is false for the native ARM variant, which skips step 1.
     /// `archPath` is injectable so tests can stay hermetic (no real Rosetta required).
-    nonisolated static func runPreflight(cxr: URL, log: URL, archPath: String = "/usr/bin/arch") throws {
-        append(log: log, text: "$ preflight: Rosetta 2 + bin/wine --version\n")
-        if isAppleSilicon() {
+    nonisolated static func runPreflight(cxr: URL, log: URL, requiresRosetta: Bool = true,
+                                         archPath: String = "/usr/bin/arch") throws {
+        append(log: log, text: "$ preflight: \(requiresRosetta ? "Rosetta 2 + " : "")bin/wine --version\n")
+        if requiresRosetta, isAppleSilicon() {
             let rosetta = runCaptured(archPath, ["-x86_64", "/usr/bin/true"])
             append(log: log, text: "$ /usr/bin/arch -x86_64 /usr/bin/true -> exit \(rosetta.status)\n\(rosetta.output)")
             guard rosetta.status == 0 else {
@@ -445,7 +464,7 @@ final class SetupEngine: ObservableObject {
         guard wine.status == 0, wineVersionLooksValid(wine.output) else {
             throw Failure(message: """
                 wine failed to start (exit \(wine.status)) — the patched CrossOver copy is broken \
-                or the machine cannot run its x86_64 binaries. See the preflight log for output.
+                or the machine cannot run its binaries. See the preflight log for output.
                 """)
         }
         append(log: log, text: "preflight ok: \(wine.output.trimmingCharacters(in: .whitespacesAndNewlines))\n")

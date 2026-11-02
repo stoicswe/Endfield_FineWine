@@ -5,13 +5,14 @@ Helper scripts for the capture → build → swap → test loop.
 | Script | Stage | Purpose | Status |
 |---|---|---|---|
 | `01-capture-failure.sh` | diagnose | Launch Endfield via CrossOver with `CX_LOG` + `--wait-children`, collect logs + crash reports, auto-classify the failure (now recognizes the stage-1 protector loop). | ✅ working |
-| `fetch-dwproton-patches.sh` | 2 | Pull the Endfield-relevant dw-proton patch set into `../patches/stage2-dwproton/`. | ✅ working |
+| `fetch-dwproton-patches.sh` | 2 | Pull the Endfield-relevant dw-proton patch set into `../patches/x64/stage2-dwproton/`. | ✅ working |
 | `build-wine.sh` | build | Build a **64-bit-only** CrossOver 26.3 Wine from source (standard toolchain, no `win32on64`/`cx-llvm`). `deps\|fetch\|apply\|configure\|build\|all`. | ✅ working |
 | `build-moltenvk.sh` | build | Build a patched x86_64 **MoltenVK** (`libMoltenVK.dylib`) from source into `build/moltenvk-out`. `fetch\|apply\|deps\|build\|all`. | ✅ working |
 | `package.sh` | package | Bundle `build/wine-out` + `build/moltenvk-out` into `dist/endfield-wine-modules` (+ tarball/checksums) for `apply-modules.sh` and the Patcher app. | ✅ working |
 | `apply-modules.sh` | install | Install the packaged Wine modules **and** MoltenVK into a copy of CrossOver (`CrossOver_Endfield_Patch.app`). | ✅ working |
 | `swap-into-crossover.sh` | build | Build `CrossOver_Endfield_Patch.app` from `CrossOver.app`: swap in the 3 patched modules (+ optional GPTK4 D3DMetal; MoltenVK is downloaded unless `SKIP_MVK=1`), re-seal, verify. | ✅ working |
 | `create-bottle.sh` | setup | Create the `Arknights Endfield` bottle (Windows 11 64-bit, D3DMetal + DLSS + MSync), or re-apply those settings with `UPDATE=1`. | ✅ working |
+| `build-local.sh` | build | Build the complete `FineWine Patcher.app` for local testing: x64 Wine and MoltenVK, an ARM payload (`ARM_MODE=source`, `stock` or `skip`), then verify it. | ✅ working |
 | `launch-endfield.sh` | play | Launch `Endfield.exe` directly through the patched app (adds `-force-d3d11`); optional Wine logging via `DEBUG=`. Kept for reference: direct launches are not a supported way to use FineWine and can stop at a black window on recent game builds. | ⚠️ unsupported |
 | `notproton-register.sh` | steam | Register the FineWine-patched CrossOver as a NotProton runner for Steam Play on macOS. See [../docs/notproton.md](../docs/notproton.md). | ✅ working |
 

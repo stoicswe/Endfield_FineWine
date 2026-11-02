@@ -13,6 +13,9 @@
 #                            a flat directory holding ntdll.so/kernel32.dll/ntoskrnl.exe also works)
 #   MOLTENVK_DIR            where to find the built libMoltenVK.dylib
 #                           (default: <repo>/build/moltenvk-out; a copy inside PAYLOAD_DIR also works)
+#   ARM_PAYLOAD_DIR         optional ARM (aarch64) payload built by scripts/build-wine-arm.sh
+#                           (default: <repo>/build/wine-arm-payload). Absent -> x64-only build;
+#                           the ARM payload is never required and never affects the x64 path.
 #   VERSION                 CFBundleShortVersionString baked into Info.plist (default: 1.1.0;
 #                           the release workflow sets this to the release branch version)
 #   CODESIGN_ID             signing identity (default "-" = ad-hoc; set your "Developer ID
@@ -230,6 +233,22 @@ else
   done
   ok "payload staged: ntdll.so, winemac.so, kernel32.dll, ntoskrnl.exe, lsass.exe, wineboot.exe, wineserver, libMoltenVK.dylib"
   ui_end
+fi
+
+# ---------------------------------------------------------------- 3b. ARM payload (experimental)
+# The ARM (aarch64, no-Rosetta) payload is built by a SEPARATE pipeline
+# (scripts/build-wine-arm.sh) so the x64 path stays untouched, and staged into payload/arm/.
+# It is optional: with no ARM payload the app still builds and patches x64 exactly as before,
+# and simply reports that the ARM payload is missing when an ARM CrossOver is selected.
+ARM_PAYLOAD_DIR="${ARM_PAYLOAD_DIR:-$REPO/build/wine-arm-payload}"
+if [ -d "$ARM_PAYLOAD_DIR" ]; then
+  P_ARM="$APP/Contents/Resources/payload/arm"
+  mkdir -p "$P_ARM"
+  # ditto to preserve any symlinks/permissions in the payload tree.
+  ditto "$ARM_PAYLOAD_DIR/" "$P_ARM/"
+  ok "ARM payload staged from $ARM_PAYLOAD_DIR ($(find "$P_ARM" -type f | wc -l | tr -d ' ') files)"
+else
+  warn "no ARM payload at $ARM_PAYLOAD_DIR — building x64-only (build it with scripts/build-wine-arm.sh)"
 fi
 
 # ---------------------------------------------------------------- 4. sign
