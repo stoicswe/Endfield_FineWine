@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # launch-endfield.sh — launch Arknights: Endfield directly, bypassing the Gryphline launcher.
 #
-# The game binary ships its own embedded login UI (CefView / QCefView.dll), so it can start and
-# log in without the launcher. Use this when the launcher won't start, or to skip it entirely.
-# It runs through the patched CrossOver app, so the anti-cheat fixes and the D3DMetal graphics
-# setting are already in effect.
+# NOT SUPPORTED: starting Endfield.exe directly is not a supported way to use FineWine, and on
+# recent game builds it can stop at a black window. Start the game from the Gryphline launcher
+# (docs/installation.md). This script is kept for reference.
+#
+# The game binary ships its own embedded login UI (CefView / QCefView.dll). The script runs through
+# the patched CrossOver app, so the anti-cheat fixes and the D3DMetal graphics setting are in effect.
 #
 # Usage:
 #   scripts/launch-endfield.sh              # launch and play
@@ -68,6 +70,8 @@ TARGET="${TARGET:-C:/Program Files/GRYPHLINK/games/Arknights Endfield/Endfield.e
 GFXARGS="${GFXARGS--force-d3d11}"
 [ -d "$BP" ] || { echo "ERROR: bottle '$BOTTLE' not found at $BP" >&2; exit 1; }
 
+echo "NOTE: direct launches are not supported and can stop at a black window on recent game builds." >&2
+echo "      Start the game from the Gryphline launcher instead (see docs/installation.md)." >&2
 echo "App:    $APP"
 echo "Bottle: $BOTTLE"
 echo "Game:   $TARGET"

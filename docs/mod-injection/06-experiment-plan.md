@@ -14,7 +14,8 @@
   2. the bottle's graphics backend (`CX_GRAPHICS_BACKEND`: `d3dmetal` / `dxmt` / `dxvk`),
   3. the DLL overrides (`d3d11`, `dxgi`, `d3dcompiler_47`, `nvapi64`).
 - Capture a log for every run: `DEBUG=1 scripts/launch-endfield.sh` writes
-  `~/endfield-debug/<ts>/cxlog.txt`; for mod-specific signals add `WINEDEBUG=+loaddll,+seh`
+  `~/endfield-debug/<ts>/cxlog.txt` (this direct launch is not supported and can stop at a black
+  window on recent game builds); for mod-specific signals add `WINEDEBUG=+loaddll,+seh`
   (`+loaddll` prints every module load — the single most useful channel for this work).
 - Success criteria are stated per experiment; if an experiment cannot be run, record *why* in the
   results table at the bottom.

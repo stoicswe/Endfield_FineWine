@@ -152,6 +152,7 @@ find_module(){ # flat-name  tree-relative-path
   else echo ""; fi
 }
 NTDLL="$(find_module ntdll.so dlls/ntdll/ntdll.so)"
+WINEMAC="$(find_module winemac.so dlls/winemac.drv/winemac.so)"
 KERNEL32="$(find_module kernel32.dll dlls/kernel32/x86_64-windows/kernel32.dll)"
 NTOSKRNL="$(find_module ntoskrnl.exe dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe)"
 LSASS="$(find_module lsass.exe programs/lsass/x86_64-windows/lsass.exe)"
@@ -163,7 +164,7 @@ if   [ -f "$PAYLOAD_DIR/libMoltenVK.dylib" ]; then MVK="$PAYLOAD_DIR/libMoltenVK
 elif [ -f "$MOLTENVK_DIR/libMoltenVK.dylib" ]; then MVK="$MOLTENVK_DIR/libMoltenVK.dylib"
 else MVK=""; fi
 
-if [ -z "$NTDLL" ] || [ -z "$KERNEL32" ] || [ -z "$NTOSKRNL" ] || [ -z "$LSASS" ] || [ -z "$WINEBOOT" ] || [ -z "$RUNDLL32" ] || [ -z "$WINESERVER" ] || [ -z "$MVK" ]; then
+if [ -z "$NTDLL" ] || [ -z "$WINEMAC" ] || [ -z "$KERNEL32" ] || [ -z "$NTOSKRNL" ] || [ -z "$LSASS" ] || [ -z "$WINEBOOT" ] || [ -z "$RUNDLL32" ] || [ -z "$WINESERVER" ] || [ -z "$MVK" ]; then
   if [ "${ALLOW_MISSING_PAYLOAD:-0}" = "1" ]; then
     warn "payload modules not found — building WITHOUT payload (smoke test only)"
     ui_skip
@@ -176,6 +177,7 @@ if [ -z "$NTDLL" ] || [ -z "$KERNEL32" ] || [ -z "$NTOSKRNL" ] || [ -z "$LSASS" 
 else
   P="$APP/Contents/Resources/payload"
   cp "$NTDLL"    "$P/x86_64-unix/ntdll.so"
+  cp "$WINEMAC"  "$P/x86_64-unix/winemac.so"
   cp "$KERNEL32" "$P/x86_64-windows/kernel32.dll"
   cp "$NTOSKRNL" "$P/x86_64-windows/ntoskrnl.exe"
   cp "$LSASS"    "$P/x86_64-windows/lsass.exe"
@@ -202,16 +204,31 @@ else
     echo "ERROR: $NTDLL is not a Mach-O binary"; exit 1
   fi
 
+  # winemac.so needs the same rpath: stock carries it, our build does not.
+  WM="$P/x86_64-unix/winemac.so"
+  if otool -l "$WM" >/dev/null 2>&1; then
+    if ! otool -l "$WM" | grep -A2 LC_RPATH | grep -q 'lib64'; then
+      install_name_tool -add_rpath "@loader_path/../../../lib64" "$WM"
+    fi
+    otool -l "$WM" | grep -A2 LC_RPATH | grep -q 'lib64' \
+      || { echo "ERROR: could not add the lib64 rpath to winemac.so"; exit 1; }
+    ok "winemac.so LC_RPATH → lib64"
+  elif [ "${ALLOW_MISSING_PAYLOAD:-0}" = "1" ]; then
+    warn "winemac.so is not a Mach-O (dummy payload?) — skipping the rpath step"
+  else
+    echo "ERROR: $WINEMAC is not a Mach-O binary"; exit 1
+  fi
+
   # CrossOver's bundled copy is loaded via @rpath/libMoltenVK.dylib; give ours the same install
   # name so win32u's dlopen resolves it exactly as before.
   install_name_tool -id "@rpath/libMoltenVK.dylib" "$P/lib64/libMoltenVK.dylib"
 
-  for f in "$P/x86_64-unix/ntdll.so" "$P/x86_64-windows/kernel32.dll" \
+  for f in "$P/x86_64-unix/ntdll.so" "$P/x86_64-unix/winemac.so" "$P/x86_64-windows/kernel32.dll" \
            "$P/x86_64-windows/ntoskrnl.exe" "$P/x86_64-windows/lsass.exe" \
            "$P/x86_64-windows/wineboot.exe" "$P/server/wineserver" "$P/lib64/libMoltenVK.dylib"; do
     codesign --force --sign "$CODESIGN_ID" "$f" 2>/dev/null || true
   done
-  ok "payload staged: ntdll.so, kernel32.dll, ntoskrnl.exe, lsass.exe, wineboot.exe, wineserver, libMoltenVK.dylib"
+  ok "payload staged: ntdll.so, winemac.so, kernel32.dll, ntoskrnl.exe, lsass.exe, wineboot.exe, wineserver, libMoltenVK.dylib"
   ui_end
 fi
 

@@ -110,33 +110,32 @@ Prefer the GUI? The Patcher's **Automated Setup…** does the whole fresh instal
 
 ## 5. Run the game
 
-The Gryphline launcher is only needed to install and update the game. Once it is installed, start
-the game directly — the game has its own login screen — which skips the launcher entirely and adds
-`-force-d3d11`:
+Start the game from the Gryphline launcher, which also installs and updates it. Open the launcher from the patched CrossOver's bottle page (**Start**), then choose **Launch with DirectX 11** from the dropdown next to Start.
+
+If the launcher's window closes immediately, start the launcher through the `wine` command instead. Its Chromium/QtWebEngine renderer crashes on the GUI path, which isn't an ACE problem (see [docs/15](project-information/15-launcher-qtwebengine-crash.md)):
 
 ```bash
-# Easy launcher script (handles wineserver cleanup, graphics args, debug logging):
-./scripts/launch-endfield.sh
-
-# Or invoke wine directly:
 CXR="/Applications/CrossOver_Endfield_Patch.app/Contents/SharedSupport/CrossOver"
-"$CXR/bin/wine" --bottle "Arknights Endfield" \
-  --cx-app "C:/Program Files/GRYPHLINK/games/Arknights Endfield/Endfield.exe" -force-d3d11
-```
-
-To install or update the game, open the Gryphline launcher from the patched CrossOver's bottle page
-(**Start**). If its window closes immediately, start it through the *direct* wine path instead —
-the launcher's Chromium/QtWebEngine renderer crashes on the GUI path, not an ACE problem
-(see [docs/15](project-information/15-launcher-qtwebengine-crash.md)):
-
-```bash
 "$CXR/bin/wine" --bottle "Arknights Endfield" --wait-children \
   --cx-app "C:/Program Files/GRYPHLINK/Launcher.exe"
 ```
 
+### Direct game launch (unsupported)
+
+> **Not supported:** starting `Endfield.exe` directly, without the Gryphline launcher, is not a supported way to use FineWine. On recent game builds it can stop at a black window. These commands are kept for reference only.
+
+```bash
+# Launch script (handles wineserver cleanup, graphics args, debug logging):
+./scripts/launch-endfield.sh
+
+# Or invoke wine directly:
+"$CXR/bin/wine" --bottle "Arknights Endfield" \
+  --cx-app "C:/Program Files/GRYPHLINK/games/Arknights Endfield/Endfield.exe" -force-d3d11
+```
+
 ### Debug logging
 
-To capture a debug log, run `DEBUG=light ./scripts/launch-endfield.sh` (Wine errors only — cheap enough to leave on while playing) or `DEBUG=1 ./scripts/launch-endfield.sh` (the full CrossOver log — heavy). Calling `bin/wine` yourself? Pass channels with `--debugmsg` (e.g. `--debugmsg err+all`), not `WINEDEBUG`: CrossOver's wrapper overwrites that variable — with `-all`, or with `CX_LOG` set, with its own heavy default channel list.
+To capture a debug log from the launcher, add `--debugmsg` to the `wine` command above (for example `--debugmsg err+all`). The script's `DEBUG=light ./scripts/launch-endfield.sh` (Wine errors only — cheap enough to leave on while playing) and `DEBUG=1 ./scripts/launch-endfield.sh` (the full CrossOver log — heavy) use the unsupported direct launch. Calling `bin/wine` yourself? Pass channels with `--debugmsg` (e.g. `--debugmsg err+all`), not `WINEDEBUG`: CrossOver's wrapper overwrites that variable — with `-all`, or with `CX_LOG` set, with its own heavy default channel list.
 
 ## See also
 

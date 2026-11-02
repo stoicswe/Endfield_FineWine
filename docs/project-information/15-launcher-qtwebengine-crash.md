@@ -2,7 +2,7 @@
 
 > **Status: UNRESOLVED (Oct 2026).** The **Gryphline launcher** (`Launcher.exe` →
 > `Games.exe`, a QtWebEngine / Chromium app) starts, shows its window for a second or two,
-> then closes. The **game itself launches fine** (see the workaround). This is **not** ACE and
+> then closes. The launcher **runs fine through the `wine` command** (see the workaround). This is **not** ACE and
 > **not** the app-bundle/plist changes — it is a Chromium-under-Wine renderer failure.
 
 ## Symptom
@@ -72,8 +72,9 @@ through the direct path rather than the GUI's Start button.
   `wine --bottle "Arknights Endfield" --cx-app "C:/Program Files/GRYPHLINK/Launcher.exe"` (the exact
   command is in [installation.md §5](../installation.md#5-run-the-game)). Use it to install, update
   and play.
-- **Direct game launch (skip the launcher):** `scripts/launch-endfield.sh` starts `Endfield.exe`
-  with `-force-d3d11` once the game is installed (the game has its own login UI).
+- **Direct game launch (skip the launcher) — not supported:** `scripts/launch-endfield.sh` starts
+  `Endfield.exe` with `-force-d3d11` once the game is installed. It is kept for reference only and
+  can stop at a black window on recent game builds.
 
 ## Evidence
 

@@ -30,11 +30,13 @@ ui_end
 
 ui_begin stage 30 "Staging modules into $out"
 rm -rf "$out" "$out.tar.gz" "$out.tar.gz.sha256"; mkdir -p "$out"
-cp "$WINE_OUT"/{ntdll.so,kernel32.dll,ntoskrnl.exe,lsass.exe,wineboot.exe,rundll32.exe,wineserver,COPYING.LIB,CROSSOVER_VERSION} "$out/"
+cp "$WINE_OUT"/{ntdll.so,winemac.so,kernel32.dll,ntoskrnl.exe,lsass.exe,wineboot.exe,rundll32.exe,wineserver,COPYING.LIB,CROSSOVER_VERSION} "$out/"
 cp "$MVK_OUT"/{libMoltenVK.dylib,LICENSE.MoltenVK} "$out/"
 # cxcompatdb.so needs ntdll's LC_RPATH to resolve @rpath/libgnutls and enable D3DMetal.
 # Add CrossOver's library path here so installation needs no developer tools.
 install_name_tool -add_rpath "@loader_path/../../../lib64" "$out/ntdll.so"
+# winemac.so resolves CrossOver's own libraries the same way as stock.
+install_name_tool -add_rpath "@loader_path/../../../lib64" "$out/winemac.so"
 ui_end
 
 ui_begin metadata 18 "Writing SOURCE.txt"
@@ -54,7 +56,7 @@ EOF
 ui_end
 
 ui_begin checksum 20 "Computing SHA256SUMS"
-( cd "$out" && shasum -a 256 ntdll.so kernel32.dll ntoskrnl.exe lsass.exe wineboot.exe rundll32.exe wineserver libMoltenVK.dylib > SHA256SUMS && cat SHA256SUMS )
+( cd "$out" && shasum -a 256 ntdll.so winemac.so kernel32.dll ntoskrnl.exe lsass.exe wineboot.exe rundll32.exe wineserver libMoltenVK.dylib > SHA256SUMS && cat SHA256SUMS )
 ui_end
 
 ui_begin tar 30 "Creating $PKG_NAME.tar.gz"
