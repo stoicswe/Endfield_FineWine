@@ -72,6 +72,12 @@ ARM_RPATH="@loader_path/../../../lib/aarch64"
 
 log(){ printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 use_bison(){ export PATH="$("$BREW" --prefix bison)/bin:$PATH"; }  # Wine needs bison >= 3.0
+verify_source() {
+  local file="$1" expected="${ARM_SRC_SHA256:-}" actual
+  [ -n "$expected" ] || { echo "ARM_SRC_SHA256 is required when using ARM tarball sources"; exit 1; }
+  actual="$(shasum -a 256 "$file" | awk '{print $1}')"
+  [ "$actual" = "$expected" ] || { echo "source checksum mismatch for $file"; echo "expected: $expected"; echo "actual:   $actual"; exit 1; }
+}
 
 cmd_deps() {
   log "Installing Homebrew build dependencies"
@@ -101,6 +107,7 @@ fetch_source() {
   fi
   if [ -n "$tgz" ]; then
     [ -f "$tgz" ] || { [ -n "$url" ] && curl -fL "$url" -o "$tgz" || { echo "source tarball not found: $tgz"; exit 1; }; }
+    verify_source "$tgz"
     mkdir -p "$BUILD_DIR/sources-arm"
     tar xzf "$tgz" -C "$BUILD_DIR/sources-arm" || { echo "extract failed ($tgz)"; exit 1; }
     local inner
