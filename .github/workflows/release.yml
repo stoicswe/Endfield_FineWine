@@ -9,7 +9,9 @@
 #                wiki generator uses) of the commits since the previous release tag,
 #                with a raw commit list as a collapsible fallback.
 #
-# Re-pushing to the same branch refreshes the existing release in place. A manual
+# Immutable releases are on for this repo, so a published release can't gain or change
+# assets. They go up while the release is still a draft, and re-pushing a branch whose
+# release is already published fails before building: bump the version instead. A manual
 # dispatch can publish an explicit version without a branch.
 #
 # When a release is newly created (not refreshed), optional final steps post a Bluesky
@@ -116,6 +118,21 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
           echo "Resolved version=$V tag=$V previous=${PREV:-<none>}"
+
+      # Fail here rather than after the build: an immutable release's assets can't change.
+      - name: Refuse a version that is already published
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          IMMUTABLE="$(gh api "repos/$GH_REPO/releases/tags/$VERSION" --jq .immutable 2>/dev/null || true)"
+          if [ "$IMMUTABLE" = "true" ]; then
+            echo "::error::Release $VERSION is published and immutable, so its assets can't change. Release a new version."
+            exit 1
+          fi
 
       - name: Summary
         shell: bash
@@ -257,19 +274,25 @@ jobs:
           TITLE: ${{ needs.version.outputs.title }}
         run: |
           set -euo pipefail
+          ASSETS=(
+            release/FineWine.Patcher.app.zip
+            release/endfield-wine-modules.tar.gz
+            release/SHA256SUMS.txt
+          )
           if gh release view "$TAG" >/dev/null 2>&1; then
+            # A draft a cancelled run left behind, or a release from before immutability.
             echo "existing release $TAG -> refreshing in place"
             echo "created=false" >> "$GITHUB_OUTPUT"
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+            gh release edit "$TAG" --draft=false --title "$TITLE" --latest --notes-file notes.md
           else
             echo "creating release $TAG"
             echo "created=true" >> "$GITHUB_OUTPUT"
-            gh release create "$TAG" --title "$TITLE" --target "$GITHUB_SHA" --latest --notes-file notes.md
+            # Given the assets, gh uploads them to a draft and publishes last. Uploading after
+            # create fails, because the release is already published and immutable.
+            gh release create "$TAG" "${ASSETS[@]}" \
+              --title "$TITLE" --target "$GITHUB_SHA" --latest --notes-file notes.md
           fi
-          gh release upload "$TAG" \
-            release/FineWine.Patcher.app.zip \
-            release/endfield-wine-modules.tar.gz \
-            release/SHA256SUMS.txt --clobber
-          gh release edit "$TAG" --title "$TITLE" --latest --notes-file notes.md
           gh release view "$TAG" --json name,tagName,isPrerelease,assets \
             --jq '{name, tagName, isPrerelease, assets: [.assets[].name]}'
 

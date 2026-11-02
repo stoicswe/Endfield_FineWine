@@ -254,11 +254,9 @@ jobs:
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             # Same version+date+commit: a re-run of this exact snapshot (failed-job re-run,
-            # double dispatch). Refresh it in place rather than colliding with the tag.
+            # double dispatch). Published releases are immutable, so keep what's there.
             echo "created=false" >> "$GITHUB_OUTPUT"
-            echo "release $TAG already exists (re-run of the same snapshot) -> refreshing assets"
-            gh release upload "$TAG" assets/*.zip assets/SHA256SUMS.txt --clobber
-            gh release edit "$TAG" --prerelease --title "$TITLE" --notes-file notes.md
+            echo "release $TAG already exists (re-run of the same snapshot) -> keeping it"
           else
             echo "created=true" >> "$GITHUB_OUTPUT"
             echo "creating release $TAG at $GITHUB_SHA"
