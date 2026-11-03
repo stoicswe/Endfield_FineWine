@@ -1,0 +1,291 @@
+diff --git a/dlls/winemac.drv/cocoa_window.m b/dlls/winemac.drv/cocoa_window.m
+index ffb7c6a..fed78cc 100644
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -353,6 +353,7 @@ @interface WineMetalView : WineBaseView
+ }
+ 
+     - (id) initWithFrame:(NSRect)frame device:(id<MTLDevice>)device;
++    - (void) updateCompositesAlpha;
+ 
+ @end
+ 
+@@ -389,6 +390,8 @@ - (void) wine_getBackingSize:(int*)outBackingSize;
+     - (void) wine_setBackingSize:(const int*)newBackingSize;
+ 
+     - (WineMetalView*) newMetalViewWithDevice:(id<MTLDevice>)device;
++    - (BOOL) hasMetalDescendant;
++    - (void) updateCompositesAlpha;
+ 
+ @end
+ 
+@@ -411,6 +414,7 @@ @interface WineWindow ()
+ @property (readonly, nonatomic) BOOL needsTransparency;
+ 
+ @property (nonatomic) BOOL usePerPixelAlpha;
++@property (nonatomic) BOOL compositesAlpha;
+ 
+ @property (assign, nonatomic) void* himc;
+ @property (nonatomic) BOOL commandDone;
+@@ -527,6 +531,14 @@ - (void) updateLayer
+         if (window.closing)
+             return;
+ 
++        /* The window surface sits behind the Metal view and has no alpha, so it
++         * would show through wherever the swapchain is transparent. */
++        if (window.compositesAlpha && [self hasMetalDescendant])
++        {
++            layer.contents = nil;
++            return;
++        }
++
+         imageRect = layer.bounds;
+         imageRect.origin.x *= layer.contentsScale;
+         imageRect.origin.y *= layer.contentsScale;
+@@ -674,6 +686,29 @@ - (void) invalidateHasGLDescendant
+         }
+     }
+ 
++    - (BOOL) hasMetalDescendant
++    {
++        if (_metalView)
++            return YES;
++        for (WineContentView* view in [self subviews])
++        {
++            if ([view isKindOfClass:[WineContentView class]] && [view hasMetalDescendant])
++                return YES;
++        }
++        return NO;
++    }
++
++    - (void) updateCompositesAlpha
++    {
++        [_metalView updateCompositesAlpha];
++        for (WineContentView* view in [self subviews])
++        {
++            if ([view isKindOfClass:[WineContentView class]])
++                [view updateCompositesAlpha];
++        }
++        [self setNeedsDisplay:YES];
++    }
++
+     - (void) wine_getBackingSize:(int*)outBackingSize
+     {
+         @synchronized(self) {
+@@ -696,6 +731,11 @@ - (WineMetalView*) newMetalViewWithDevice:(id<MTLDevice>)device
+         [self setAutoresizesSubviews:YES];
+         [self addSubview:view positioned:NSWindowBelow relativeTo:nil];
+         _metalView = view;
++        if (((WineWindow*)self.window).compositesAlpha)
++        {
++            [view updateCompositesAlpha];
++            [[self.window contentView] setNeedsDisplay:YES];
++        }
+ 
+         [(WineWindow*)self.window windowDidDrawContent];
+ 
+@@ -993,7 +1033,17 @@ - (CALayer*) makeBackingLayer
+ 
+     - (BOOL) isOpaque
+     {
+-        return YES;
++        return !((WineWindow*)self.window).compositesAlpha;
++    }
++
++    - (void) updateCompositesAlpha
++    {
++        BOOL compositesAlpha = ((WineWindow*)self.window).compositesAlpha;
++        WineMetalLayer* layer = (WineMetalLayer*)self.layer;
++
++        layer.compositesAlpha = compositesAlpha;
++        layer.backgroundColor = CGColorGetConstantColor(compositesAlpha ? kCGColorClear : kCGColorBlack);
++        layer.opaque = !compositesAlpha;
+     }
+ 
+ @end
+@@ -1006,7 +1056,7 @@ @implementation WineWindow
+     @synthesize disabled, noForeground, preventsAppActivation, floating, fullscreen, fakingClose, closing, latentParentWindow, hwnd, queue;
+     @synthesize drawnSinceShown;
+     @synthesize shapeChangedSinceLastDraw;
+-    @synthesize usePerPixelAlpha;
++    @synthesize usePerPixelAlpha, compositesAlpha;
+     @synthesize himc, commandDone;
+     @synthesize contentViewMaskLayer;
+ 
+@@ -3767,6 +3817,25 @@ void macdrv_window_use_per_pixel_alpha(macdrv_window w, bool use_per_pixel_alpha
+ }
+ }
+ 
++/***********************************************************************
++ *              macdrv_window_composite_alpha
++ *
++ * Make the window's Metal views non-opaque, so the window server composites
++ * their alpha as DWM would have.
++ */
++void macdrv_window_composite_alpha(macdrv_window w, bool composite_alpha)
++{
++@autoreleasepool
++{
++    WineWindow* window = (WineWindow*)w;
++
++    OnMainThread(^{
++        window.compositesAlpha = composite_alpha;
++        [(WineContentView*)window.contentView updateCompositesAlpha];
++    });
++}
++}
++
+ /***********************************************************************
+  *              macdrv_set_window_mask
+  */
+diff --git a/dlls/winemac.drv/d3dmetal_objc.h b/dlls/winemac.drv/d3dmetal_objc.h
+index fee17b6..95838b2 100644
+--- a/dlls/winemac.drv/d3dmetal_objc.h
++++ b/dlls/winemac.drv/d3dmetal_objc.h
+@@ -24,6 +24,9 @@
+ 
+ @interface WineMetalLayer : CAMetalLayer
+ 
++/* Set on the main thread; read on whichever thread D3DMetal calls setOpaque: from. */
++@property (atomic) BOOL compositesAlpha;
++
+ @end
+ 
+ #endif
+diff --git a/dlls/winemac.drv/d3dmetal_objc.m b/dlls/winemac.drv/d3dmetal_objc.m
+index 9b4a054..ad6caca 100644
+--- a/dlls/winemac.drv/d3dmetal_objc.m
++++ b/dlls/winemac.drv/d3dmetal_objc.m
+@@ -37,6 +37,12 @@
+ 
+ @implementation WineMetalLayer
+ 
++    /* D3DMetal can't know that DWM would have composited this swapchain's alpha. */
++    - (void) setOpaque:(BOOL)opaque
++    {
++        [super setOpaque:opaque && !self.compositesAlpha];
++    }
++
+     /* Extend [CAMetalLayer nextDrawable] so client_surface_present() can be
+      * called for the corresponding client_surface.
+      */
+diff --git a/dlls/winemac.drv/macdrv.h b/dlls/winemac.drv/macdrv.h
+index 5735ff7..aac17cc 100644
+--- a/dlls/winemac.drv/macdrv.h
++++ b/dlls/winemac.drv/macdrv.h
+@@ -192,6 +192,7 @@ struct macdrv_win_data
+     unsigned int        layered : 1;            /* is window layered and with valid attributes? */
+     unsigned int        ulw_layered : 1;        /* has UpdateLayeredWindow() been called for window? */
+     unsigned int        per_pixel_alpha : 1;    /* is window using per-pixel alpha? */
++    unsigned int        composite_alpha : 1;    /* does the window server composite its Metal alpha? */
+     unsigned int        minimized : 1;          /* is window minimized? */
+     unsigned int        fullscreen : 1;         /* is the window visible rect fullscreen? (unrelated to native AppKit/Cocoa fullscreen) */
+ 
+diff --git a/dlls/winemac.drv/macdrv_cocoa.h b/dlls/winemac.drv/macdrv_cocoa.h
+index 477efe9..398afcb 100644
+--- a/dlls/winemac.drv/macdrv_cocoa.h
++++ b/dlls/winemac.drv/macdrv_cocoa.h
+@@ -544,6 +544,7 @@ extern void macdrv_window_set_shape_image(macdrv_window w, CGImageRef image);
+ extern void macdrv_set_window_shape(macdrv_window w, const CGRect *rects, int count);
+ extern void macdrv_set_window_alpha(macdrv_window w, CGFloat alpha);
+ extern void macdrv_window_use_per_pixel_alpha(macdrv_window w, bool use_per_pixel_alpha);
++extern void macdrv_window_composite_alpha(macdrv_window w, bool composite_alpha);
+ extern void macdrv_set_window_mask(macdrv_window w, CGRect rect);
+ extern void macdrv_give_cocoa_window_focus(macdrv_window w, bool activate);
+ extern void macdrv_set_window_min_max_sizes(macdrv_window w, CGSize min_size, CGSize max_size);
+diff --git a/dlls/winemac.drv/window.c b/dlls/winemac.drv/window.c
+index 741f7fd..47474c6 100644
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -340,6 +340,54 @@ static void sync_window_opacity(struct macdrv_win_data *data, BYTE alpha,
+ }
+ 
+ 
++/***********************************************************************
++ *              window_composites_alpha
++ *
++ * HACK: Wine has no DWM to composite the alpha of a window that asked it to
++ * blur behind the window, as the GRYPHLINK launcher's rounded Qt window does.
++ * dwmapi marks those windows, and the window server composites them instead.
++ */
++static BOOL window_composites_alpha(HWND hwnd)
++{
++    return NtUserGetProp(hwnd, u"__wine_dwm_blur_behind") != NULL;
++}
++
++
++/***********************************************************************
++ *              window_keeps_per_pixel_alpha
++ *
++ * SetLayeredWindowAttributes() normally drops per-pixel alpha.  The GRYPHLINK
++ * launcher fades itself in with it, while relying on DWM to honor the alpha
++ * in its swapchain.
++ */
++static BOOL window_keeps_per_pixel_alpha(HWND hwnd)
++{
++    return window_composites_alpha(hwnd) && (NtUserGetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_LAYERED);
++}
++
++
++/***********************************************************************
++ *              sync_window_composite_alpha
++ */
++static void sync_window_composite_alpha(struct macdrv_win_data *data)
++{
++    BOOL composite_alpha = window_composites_alpha(data->hwnd);
++    COLORREF key;
++    BYTE alpha;
++    DWORD flags;
++
++    if (!data->composite_alpha == !composite_alpha) return;
++
++    TRACE("setting window %p/%p composite-alpha to %d\n", data->hwnd, data->cocoa_window, composite_alpha);
++    macdrv_window_composite_alpha(data->cocoa_window, composite_alpha);
++    data->composite_alpha = composite_alpha;
++
++    /* A SetLayeredWindowAttributes() call before the blur request dropped per-pixel alpha. */
++    if (!data->ulw_layered && NtUserGetLayeredWindowAttributes(data->hwnd, &key, &alpha, &flags))
++        sync_window_opacity(data, alpha, window_keeps_per_pixel_alpha(data->hwnd), flags);
++}
++
++
+ /***********************************************************************
+  *              sync_window_min_max_info
+  */
+@@ -516,6 +564,7 @@ static void create_cocoa_window(struct macdrv_win_data *data)
+ 
+     data->cocoa_window = macdrv_create_cocoa_window(&wf, frame, data->hwnd, thread_data->queue);
+     if (!data->cocoa_window) goto done;
++    data->composite_alpha = FALSE;
+ 
+     set_cocoa_window_properties(data);
+ 
+@@ -528,7 +577,8 @@ static void create_cocoa_window(struct macdrv_win_data *data)
+ 
+     /* set the window opacity */
+     if (!NtUserGetLayeredWindowAttributes(data->hwnd, &key, &alpha, &layered_flags)) layered_flags = 0;
+-    sync_window_opacity(data, alpha, FALSE, layered_flags);
++    sync_window_opacity(data, alpha, window_keeps_per_pixel_alpha(data->hwnd), layered_flags);
++    sync_window_composite_alpha(data);
+ 
+ done:
+     if (win_rgn) NtGdiDeleteObjectApp(win_rgn);
+@@ -1376,7 +1426,7 @@ void macdrv_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha, DWOR
+         data->ulw_layered = FALSE;
+         if (data->cocoa_window)
+         {
+-            sync_window_opacity(data, alpha, FALSE, flags);
++            sync_window_opacity(data, alpha, window_keeps_per_pixel_alpha(hwnd), flags);
+             /* since layered attributes are now set, can now show the window */
+             if ((NtUserGetWindowLongW(hwnd, GWL_STYLE) & WS_VISIBLE) && !data->on_screen)
+                 show_window(data);
+@@ -1694,6 +1744,9 @@ void macdrv_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UINT
+ 
+     if (!data->cocoa_window) goto done;
+ 
++    /* dwmapi requests this with a no-op SetWindowPos() when a blur request changes. */
++    sync_window_composite_alpha(data);
++
+     if (data->on_screen)
+     {
+         if ((swp_flags & SWP_HIDEWINDOW) && !(new_style & WS_VISIBLE))

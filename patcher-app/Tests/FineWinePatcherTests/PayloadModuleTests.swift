@@ -25,6 +25,7 @@ final class PayloadModuleTests: XCTestCase {
         for dest in [
             "lib/wine/x86_64-unix/ntdll.so",
             "lib/wine/x86_64-unix/winemac.so",
+            "lib/wine/x86_64-windows/dwmapi.dll",
             "lib/wine/x86_64-windows/kernel32.dll",
             "lib/wine/x86_64-windows/ntoskrnl.exe",
             "lib/wine/x86_64-windows/lsass.exe",

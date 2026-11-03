@@ -35,6 +35,7 @@ final class VariantTests: XCTestCase {
     private let x64Layout = [
         "lib/wine/x86_64-unix/ntdll.so",
         "lib/wine/x86_64-unix/winemac.so",
+        "lib/wine/x86_64-windows/dwmapi.dll",
         "lib/wine/x86_64-windows/kernel32.dll",
         "lib/wine/x86_64-windows/ntoskrnl.exe",
         "lib/wine/x86_64-windows/wineboot.exe",

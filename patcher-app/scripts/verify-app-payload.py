@@ -16,7 +16,7 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-LAUNCHER_PATCH_MARKER = "\\GRYPHLINK\\".encode("utf-16-le")
+LAUNCHER_PATCH_MARKER = "__wine_dwm_blur_behind".encode("utf-16-le")
 X64_RPATH = "@loader_path/../../../lib64"
 PE_MACHINE_ARM64 = 0xaa64
 
@@ -61,10 +61,11 @@ def verify_x64(payload, modules, errors):
     check_mach_o(winemac, "x86_64", X64_RPATH, errors)
     check_mach_o(os.path.join(payload, "server/wineserver"), "x86_64", None, errors)
     check_mach_o(os.path.join(payload, "lib64/libMoltenVK.dylib"), "x86_64", None, errors)
-    with open(winemac, "rb") as handle:
-        if LAUNCHER_PATCH_MARKER not in handle.read():
-            errors.append("winemac.so doesn't contain the launcher alpha patch "
-                          "(patches/x64/stage1-macos/0009 was not applied)")
+    for module, patch in (("x86_64-unix/winemac.so", "0009"), ("x86_64-windows/dwmapi.dll", "0010")):
+        with open(os.path.join(payload, module), "rb") as handle:
+            if LAUNCHER_PATCH_MARKER not in handle.read():
+                errors.append(f"{os.path.basename(module)} doesn't contain the launcher alpha patch "
+                              f"(patches/x64/stage1-macos/{patch} was not applied)")
 
 
 def verify_arm(payload, modules, errors):

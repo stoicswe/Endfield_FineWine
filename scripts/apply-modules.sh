@@ -32,7 +32,7 @@ cleanup(){
 trap cleanup EXIT
 
 log "Checking modules in $MODULES"
-for f in ntdll.so winemac.so kernel32.dll ntoskrnl.exe lsass.exe wineboot.exe rundll32.exe wineserver libMoltenVK.dylib CROSSOVER_VERSION SHA256SUMS; do
+for f in ntdll.so winemac.so dwmapi.dll kernel32.dll ntoskrnl.exe lsass.exe wineboot.exe rundll32.exe wineserver libMoltenVK.dylib CROSSOVER_VERSION SHA256SUMS; do
   [ -f "$MODULES/$f" ] || die "$MODULES/$f not found — run scripts/install-release.sh or follow README.md's source build steps"
 done
 ( cd "$MODULES" && shasum -a 256 -c -s SHA256SUMS ) || die "checksum mismatch in $MODULES"
@@ -119,7 +119,8 @@ swap(){ # module  path-under-lib/wine  [allow-new]
   ok "$2"
 }
 swap ntdll.so     x86_64-unix/ntdll.so
-swap winemac.so   x86_64-unix/winemac.so      # GRYPHLINK launcher window alpha (no black margin)
+swap winemac.so   x86_64-unix/winemac.so      # composites blur-behind windows' alpha (no launcher black margin)
+swap dwmapi.dll   x86_64-windows/dwmapi.dll   # marks blur-behind windows for winemac
 swap kernel32.dll x86_64-windows/kernel32.dll
 swap ntoskrnl.exe x86_64-windows/ntoskrnl.exe
 swap lsass.exe    x86_64-windows/lsass.exe    allow-new

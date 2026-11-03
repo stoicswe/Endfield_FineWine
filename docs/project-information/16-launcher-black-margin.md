@@ -1,6 +1,6 @@
 # 16 — The black margin around the Gryphline launcher
 
-> **Status: fixed by `patches/x64/stage1-macos/0009`, tested on one machine (Nov 2026).** The launcher's
+> **Status: fixed by `patches/x64/stage1-macos/0009` and `0010`, tested on one machine (Nov 2026).** The launcher's
 > rounded window used to sit inside a square black box. It now has real transparent corners and
 > its soft shadow, and the game still starts from it and stays opaque.
 
@@ -27,8 +27,17 @@ path check carry over.
 
 ## The patch
 
-All of it is gated on `launcher_alpha`, set once per process from the image path: under
-`\GRYPHLINK\` but not `\GRYPHLINK\games\` (plus the Epic install path dwproton uses).
+All of it applies per window, to windows that called `DwmEnableBlurBehindWindow`. In the traces
+only `Games.exe` does, and the game never does. `dwmapi` (`0010`) sets the window property
+`__wine_dwm_blur_behind` and makes a no-op `SetWindowPos` call, so `winemac` picks the change up in
+`WindowPosChanged` whether the request comes before or after the Cocoa window exists. The call
+still returns `E_NOTIMPL`, as before.
+
+An earlier version chose the process by its image path, under `\GRYPHLINK\` but not
+`\GRYPHLINK\games\`. A game installed to a custom path such as `...\GRYPHLINK\Arknights Endfield\`
+matched, and its non-opaque Metal surfaces rendered white or black
+([#87](https://github.com/stoicswe/Endfield_FineWine/issues/87)). Using the app's own request
+avoids paths and executable names entirely.
 
 - Layered windows keep per-pixel alpha across `SetLayeredWindowAttributes`.
 - `WineMetalView` and its layer are non-opaque with a clear background.

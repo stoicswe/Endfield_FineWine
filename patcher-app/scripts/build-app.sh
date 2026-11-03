@@ -156,6 +156,7 @@ find_module(){ # flat-name  tree-relative-path
 }
 NTDLL="$(find_module ntdll.so dlls/ntdll/ntdll.so)"
 WINEMAC="$(find_module winemac.so dlls/winemac.drv/winemac.so)"
+DWMAPI="$(find_module dwmapi.dll dlls/dwmapi/x86_64-windows/dwmapi.dll)"
 KERNEL32="$(find_module kernel32.dll dlls/kernel32/x86_64-windows/kernel32.dll)"
 NTOSKRNL="$(find_module ntoskrnl.exe dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe)"
 LSASS="$(find_module lsass.exe programs/lsass/x86_64-windows/lsass.exe)"
@@ -167,7 +168,7 @@ if   [ -f "$PAYLOAD_DIR/libMoltenVK.dylib" ]; then MVK="$PAYLOAD_DIR/libMoltenVK
 elif [ -f "$MOLTENVK_DIR/libMoltenVK.dylib" ]; then MVK="$MOLTENVK_DIR/libMoltenVK.dylib"
 else MVK=""; fi
 
-if [ -z "$NTDLL" ] || [ -z "$WINEMAC" ] || [ -z "$KERNEL32" ] || [ -z "$NTOSKRNL" ] || [ -z "$LSASS" ] || [ -z "$WINEBOOT" ] || [ -z "$RUNDLL32" ] || [ -z "$WINESERVER" ] || [ -z "$MVK" ]; then
+if [ -z "$NTDLL" ] || [ -z "$WINEMAC" ] || [ -z "$DWMAPI" ] || [ -z "$KERNEL32" ] || [ -z "$NTOSKRNL" ] || [ -z "$LSASS" ] || [ -z "$WINEBOOT" ] || [ -z "$RUNDLL32" ] || [ -z "$WINESERVER" ] || [ -z "$MVK" ]; then
   if [ "${ALLOW_MISSING_PAYLOAD:-0}" = "1" ]; then
     warn "payload modules not found — building WITHOUT payload (smoke test only)"
     ui_skip
@@ -181,6 +182,7 @@ else
   P="$APP/Contents/Resources/payload"
   cp "$NTDLL"    "$P/x86_64-unix/ntdll.so"
   cp "$WINEMAC"  "$P/x86_64-unix/winemac.so"
+  cp "$DWMAPI"   "$P/x86_64-windows/dwmapi.dll"
   cp "$KERNEL32" "$P/x86_64-windows/kernel32.dll"
   cp "$NTOSKRNL" "$P/x86_64-windows/ntoskrnl.exe"
   cp "$LSASS"    "$P/x86_64-windows/lsass.exe"
@@ -231,7 +233,7 @@ else
            "$P/x86_64-windows/wineboot.exe" "$P/server/wineserver" "$P/lib64/libMoltenVK.dylib"; do
     codesign --force --sign "$CODESIGN_ID" "$f" 2>/dev/null || true
   done
-  ok "payload staged: ntdll.so, winemac.so, kernel32.dll, ntoskrnl.exe, lsass.exe, wineboot.exe, wineserver, libMoltenVK.dylib"
+  ok "payload staged: ntdll.so, winemac.so, dwmapi.dll, kernel32.dll, ntoskrnl.exe, lsass.exe, wineboot.exe, wineserver, libMoltenVK.dylib"
   ui_end
 fi
 
