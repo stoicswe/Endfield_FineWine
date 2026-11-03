@@ -1,0 +1,23 @@
+diff --git a/dlls/dwmapi/dwmapi_main.c b/dlls/dwmapi/dwmapi_main.c
+index 4b881b4..628ea63 100644
+--- a/dlls/dwmapi/dwmapi_main.c
++++ b/dlls/dwmapi/dwmapi_main.c
+@@ -164,6 +164,18 @@ HRESULT WINAPI DwmEnableBlurBehindWindow(HWND hWnd, const DWM_BLURBEHIND *pBlurB
+ {
+     FIXME("%p %p\n", hWnd, pBlurBuf);
+ 
++    /* HACK: There is no DWM to composite the window's alpha.  Mark the window, so
++     * the Mac driver can have the window server do it, and let the driver know
++     * through a no-op SetWindowPos().  The call still fails as before. */
++    if (pBlurBuf && (pBlurBuf->dwFlags & DWM_BB_ENABLE) &&
++        !GetPropW(hWnd, L"__wine_dwm_blur_behind") != !pBlurBuf->fEnable)
++    {
++        if (pBlurBuf->fEnable) SetPropW(hWnd, L"__wine_dwm_blur_behind", ULongToHandle(1));
++        else RemovePropW(hWnd, L"__wine_dwm_blur_behind");
++        SetWindowPos(hWnd, 0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
++                     SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING);
++    }
++
+     return E_NOTIMPL;
+ }
+ 

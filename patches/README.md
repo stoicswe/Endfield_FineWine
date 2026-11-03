@@ -61,16 +61,19 @@ Original to this project. The two Rosetta fixes live in `dlls/ntdll/unix/signal_
     (`build-wine.sh` MODULES, `package.sh`, `apply-modules.sh`, `swap-into-crossover.sh`, and
     the patcher's payload) and why it is ad-hoc signed like `wineserver` (an exec'd Mach-O).
 
-- **`0009-winemac-composite-the-gryphlink-launcher-s-window-alpha.patch`** — removes the black
+- **`0009-winemac-composite-the-alpha-of-blur-behind-windows.patch`** and
+  **`0010-dwmapi-mark-blur-behind-windows-for-the-mac-driver.patch`** — remove the black
   margin around the Gryphline launcher. The launcher is a rounded Qt window inside a transparent
-  margin, and on Windows DWM composites that alpha. dwproton fixes the same symptom in `winex11`
-  (commit `50182fc3f58c`), which macOS doesn't use, so this is a separate `winemac` implementation:
-  for processes under `\GRYPHLINK\` (excluding `\GRYPHLINK\games\`) it keeps per-pixel alpha across
-  `SetLayeredWindowAttributes`, makes the Metal view and layer non-opaque, and stops the window
-  surface drawing behind the Metal view. See
+  margin; it calls `DwmEnableBlurBehindWindow`, and on Windows DWM composites that alpha. dwproton
+  fixes the same symptom in `winex11` (commit `50182fc3f58c`), which macOS doesn't use, so this is a
+  separate `winemac` implementation. `0010` marks windows that request blur-behind with a window
+  property and pokes the driver with a no-op `SetWindowPos`. For those windows only, `0009` keeps
+  per-pixel alpha across `SetLayeredWindowAttributes`, makes the Metal view and layer non-opaque,
+  and stops the window surface drawing behind the Metal view. No paths or executable names are
+  checked, so the game stays opaque wherever it is installed (issue #87). See
   [docs/project-information/16-launcher-black-margin.md](../docs/project-information/16-launcher-black-margin.md).
-  This is why `winemac.so` is part of the shipped module set; it needs the same `lib64` rpath as
-  `ntdll.so`.
+  This is why `winemac.so` and `dwmapi.dll` are part of the shipped module set; `winemac.so`
+  needs the same `lib64` rpath as `ntdll.so`.
 
 ## `stage2-dwproton/` — the ported dw-proton anti-cheat patches
 

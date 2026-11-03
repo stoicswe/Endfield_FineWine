@@ -117,10 +117,13 @@ enum CrossOverVariant: String, CaseIterable, Sendable {
                 // Rosetta NOP + privileged-instruction fixes, NtDelayExecution QPC timing
                 PayloadModule(payloadSubpath: "x86_64-unix/ntdll.so",
                               crossoverSubpath: "lib/wine/x86_64-unix/ntdll.so"),
-                // Keeps the GRYPHLINK launcher's window alpha, so no black margin surrounds it.
-                // The patched build applies it to that launcher only; the game stays opaque.
+                // Composites the alpha of windows that asked DWM to blur behind them, so no black
+                // margin surrounds the GRYPHLINK launcher. The game never asks, so it stays opaque.
                 PayloadModule(payloadSubpath: "x86_64-unix/winemac.so",
                               crossoverSubpath: "lib/wine/x86_64-unix/winemac.so"),
+                // Marks the windows that ask DWM to blur behind them, for winemac.so above.
+                PayloadModule(payloadSubpath: "x86_64-windows/dwmapi.dll",
+                              crossoverSubpath: "lib/wine/x86_64-windows/dwmapi.dll"),
                 // KiUser*Dispatcher int3 spoof
                 PayloadModule(payloadSubpath: "x86_64-windows/kernel32.dll",
                               crossoverSubpath: "lib/wine/x86_64-windows/kernel32.dll"),
