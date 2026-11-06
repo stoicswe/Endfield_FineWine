@@ -373,7 +373,7 @@ struct BottleSettingsView: View {
 
     private func refreshGPTK() {
         gptkSources = GPTKSource.detectMounted()
-        if selectedGPTK == nil, let gptk4 = gptkSources.first(where: { $0.isVersion4 }) {
+        if selectedGPTK == nil, let gptk4 = gptkSources.first(where: { $0.isVersion4 && $0.installProblem == nil }) {
             selectedGPTK = gptk4
         }
     }

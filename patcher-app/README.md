@@ -18,10 +18,16 @@ A minimal macOS app that turns a copy of **CrossOver 26.3** into the patched bui
 
    keeping `.cxorig` backups.
 3. *(Optional)* Installs **GPTK4 / D3DMetal** from a copy **you** supply — a mounted
-   *"Evaluation environment for Windows games …"* DMG (or a folder you pick). Only
-   `lib64/apple_gptk/external/` is replaced (every D3DMetal glue module symlinks into it), so
-   the whole D3D11/D3D12/DXGI/DLSS stack upgrades and no `lib/wine/...` DLL is touched. Keeps
-   CrossOver's copy as `external.cxorig`.
+   *"Evaluation environment for Windows games …"* DMG, a CrossOver 27 app, or a folder you
+   pick. `lib64/apple_gptk/external/` is replaced, and so is `lib64/apple_gptk/wine/` with the
+   D3DMetal DLLs that came with it (the DMG's `redist/lib/wine/`), so the whole
+   D3D11/D3D12/DXGI/DLSS stack upgrades as a matched set and no `lib/wine/...` DLL is touched.
+   D3DMetal 4.0b3+ is refused without those DLLs: over CrossOver's 3.0 DLLs it crashes every
+   DirectX 11 program. Keeps CrossOver's copies as `external.cxorig` and `wine.cxorig`.
+   A copy patched before this (a 4.0b3 framework over the 3.0 DLLs) is flagged in the main
+   window with a **Repair D3DMetal** button, and Automated Setup repairs it on its own: it
+   installs the matching DLLs from a mounted GPTK DMG or a CrossOver 27 app, or else restores
+   CrossOver's bundled D3DMetal 3.0.
 4. Re-seals the whole bundle with an ad-hoc signature and removes quarantine. (Just stripping
    the seal gets the copy reported as *damaged* and its binaries killed, because a copy made by
    a downloaded app carries `com.apple.provenance` — see
