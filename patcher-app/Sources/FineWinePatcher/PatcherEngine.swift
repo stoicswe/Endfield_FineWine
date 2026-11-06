@@ -222,6 +222,11 @@ struct GPTKSource: Identifiable, Hashable, Sendable {
     /// The mounted volume's name (e.g. "Evaluation environment for Windows games 4.0b2").
     let volumeName: String
 
+    /// The `wine` folder next to `external` that holds the D3DMetal glue built for this version
+    /// (`x86_64-windows/*.dll` plus the `x86_64-unix` links into `libd3dshared.dylib`) — the
+    /// DMG's `redist/lib/wine` or a CrossOver app's `apple_gptk/wine`. Nil when there is none.
+    let glue: URL?
+
     var id: String { url.path }
 
     var displayName: String {
@@ -232,6 +237,28 @@ struct GPTKSource: Identifiable, Hashable, Sendable {
     /// D3DMetal 4.x is the GPTK4 release that adds the Metal 4 / MetalFX features.
     var isVersion4: Bool { version?.hasPrefix("4") == true }
 
+    /// D3DMetal versions that still run behind CrossOver 26.3's own D3DMetal 3.0 glue. From 4.0b3
+    /// on, the glue calls into the framework through a jump table, so the 3.0 glue passes it
+    /// garbage: d3d11.dll faults in its DllMain and the process hangs on the loader lock (the CN
+    /// Gryphline launcher with 4.0b3 over the 3.0 glue).
+    static let versionsCompatibleWithStockGlue = ["3", "4.0b1", "4.0b2"]
+
+    /// True when this D3DMetal can't be paired with CrossOver 26.3's stock glue and needs its own.
+    var needsMatchingGlue: Bool { Self.needsMatchingGlue(version: version) }
+
+    static func needsMatchingGlue(version: String?) -> Bool {
+        guard let version, !version.isEmpty else { return true }
+        return !versionsCompatibleWithStockGlue.contains { prefix in
+            prefix.contains(".") ? version == prefix : version.hasPrefix(prefix + ".") || version == prefix
+        }
+    }
+
+    /// Why this source can't be installed, or nil when it can.
+    var installProblem: String? {
+        guard needsMatchingGlue, glue == nil else { return nil }
+        return "D3DMetal \(version ?? "(unknown version)") needs the D3DMetal DLLs built with it, and none were found next to \(url.lastPathComponent) (expected …/redist/lib/wine/x86_64-windows). With CrossOver's D3DMetal 3.0 DLLs it crashes every DirectX 11 program, including the Gryphline launcher. Choose the whole mounted DMG, or keep CrossOver's bundled D3DMetal."
+    }
+
     init?(url: URL) {
         let fm = FileManager.default
         let lib = url.appendingPathComponent("libd3dshared.dylib")
@@ -240,9 +267,12 @@ struct GPTKSource: Identifiable, Hashable, Sendable {
               fm.fileExists(atPath: url.appendingPathComponent("D3DMetal.framework").path) else { return nil }
         self.url = url
         self.version = Self.frameworkVersion(plist)
+        self.glue = Self.glueFolder(besides: url)
         let parts = url.standardizedFileURL.pathComponents
         if parts.count >= 3, parts[1] == "Volumes" {
             volumeName = parts[2]
+        } else if let app = parts.first(where: { $0.hasSuffix(".app") }) {
+            volumeName = (app as NSString).deletingPathExtension
         } else {
             var cur = url
             while ["external", "lib", "redist"].contains(cur.lastPathComponent.lowercased()), cur.pathComponents.count > 1 {
@@ -250,6 +280,16 @@ struct GPTKSource: Identifiable, Hashable, Sendable {
             }
             volumeName = cur.lastPathComponent
         }
+    }
+
+    /// The `wine` sibling of an `external` folder, when it has the D3D11 and DXGI glue DLLs.
+    static func glueFolder(besides external: URL) -> URL? {
+        let wine = external.deletingLastPathComponent().appendingPathComponent("wine", isDirectory: true)
+        let windows = wine.appendingPathComponent("x86_64-windows", isDirectory: true)
+        let fm = FileManager.default
+        guard ["d3d11.dll", "dxgi.dll"].allSatisfy({ fm.fileExists(atPath: windows.appendingPathComponent($0).path) })
+        else { return nil }
+        return wine
     }
 
     private static func frameworkVersion(_ plist: URL) -> String? {
@@ -321,6 +361,9 @@ struct GPTKSource: Identifiable, Hashable, Sendable {
             standard.appendingPathComponent("redist/lib/external", isDirectory: true),
             standard.appendingPathComponent("lib/external", isDirectory: true),
             standard.appendingPathComponent("external", isDirectory: true),
+            // A CrossOver app (e.g. CrossOver 27) — its D3DMetal comes with matching glue.
+            standard.appendingPathComponent("Contents/SharedSupport/CrossOver/lib/apple_gptk/external", isDirectory: true),
+            standard.appendingPathComponent("Contents/SharedSupport/CrossOver/lib64/apple_gptk/external", isDirectory: true),
         ]
         for path in directSubpaths {
             if let src = GPTKSource(url: path) {
@@ -766,6 +809,41 @@ final class PatcherEngine: ObservableObject {
         "Verifying",
     ]
 
+    @Published private(set) var d3dMetalRepairIsRunning = false
+    @Published var d3dMetalRepairResult: String?
+    @Published var d3dMetalRepairError: String?
+
+    /// Repairs a patched copy whose D3DMetal framework and DLLs don't match (see D3DMetalRepair),
+    /// then re-seals it.
+    func repairD3DMetal(in patchedApp: URL) {
+        guard !isRunning, !gptkUpgradeIsRunning, !d3dMetalRepairIsRunning else { return }
+        d3dMetalRepairIsRunning = true
+        d3dMetalRepairResult = nil
+        d3dMetalRepairError = nil
+        Task.detached(priority: .userInitiated) {
+            do {
+                let result = try Self.repairD3DMetalNow(in: patchedApp)
+                await MainActor.run {
+                    self.d3dMetalRepairResult = result
+                    self.d3dMetalRepairIsRunning = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.d3dMetalRepairError = error.localizedDescription
+                    self.d3dMetalRepairIsRunning = false
+                }
+            }
+        }
+    }
+
+    /// The synchronous repair, shared with Automated Setup: repair, re-seal, re-check.
+    nonisolated static func repairD3DMetalNow(in patchedApp: URL) throws -> String {
+        let result = try D3DMetalRepair.repair(in: patchedApp, sources: D3DMetalRepair.candidateSources())
+        try resealBundle(patchedApp)
+        if let left = D3DMetalRepair.mismatch(in: patchedApp) { throw PatchError(left.summary) }
+        return result
+    }
+
     /// Replaces the D3DMetal in an already-patched CrossOver with a different GPTK version,
     /// without re-running the full copy+patch pipeline.
     func upgradeGPTK(in patchedApp: URL, from gptk: GPTKSource) {
@@ -776,6 +854,10 @@ final class PatcherEngine: ObservableObject {
         }
         guard variant.supportsD3DMetal else {
             gptkUpgradeError = "D3DMetal is x86_64-only, so it can't run on the \(variant.displayName) variant."
+            return
+        }
+        if let problem = gptk.installProblem {
+            gptkUpgradeError = problem
             return
         }
         gptkUpgradeError = nil
@@ -793,7 +875,7 @@ final class PatcherEngine: ObservableObject {
             }
             do {
                 await begin(0)
-                try Self.installGPTK(into: patchedApp, from: gptk.url, variant: variant)
+                try Self.installGPTK(into: patchedApp, from: gptk, variant: variant)
                 await finish(0)
 
                 await begin(1)
@@ -865,6 +947,10 @@ final class PatcherEngine: ObservableObject {
             return
         }
         let gptk = variant.supportsD3DMetal ? gptk : nil
+        if let problem = gptk?.installProblem {
+            errorMessage = problem
+            return
+        }
         reset()
         isRunning = true
         steps = Self.stepLabels(includingRosetta: variant.requiresRosetta, includingGPTK: gptk != nil)
@@ -908,7 +994,7 @@ final class PatcherEngine: ObservableObject {
 
                 if let gptk {
                     await begin(index)
-                    try Self.installGPTK(into: app, from: gptk.url, variant: variant)
+                    try Self.installGPTK(into: app, from: gptk, variant: variant)
                     await finish(index); index += 1
                 }
 
@@ -1026,12 +1112,15 @@ final class PatcherEngine: ObservableObject {
     }
 
     /// Installs Apple's GPTK4 / D3DMetal (the user's own mounted DMG) over CrossOver's bundled
-    /// D3DMetal. Only `lib64/apple_gptk/external/` is replaced: every D3DMetal glue module in
-    /// `lib64/apple_gptk/wine/` symlinks into it, so the whole D3D11/D3D12/DXGI/DLSS (NVNGX)
-    /// stack upgrades at once — and no `lib/wine/.../{d3d11,d3d12,dxgi}.dll` is touched (dropping
-    /// Apple's DLLs there breaks `unityplayer.dll`, Windows error 1114). Mirrors
-    /// scripts/swap-into-crossover.sh step 3.
-    private nonisolated static func installGPTK(into app: URL, from gptkExternal: URL, variant: CrossOverVariant) throws {
+    /// D3DMetal. `lib64/apple_gptk/external/` is replaced, and so is `lib64/apple_gptk/wine/` when
+    /// the source carries the glue built with that D3DMetal: the glue's `x86_64-unix` modules
+    /// symlink into `external`, so the whole D3D11/D3D12/DXGI/DLSS (NVNGX) stack upgrades at once.
+    /// D3DMetal 4.0b3+ requires that glue (see `GPTKSource.needsMatchingGlue`). No
+    /// `lib/wine/.../{d3d11,d3d12,dxgi}.dll` is touched (dropping Apple's DLLs there breaks
+    /// `unityplayer.dll`, Windows error 1114). Mirrors scripts/swap-into-crossover.sh step 3.
+    private nonisolated static func installGPTK(into app: URL, from gptk: GPTKSource, variant: CrossOverVariant) throws {
+        if let problem = gptk.installProblem { throw PatchError(problem) }
+        let gptkExternal = gptk.url
         let fm = FileManager.default
         let cxr = cxRoot(app)
         let gptkPrefix = cxr.appendingPathComponent(variant.gptkPrefixSubpath, isDirectory: true)
@@ -1044,6 +1133,7 @@ final class PatcherEngine: ObservableObject {
         guard fm.fileExists(atPath: lib.path), fm.fileExists(atPath: framework.path) else {
             throw PatchError("That folder is not a GPTK redist — expected D3DMetal.framework and libd3dshared.dylib inside it (…/redist/lib/external).")
         }
+        if let glue = gptk.glue { try installGlue(glue, into: gptkPrefix) }
         // Re-running the patcher with the same GPTK already installed is a no-op.
         if externalMatches(source: gptkExternal, destination: dest) { return }
 
@@ -1068,6 +1158,46 @@ final class PatcherEngine: ObservableObject {
         let dstFramework = dest.appendingPathComponent("D3DMetal.framework", isDirectory: true)
         if !codesignVerifies(dstFramework.path, deep: true) {
             try run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", dstFramework.path])
+        }
+    }
+
+    /// Replaces `apple_gptk/wine` with the glue that was built with the D3DMetal being installed,
+    /// keeping CrossOver's own as `wine.cxorig`. Every `x86_64-unix` module must be a link into
+    /// `external` (CrossOver's layout); a glue folder without that half gets the links made from
+    /// its DLL names.
+    nonisolated static func installGlue(_ glue: URL, into gptkPrefix: URL) throws {
+        let fm = FileManager.default
+        let dest = gptkPrefix.appendingPathComponent("wine", isDirectory: true)
+        let srcWindows = glue.appendingPathComponent("x86_64-windows", isDirectory: true)
+        if let a = try? fm.contentsOfDirectory(atPath: srcWindows.path).sorted(),
+           let b = try? fm.contentsOfDirectory(atPath: dest.appendingPathComponent("x86_64-windows").path).sorted(),
+           a == b, a.allSatisfy({
+               hash(srcWindows.appendingPathComponent($0)) == hash(dest.appendingPathComponent("x86_64-windows/\($0)"))
+           }) { return }
+
+        let backup = gptkPrefix.appendingPathComponent("wine.cxorig", isDirectory: true)
+        if fm.fileExists(atPath: backup.path) { try? fm.removeItem(at: backup) }
+        if fm.fileExists(atPath: dest.path) { try fm.moveItem(at: dest, to: backup) }
+        do {
+            let windows = dest.appendingPathComponent("x86_64-windows", isDirectory: true)
+            let unix = dest.appendingPathComponent("x86_64-unix", isDirectory: true)
+            try fm.createDirectory(at: unix, withIntermediateDirectories: true)
+            try run("/usr/bin/ditto", ["--noextattr", "--noqtn", srcWindows.path + "/", windows.path])
+            let target = "../../external/libd3dshared.dylib"
+            let srcUnix = glue.appendingPathComponent("x86_64-unix", isDirectory: true)
+            var names = (try? fm.contentsOfDirectory(atPath: srcUnix.path)) ?? []
+            if names.isEmpty {
+                names = try fm.contentsOfDirectory(atPath: windows.path)
+                    .filter { $0.lowercased().hasSuffix(".dll") }
+                    .map { ($0 as NSString).deletingPathExtension + ".so" }
+            }
+            for name in names where name.hasSuffix(".so") {
+                try fm.createSymbolicLink(atPath: unix.appendingPathComponent(name).path, withDestinationPath: target)
+            }
+        } catch {
+            try? fm.removeItem(at: dest)
+            if fm.fileExists(atPath: backup.path) { try? fm.moveItem(at: backup, to: dest) }
+            throw error
         }
     }
 
@@ -1156,7 +1286,7 @@ final class PatcherEngine: ObservableObject {
     /// disable-library-validation, so they load the ad-hoc ntdll.so), and the main executable
     /// keeps its entitlements but not the hardened runtime, whose library validation would
     /// reject the CodeWeavers-signed frameworks under an ad-hoc signature.
-    private nonisolated static func resealBundle(_ app: URL) throws {
+    nonisolated static func resealBundle(_ app: URL) throws {
         _ = try? run("/usr/bin/xattr", ["-drs", "com.apple.quarantine", app.path])
         // codesign refuses to seal "detritus", and even ditto leaves FinderInfo on the bundle folder.
         _ = try? run("/usr/bin/xattr", ["-rd", "com.apple.FinderInfo", app.path])
@@ -1214,6 +1344,13 @@ final class PatcherEngine: ObservableObject {
             guard let src = hash(gptk.url.appendingPathComponent("libd3dshared.dylib")),
                   let dst = hash(installed), src == dst else {
                 throw PatchError("The installed GPTK4 libd3dshared.dylib does not match the source you selected.")
+            }
+            if let glue = gptk.glue {
+                let installedDll = cxr.appendingPathComponent("\(variant.gptkPrefixSubpath)/wine/x86_64-windows/d3d11.dll")
+                guard let src = hash(glue.appendingPathComponent("x86_64-windows/d3d11.dll")),
+                      let dst = hash(installedDll), src == dst else {
+                    throw PatchError("The D3DMetal DLLs that came with GPTK4 were not installed — its d3d11.dll is missing from the patched app.")
+                }
             }
         }
         // ntdll.so is the module the kernel actually checks; make sure its ad-hoc

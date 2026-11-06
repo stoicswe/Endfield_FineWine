@@ -46,7 +46,7 @@ Enable **MSync**. For DLSS upscaling, enable **DLSS (MetalFX)** with D3DMetal or
 
 > **Apple's GPTK is evaluation-only software — download it yourself; you may not redistribute it**, so this repo cannot bundle it. These steps target **macOS 27 (beta)** for GPTK4. On **macOS 26**, CrossOver's bundled **D3DMetal 3.0** is the matched version — no action needed.
 
-> **[FineWine Patcher.app](../patcher-app/README.md) can do this for you:** mount the *"Evaluation environment for Windows games …"* DMG and the patcher's optional **GPTK4 / D3DMetal** step installs it into the copy it creates (only `lib64/apple_gptk/external/` is replaced). It is never bundled or redistributed — the app reads the DMG you supplied. The manual steps below are the equivalent if you prefer the shell script or a CXPatcher/Procyon workflow.
+> **[FineWine Patcher.app](../patcher-app/README.md) can do this for you:** mount the *"Evaluation environment for Windows games …"* DMG and the patcher's optional **GPTK4 / D3DMetal** step installs it into the copy it creates (`lib64/apple_gptk/external/`, plus the D3DMetal DLLs from the DMG's `redist/lib/wine/`). It is never bundled or redistributed — the app reads the DMG you supplied. The manual steps below are the equivalent if you prefer the shell script or a CXPatcher/Procyon workflow.
 
 ### 1. Download from Apple
 
@@ -56,15 +56,15 @@ Enable **MSync**. For DLSS upscaling, enable **DLSS (MetalFX)** with D3DMetal or
 
 Apply it to the patched copy, so you keep both the anti-cheat fixes **and** GPTK4.
 
-**Scripted (recommended)** — point the swap script at the DMG's `redist/lib/external` and it rebuilds the patched app with D3DMetal replaced, Apple's signatures intact, and the bundle re-sealed:
+**Scripted (recommended)** — point the swap script at the DMG's `redist/lib/external` and it rebuilds the patched app with D3DMetal and its DLLs (from the sibling `redist/lib/wine`) replaced, Apple's signatures intact, and the bundle re-sealed:
 
 ```bash
 GPTK_DIR="/Volumes/<mounted GPTK volume>/redist/lib/external" ./scripts/swap-into-crossover.sh
 ```
 
-(Copy that folder to `~/Downloads/GPTK_4/redist/lib/external` — the script's default `GPTK_DIR` — and later rebuilds pick it up without the DMG.)
+(Copy the DMG's whole `redist/lib` to `~/Downloads/GPTK_4/redist/lib` — the script's default `GPTK_DIR` is its `external` — and later rebuilds pick it up without the DMG.)
 
-**Manual** — replace the two D3DMetal libraries (keep the `-old` backups), then re-seal the bundle:
+**Manual** — replace the two D3DMetal libraries and the D3DMetal DLLs (keep the `-old` backups), then re-seal the bundle:
 
 ```bash
 GPTK_VOL="/Volumes/<mounted GPTK volume — check with: ls /Volumes/>"
@@ -73,6 +73,10 @@ cd "$APP/Contents/SharedSupport/CrossOver/lib64/apple_gptk/external"
 mv D3DMetal.framework D3DMetal.framework-old
 mv libd3dshared.dylib  libd3dshared.dylib-old
 ditto --noextattr --noqtn "$GPTK_VOL/redist/lib/external/" .
+cd ../wine
+mv x86_64-windows x86_64-windows-old && mv x86_64-unix x86_64-unix-old && mkdir x86_64-unix
+ditto --noextattr --noqtn "$GPTK_VOL/redist/lib/wine/x86_64-windows/" x86_64-windows/
+for so in "$GPTK_VOL"/redist/lib/wine/x86_64-unix/*.so; do ln -s ../../external/libd3dshared.dylib "x86_64-unix/$(basename "$so")"; done
 cd - >/dev/null
 xattr -rd com.apple.FinderInfo "$APP"
 codesign --force --sign - --preserve-metadata=entitlements "$APP"   # editing the app broke its seal
@@ -81,13 +85,14 @@ codesign --verify --deep --strict "$APP" && echo "patched app verifies"
 
 If macOS refuses to modify the app ("Operation not permitted" — App Management protects apps that have been launched), use the scripted path, which builds a fresh copy.
 
-(The folder is `apple_gptk`, with a trailing **k**. Only the `redist/lib/external/` libraries are needed — ignore the DMG's Homebrew/Wine path, which is for *standalone* GPTK. Don't copy the DMG's `redist/lib/wine/` DLLs either: CrossOver has its own D3DMetal glue in `apple_gptk/wine/` — with native `.so` halves — and Apple's standalone-Wine DLLs are not interchangeable with it.)
+(The folder is `apple_gptk`, with a trailing **k**. Only `redist/lib/external/` and the DLLs in `redist/lib/wine/x86_64-windows/` are needed — ignore the DMG's Homebrew/Wine path, which is for *standalone* GPTK. The DLLs go into `apple_gptk/wine/`, never into `lib/wine/`. CrossOver's own `apple_gptk/wine/` DLLs are Apple's D3DMetal glue too, built for 3.0, and each `x86_64-unix/*.so` there is just a link to `external/libd3dshared.dylib`.)
 
 **CXPatcher / Procyon (easier)** — [CXPatcher](https://github.com/italomandara/CXPatcher) drops a GPTK `.dmg`'s D3DMetal into a CrossOver copy automatically (drag CrossOver in, keep "Integrate D3DMetal (GPTK)" on, point it at your GPTK dmg). Its author has moved **GPTK4** support to the successor **[Procyon](https://github.com/italomandara/Procyon)** — use Procyon's pre-release for GPTK4. These tools patch **graphics only**; you still need this project's Wine-module swap for the anti-cheat, so apply **both** to the same CrossOver copy (e.g. run `swap-into-crossover.sh` on the CXPatcher/Procyon output).
 
 ### Caveats
 
 - **GPTK4 wants macOS 27 (beta)** + Metal 4. On **macOS 26, stay on the bundled D3DMetal 3.0.** GPTK4 in **CrossOver 26.3**: D3DMetal **4.0b2** ("Evaluation environment for Windows games 4.0 beta 2") installed with `swap-into-crossover.sh` runs Endfield in DX11 mode on an M4 / macOS 27.0 (verified 2026-09-23; 4.0b1 was the original tested config). Keep the `-old` / `external.cxorig` backups and be ready to revert (`SKIP_GPTK=1 ./scripts/swap-into-crossover.sh` rebuilds with the stock 3.0); CrossOver 27 / Procyon may be the smoother route.
+- **D3DMetal 4.0b3 and later must be installed with their own DLLs.** Their DLLs call into the framework through a jump table, and CrossOver 26.3's D3DMetal 3.0 DLLs pass it garbage: every DirectX 11 program crashes inside `d3d11.dll` as it loads, then hangs on Wine's loader lock (seen first with the CN Gryphline launcher). 4.0b1 and 4.0b2 still run with CrossOver's 3.0 DLLs. The patcher and `swap-into-crossover.sh` install the DMG's DLLs automatically and refuse a 4.0b3+ framework without them. A CrossOver 27 app also works as the source: it ships D3DMetal 4.0b3 with matching DLLs in `lib/apple_gptk/`.
 - Apple Silicon only; Rosetta 2 required.
 
 ## Performance notes

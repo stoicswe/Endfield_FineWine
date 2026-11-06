@@ -281,6 +281,13 @@ final class SetupEngine: ObservableObject {
                 await MainActor.run { self.logFiles.append(bottleLog) }
 
                 await begin(0)
+                // A copy patched with a GPTK whose D3DMetal DLLs weren't installed crashes every
+                // DirectX 11 program, the Gryphline launcher included — fix it before using it.
+                if let mismatch = D3DMetalRepair.mismatch(in: patchedApp) {
+                    Self.append(log: bottleLog, text: "D3DMetal mismatch: \(mismatch.summary)\n")
+                    let result = try PatcherEngine.repairD3DMetalNow(in: patchedApp)
+                    Self.append(log: bottleLog, text: "D3DMetal repaired: \(result)\n")
+                }
                 // Preflight: prove the machine can exec this x86_64 Wine at all (Rosetta 2, dyld,
                 // the winetemp ntdll.so loader path) before cxbottle starts. A loader-level kill
                 // — the macOS 26 silent-failure class — then reports an actionable message with

@@ -294,7 +294,12 @@ struct AutomatedSetupView: View {
                 .disabled(gptkSources.isEmpty)
 
                 if let selectedGPTK {
-                    if selectedGPTK.isVersion4 {
+                    if let problem = selectedGPTK.installProblem {
+                        Text(problem)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if selectedGPTK.isVersion4 {
                         Text("Installs \(selectedGPTK.displayName) over CrossOver's D3DMetal 3.0 when the patched copy is created.")
                             .font(.caption)
                             .foregroundStyle(.secondary)

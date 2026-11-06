@@ -15,6 +15,8 @@ struct ContentView: View {
     @State private var gptkSources: [GPTKSource] = []
     @State private var selectedGPTK: GPTKSource?
     @State private var gptkAutoSelected = false
+    /// Patched copies whose D3DMetal framework and DLLs don't match (see D3DMetalRepair).
+    @State private var brokenD3DMetal: [(app: URL, mismatch: D3DMetalRepair.Mismatch)] = []
 
     /// The variant of the currently selected CrossOver (`nil` = unrecognized layout).
     private var selectedVariant: CrossOverVariant? { crossover?.variant }
@@ -24,6 +26,9 @@ struct ContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
+            if !brokenD3DMetal.isEmpty || engine.d3dMetalRepairResult != nil || engine.d3dMetalRepairError != nil {
+                d3dMetalRepairBox
+            }
             crossoverBox
             if selectedVariant?.supportsD3DMetal != false { gptkBox }
             if !payloadReady { payloadMissingBox }
@@ -74,10 +79,61 @@ struct ContentView: View {
         .onAppear {
             detectDefaultCrossOver()
             refreshGPTK()
+            refreshD3DMetalCheck()
+        }
+        .onChange(of: engine.d3dMetalRepairIsRunning) { running in
+            if !running { refreshD3DMetalCheck() }
+        }
+        .onChange(of: engine.isRunning) { running in
+            if !running { refreshD3DMetalCheck() }
         }
     }
 
     // MARK: - Sections
+
+    private var d3dMetalRepairBox: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(brokenD3DMetal, id: \.app) { item in
+                    Label("\(item.app.lastPathComponent): \(item.mismatch.summary)", systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Button("Repair D3DMetal") { engine.repairD3DMetal(in: item.app) }
+                            .disabled(engine.isRunning || engine.d3dMetalRepairIsRunning)
+                        if engine.d3dMetalRepairIsRunning { ProgressView().scaleEffect(0.7) }
+                    }
+                }
+                if let result = engine.d3dMetalRepairResult {
+                    Label(result, systemImage: "checkmark.seal.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let error = engine.d3dMetalRepairError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !brokenD3DMetal.isEmpty {
+                    Text("Repair installs the D3DMetal DLLs that match (from a mounted GPTK DMG or a CrossOver 27 app), or restores CrossOver's bundled D3DMetal 3.0.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(4)
+        }
+    }
+
+    private func refreshD3DMetalCheck() {
+        brokenD3DMetal = SetupValidation.findPatchedCrossOvers().compactMap { app in
+            D3DMetalRepair.mismatch(in: app).map { (app, $0) }
+        }
+    }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -171,6 +227,7 @@ struct ContentView: View {
 
     private var gptkHint: String {
         if let selected = selectedGPTK {
+            if let problem = selected.installProblem { return problem }
             if selected.isVersion4 {
                 return "Replaces CrossOver's D3DMetal \(selected.version ?? "3.0") with \(selected.displayName). D3DMetal 4 adds the Metal 4 / MetalFX features (DLSS and frame generation)."
             }
@@ -337,7 +394,7 @@ struct ContentView: View {
         if let selected = selectedGPTK, !gptkSources.contains(selected) { selectedGPTK = nil }
         // Automatically apply a mounted GPTK4 the first time one is seen; the picker still lets
         // the user fall back to CrossOver's bundled D3DMetal.
-        if !gptkAutoSelected, let gptk4 = gptkSources.first(where: { $0.isVersion4 }) {
+        if !gptkAutoSelected, let gptk4 = gptkSources.first(where: { $0.isVersion4 && $0.installProblem == nil }) {
             gptkAutoSelected = true
             selectedGPTK = gptk4
         }

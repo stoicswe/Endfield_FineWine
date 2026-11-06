@@ -25,6 +25,7 @@
 #   DEST_APP   (default /Applications/CrossOver_Endfield_Patch.app)
 #   BUNDLE_ID  (default com.codeweavers.CrossOvEF) — 25 chars matching stock CrossOver
 #   GPTK_DIR   (default ~/Downloads/GPTK_4/redist/lib/external)  — set SKIP_GPTK=1 to skip
+#   GPTK_GLUE_DIR (default $GPTK_DIR/../wine) — the D3DMetal DLLs built with that GPTK; required for 4.0b3+
 #   MVK_VER    (default 1.4.2)                                    — set SKIP_MVK=1 to skip
 #
 # Optional mod (EFMI) chain step — see docs/mod-injection/{07,08}*.md: points EFMI's d3dx.ini
@@ -256,6 +257,32 @@ if [ "${SKIP_GPTK:-0}" = "1" ]; then
 elif [ -d "$GPTK_DIR" ]; then
   log "GPTK4 / D3DMetal from $GPTK_DIR"
   DEST_GPTK="$CXR/lib64/apple_gptk/external"
+  # The glue DLLs built with this D3DMetal sit next to it (the DMG's redist/lib/wine, or a
+  # CrossOver app's apple_gptk/wine). From D3DMetal 4.0b3 on they are required: its DLLs reach
+  # the framework through a jump table, and CrossOver 26.3's D3DMetal 3.0 DLLs pass it garbage —
+  # d3d11.dll faults in DllMain and the process hangs on the loader lock.
+  GLUE_DIR="${GPTK_GLUE_DIR:-$(dirname "$GPTK_DIR")/wine}"
+  [ -f "$GLUE_DIR/x86_64-windows/d3d11.dll" ] && [ -f "$GLUE_DIR/x86_64-windows/dxgi.dll" ] || GLUE_DIR=""
+  GPTK_VER="$(plutil -extract CFBundleShortVersionString raw "$GPTK_DIR/D3DMetal.framework/Resources/Info.plist" 2>/dev/null)"
+  case "$GPTK_VER" in
+    3|3.*|4.0b1|4.0b2) ;;
+    *) [ -n "$GLUE_DIR" ] || { echo "ERROR: D3DMetal ${GPTK_VER:-(unknown version)} needs the DLLs built with it (expected $(dirname "$GPTK_DIR")/wine/x86_64-windows, or set GPTK_GLUE_DIR). Over CrossOver's D3DMetal 3.0 DLLs it crashes every DirectX 11 program. Set SKIP_GPTK=1 to keep the bundled D3DMetal."; exit 1; } ;;
+  esac
+  if [ -n "$GLUE_DIR" ] && [ -d "$CXR/lib64/apple_gptk/wine" ]; then
+    DEST_GLUE="$CXR/lib64/apple_gptk/wine"
+    if diff -rq "$GLUE_DIR/x86_64-windows" "$DEST_GLUE/x86_64-windows" >/dev/null 2>&1; then
+      ok "D3DMetal DLLs already match $GLUE_DIR"
+    else
+      rm -rf "$DEST_GLUE.cxorig"; mv "$DEST_GLUE" "$DEST_GLUE.cxorig"
+      mkdir -p "$DEST_GLUE/x86_64-unix"
+      ditto --noextattr --noqtn "$GLUE_DIR/x86_64-windows/" "$DEST_GLUE/x86_64-windows/"
+      # CrossOver's layout: every unix half is a link into external/libd3dshared.dylib.
+      names="$(ls "$GLUE_DIR/x86_64-unix" 2>/dev/null | grep '\.so$')"
+      [ -n "$names" ] || names="$(ls "$DEST_GLUE/x86_64-windows" | grep -i '\.dll$' | sed 's/\.[dD][lL][lL]$/.so/')"
+      for n in $names; do ln -s ../../external/libd3dshared.dylib "$DEST_GLUE/x86_64-unix/$n"; done
+      ok "installed the D3DMetal $GPTK_VER DLLs from $GLUE_DIR (CrossOver's kept as wine.cxorig)"
+    fi
+  fi
   if [ -d "$DEST_GPTK" ]; then
     same=1
     for f in libd3dshared.dylib "D3DMetal.framework/Versions/A/D3DMetal"; do
