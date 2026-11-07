@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
 /// and reverting.
 struct ModChainView: View {
     @EnvironmentObject private var engine: PatcherEngine
+    @EnvironmentObject private var l10n: LanguageManager
 
     @State private var bottles: [BottleInfo] = []
     @State private var chainBottle: BottleInfo?
@@ -39,9 +40,9 @@ struct ModChainView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Mod Framework (EFMI)")
+            Text(l10n.tr("mod.title"))
                 .font(.title2.weight(.semibold))
-            Text("Manages the XXMI Launcher / EFMI mod chain for your CrossOver bottles. This is an independent, bottle-side step — the main window's patch flow does not depend on it.")
+            Text(l10n.tr("mod.desc"))
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

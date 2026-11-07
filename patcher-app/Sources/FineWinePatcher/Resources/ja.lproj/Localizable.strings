@@ -1,0 +1,147 @@
+/* 
+  Localizable.strings (Japanese / 日本語)
+  FineWine Patcher
+*/
+
+"app.title" = "FineWine パッチャー";
+"app.subtitle" = "Apple シリコン (Apple Silicon) 上で『アークナイツ：エンドフィールド』を快適に動作させるため、最適化パッチを適用した CrossOver %1$@ を作成します。";
+"app.unofficial_disclaimer" = "非公式ソフトウェア — CodeWeavers、GRYPHLINE/鷹角網絡 (Hypergryph)、Tencent、Apple との提携はありません。正規ライセンスの CrossOver %1$@ およびゲームクライアントが必要です。";
+"app.telemetry_notice" = "使用状況の統計が自動送信されることはありません。パッチ適用や自動セットアップの完了後、完全な匿名レポート内容を確認した上で送信するかどうかを選択できます。";
+"app.licenses" = "オープンソースライセンス…";
+"app.buy_crossover" = "CrossOver を購入…";
+"app.language" = "言語 (Language)";
+"app.cancel" = "キャンセル";
+"app.close" = "閉じる";
+"app.done" = "完了";
+"app.back" = "戻る";
+"app.next" = "次へ";
+"app.saved" = "保存完了";
+"app.created" = "作成完了";
+"app.reveal_finder" = "Finder で表示";
+"app.rescan" = "再スキャン";
+"app.choose" = "選択…";
+"app.change" = "変更…";
+"app.remove" = "削除";
+"app.apply" = "設定を適用";
+
+/* メイン画面 */
+"content.drop_crossover" = "ここに CrossOver.app をドロップ、または";
+"content.status.no_modules" = "Wine モジュールが見つかりません — 有効な CrossOver アプリではありませんか？";
+"content.status.valid" = "バージョン %1$@";
+"content.status.mismatch" = "バージョン %1$@ — 期待されるバージョン: %2$@ (Wine ABI の一致が必要です)";
+"content.gptk.title" = "Apple ゲーム移植ツールキット (GPTK)";
+"content.gptk.keep_bundled" = "CrossOver 同梱の D3DMetal を維持";
+"content.gptk.download" = "ダウンロード…";
+"content.gptk.hint.v4" = "CrossOver の D3DMetal %1$@ を %2$@ に置き換えます。D3DMetal 4 は Metal 4 および MetalFX 超解像機能（DLSS やフレーム生成）を追加します。";
+"content.gptk.hint.older" = "%1$@ を選択しました。注意: Metal 4 / MetalFX 機能をサポートしているのは GPTK4 (D3DMetal 4.x) のみです — これは以前のバージョンのようです。";
+"content.gptk.hint.not_found" = "Apple の「Evaluation environment for Windows games …」DMG をマウントして「再スキャン」をクリックするか、「選択…」で redist/lib/external フォルダを指定してください。本アプリには Apple GPTK は同梱・再配布されていません。";
+"content.gptk.hint.not_bundled" = "Apple GPTK は同梱されていません — 提供されたコピーのみをインストールします。";
+"content.payload_missing" = "パッチャーにモジュールペイロード (Wine + MoltenVK) が含まれていません — scripts/build-wine.sh all および scripts/build-moltenvk.sh all を実行してから再ビルドしてください。";
+"content.btn.create_patch" = "パッチ適用版を作成…";
+"content.btn.patching" = "パッチ適用中…";
+"content.btn.automated_setup" = "自動セットアップ…";
+"content.automated_setup_desc" = "自動セットアップウィザードが、パッチ適用済み CrossOver の作成、Windows 11 ボトルの構成、公式インストーラーの起動までを一括で行います。";
+"content.mismatch.title" = "CrossOver バージョンの不一致";
+"content.mismatch.message" = "選択された CrossOver のバージョンは %1$@ ですが、モジュールは CrossOver %2$@ の Wine ABI 向けにビルドされています。異なるバージョンにパッチを適用すると正常に動作しない可能性が高いです。";
+"content.mismatch.patch_anyway" = "強制的にパッチを適用";
+
+/* 自動セットアップウィザード */
+"setup.title" = "自動セットアップウィザード";
+"setup.subtitle" = "Mac で『アークナイツ：エンドフィールド』をプレイするために必要な環境を自動構築します。";
+"setup.step.crossover" = "CrossOver";
+"setup.step.graphics" = "D3DMetal / GPTK";
+"setup.step.installer" = "インストーラー";
+"setup.step.bottle" = "ボトル構成";
+"setup.step.progress" = "進行状況";
+"setup.crossover.source_desc" = "コピーおよびパッチ適用の対象となる元の CrossOver アプリ。";
+"setup.crossover.will_create" = "作成先: %1$@";
+"setup.crossover.recreate_existing" = "既存のパッチ適用版を再作成する";
+"setup.crossover.using_existing" = "使用中のコピー: %1$@";
+"setup.crossover.recreate_from_source" = "選択した CrossOver から再作成する";
+"setup.crossover.version_warning" = "CrossOver %1$@ は期待されるバージョン %2$@ ではありません — パッチモジュールには一致する Wine ABI が必要です。CrossOver %2$@ をインストールするか、メイン画面で強制適用してください。";
+"setup.graphics.title" = "同梱の D3DMetal を Apple GPTK4 にアップグレード (オプション)";
+"setup.graphics.desc" = "GPTK4 は CrossOver の D3DMetal 3.0 を D3DMetal 4 (Metal 4 / MetalFX — DLSS とフレーム生成) にアップグレードします。Apple のゲーム移植ツールキットは再配布が禁止されているため、Apple Developer から「Evaluation environment for Windows games 4.0」DMG を入手してマウントし、ここで選択してください。";
+"setup.graphics.open_page" = "Apple GPTK ページを開く";
+"setup.graphics.creating" = "パッチ適用版のコピーを作成中%1$@ — CrossOver を複製し、モジュールを導入、再署名と検証を実施しています。約1分かかります。";
+"setup.installer.title" = "GRYPHLINE 公式インストーラー";
+"setup.installer.desc" = "GRYPHLINE 公式サイト (endfield.gryphline.com) からダウンロードした Windows 版インストーラー (GRYPHLINK_*.exe) を選択し、新しいボトルにインストールします。";
+"setup.installer.open_page" = "エンドフィールド公式サイトを開く";
+"setup.installer.drop_or_choose" = "ここに GRYPHLINK_*.exe をドロップ、または";
+"setup.installer.choose_button" = "インストーラーを選択…";
+"setup.installer.selected" = "選択中: %1$@";
+"setup.installer.ready" = "ボトルの作成とインストーラーの起動準備が整いました。";
+"setup.bottle.title" = "ボトル (Bottle) 設定";
+"setup.bottle.desc" = "ゲーム専用の Windows 11 ボトルを作成し、推奨されるグラフィックおよびパフォーマンス設定を構成します。";
+"setup.bottle.name_label" = "ボトル名";
+"setup.bottle.backend_label" = "グラフィックバックエンド";
+"setup.bottle.msync_label" = "MSync 同期";
+"setup.bottle.msync_hint" = "推奨: オン。ランチャーやゲームがクラッシュして Wine プロセスが残る場合はオフにしてください。";
+"setup.bottle.upscaler_label" = "MetalFX / NVEXT による DLSS 超解像";
+"setup.bottle.upscaler_hint_active" = "バックエンドのアップスケーラ切り替えを使用します (D3DMetal → MetalFX、DXMT → NVEXT)。";
+"setup.bottle.upscaler_hint_inactive" = "D3DMetal および DXMT バックエンドのボトルにのみ適用されます。";
+"setup.bottle.hud_label" = "Metal パフォーマンス HUD";
+"setup.bottle.hud_hint" = "画面上に Apple のパフォーマンスオーバーレイ（FPS、メモリ使用量、フレーム時間）を表示します。デフォルトはオフ。";
+"setup.bottle.footer_notes" = "Windows 11 64-bit · 高解像度モード (High Resolution Mode) オフ · scripts/create-bottle.sh の推奨値と一致。公式ランチャーでは DirectX 11 が最もテストされた推奨レンダラーです (DirectX 12 は白画面になります)。Vulkan も標準対応しています。";
+"setup.progress.created" = "ボトル「%1$@」が作成されました";
+"setup.progress.msync_fallback" = "このボトルでは MSync が無効化されました: MSync 有効時の作成に失敗したため、オフにして再試行しました。ゲームが安定動作する場合は、後からボトル設定で再度有効にできます。";
+"setup.progress.installer_running" = "GRYPHLINE インストーラーが起動しました。このウィンドウの背面にあるインストーラー画面でログインし、ゲームのダウンロードを完了させてください。インストーラー終了時にメニュー項目が自動登録されます。";
+"setup.progress.installer_success" = "インストーラーが完了しました。パッチ適用版 CrossOver のボトル画面に GRYPHLINK が表示されます。";
+"setup.progress.installer_failed" = "インストーラーが終了コード %1$@ で終了しました。ログを確認してください — ボトル画面から再度起動することも可能です。";
+"setup.btn.start" = "ボトルを作成してインストール開始";
+
+/* ボトル設定 */
+"bottle.title" = "ボトル設定 (Bottle Settings)";
+"bottle.picker_label" = "ボトルを選択:";
+"bottle.none_found" = "CrossOver ボトルが見つかりません。";
+"bottle.graphics_section" = "グラフィック & パフォーマンス";
+"bottle.backend_label" = "グラフィックバックエンド:";
+"bottle.msync_toggle" = "MSync 高速同期 (WINEMSYNC)";
+"bottle.upscaler_toggle" = "アップスケーラー (%1$@)";
+"bottle.metal_hud_toggle" = "Metal パフォーマンス HUD (MTL_HUD_ENABLED)";
+"bottle.fps_cap_label" = "D3DMetal 最大フレームレート:";
+"bottle.fps.uncapped" = "無制限 (Uncapped)";
+"bottle.fps.60" = "60 FPS";
+"bottle.fps.120" = "120 FPS";
+"bottle.btn.stop" = "ボトルを停止 (Stop Bottle)";
+"bottle.stop_help" = "設定を反映させるため、実行中の Wine およびゲームプロセスを停止します。";
+"bottle.restart_notice" = "設定を完全に適用するには、保存後にボトルを再起動してください。";
+"bottle.alias.title" = "Dock ショートカット (App エイリアス)";
+"bottle.alias.desc" = "~/Applications に単独の「アークナイツ：エンドフィールド.app」を作成し、パッチ適用版 CrossOver 経由でワンクリック起動できるようにします。ネイティブな Dock アイコンを持ち、Wine サブプロセスも綺麗にまとまります。";
+"bottle.alias.create" = "Dock ショートカットを作成";
+"bottle.alias.recreate" = "ショートカットを再作成";
+"bottle.gptk.title" = "GPTK4 / D3DMetal 4 へのアップグレード";
+"bottle.gptk.upgrade_btn" = "このコピーに GPTK4 をインストール";
+"bottle.gptk.desc" = "パッチ適用版の D3DMetal を Apple の GPTK4 コアに置き換え、Metal 4 および MetalFX 超解像機能を追加します。";
+
+/* バックエンド名 */
+"backend.d3dmetal" = "D3DMetal (推奨)";
+"backend.dxmt" = "DXMT (DirectX 11 → Metal)";
+"backend.dxvk" = "DXVK (DirectX → Vulkan)";
+"backend.wined3d" = "WineD3D (OpenGL/Metal バックエンド)";
+"backend.auto" = "自動選択 (CrossOver デフォルト)";
+
+/* Metal HUD */
+"hud.title" = "Metal パフォーマンス HUD";
+"hud.desc" = "D3DMetal / DXMT / MoltenVK Metal デバイス上に Apple 公式のパフォーマンスオーバーレイ（リアルタイム FPS、メモリ、描画時間）を表示します。デフォルトはオフ。";
+"hud.enable_toggle" = "このボトルで Metal HUD を有効化";
+"hud.status.enabled" = "「%1$@」で Metal HUD が有効です";
+"hud.status.disabled" = "「%1$@」で Metal HUD が無効です";
+
+/* Steam / NotProton */
+"notproton.title" = "Steam / NotProton 互換ツール";
+"notproton.desc" = "パッチ適用版 CrossOver Wine を macOS 版 Steam の Steam Play 互換ツールとして登録します。";
+"notproton.btn.register" = "Steam に登録";
+"notproton.registered" = "Steam への登録が完了しました";
+
+/* Mod フレームワーク */
+"mod.title" = "Mod フレームワーク (EFMI / XXMI)";
+"mod.desc" = "ボトル内で『アークナイツ：エンドフィールド』Mod Importer (EFMI / XXMI) のチェーン読み込みを管理します。";
+
+/* メニューバー */
+"menu.tools" = "ツール";
+"menu.language" = "言語 (Language)";
+"menu.bottle_settings" = "ボトル設定 (Bottle Settings)…";
+"menu.mod_framework" = "Mod フレームワーク (EFMI)…";
+"menu.steam_notproton" = "Steam / NotProton…";
+"menu.metal_hud" = "Metal パフォーマンス HUD…";
+

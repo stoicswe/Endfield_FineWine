@@ -4,6 +4,7 @@ import AppKit
 /// Tools window: Registers the FineWine-patched CrossOver as a NotProton runner for Steam Play.
 struct NotProtonView: View {
     @EnvironmentObject private var engine: PatcherEngine
+    @EnvironmentObject private var l10n: LanguageManager
 
     @State private var status: NotProton.Status?
     @State private var selectedApp: URL?
@@ -34,9 +35,9 @@ struct NotProtonView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Steam / NotProton")
+            Text(l10n.tr("notproton.title"))
                 .font(.title2.weight(.semibold))
-            Text("Registers your FineWine-patched CrossOver into NotProton so Arknights: Endfield can launch directly via Steam Play on macOS.")
+            Text(l10n.tr("notproton.desc"))
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -1,0 +1,147 @@
+/* 
+  Localizable.strings (English)
+  FineWine Patcher
+*/
+
+"app.title" = "FineWine Patcher";
+"app.subtitle" = "Creates a patched copy of CrossOver %1$@ so Arknights: Endfield runs on Apple Silicon.";
+"app.unofficial_disclaimer" = "Unofficial software — not affiliated with CodeWeavers, Gryphline/Hypergryph, Tencent, or Apple. Requires your own licensed copy of CrossOver %1$@ and your own copy of the game.";
+"app.telemetry_notice" = "Usage statistics are never sent automatically. After each patch or Automated Setup run, a dialog shows the exact anonymous report and asks whether to send it.";
+"app.licenses" = "Licenses…";
+"app.buy_crossover" = "Buy CrossOver…";
+"app.language" = "Language";
+"app.cancel" = "Cancel";
+"app.close" = "Close";
+"app.done" = "Done";
+"app.back" = "Back";
+"app.next" = "Next";
+"app.saved" = "Saved";
+"app.created" = "Created";
+"app.reveal_finder" = "Reveal in Finder";
+"app.rescan" = "Rescan";
+"app.choose" = "Choose…";
+"app.change" = "Change…";
+"app.remove" = "Remove";
+"app.apply" = "Apply Settings";
+
+/* Main Window */
+"content.drop_crossover" = "Drop CrossOver.app here, or";
+"content.status.no_modules" = "No Wine modules found — not a CrossOver app?";
+"content.status.valid" = "Version %1$@";
+"content.status.mismatch" = "Version %1$@ — expected %2$@ (Wine ABI must match)";
+"content.gptk.title" = "Apple GPTK";
+"content.gptk.keep_bundled" = "Keep CrossOver's bundled D3DMetal";
+"content.gptk.download" = "Download…";
+"content.gptk.hint.v4" = "Replaces CrossOver's D3DMetal %1$@ with %2$@. D3DMetal 4 adds the Metal 4 / MetalFX features (DLSS and frame generation).";
+"content.gptk.hint.older" = "Selected %1$@. Note: only GPTK4 (D3DMetal 4.x) adds the Metal 4 / MetalFX features — this looks like an older version.";
+"content.gptk.hint.not_found" = "Mount Apple's “Evaluation environment for Windows games …” DMG, then Rescan, or Choose… the redist/lib/external folder. Apple's GPTK is not bundled or redistributed by this app.";
+"content.gptk.hint.not_bundled" = "Apple's GPTK is not bundled — the app only installs the copy you supply.";
+"content.payload_missing" = "This build of the patcher has no module payload (Wine + MoltenVK) — rebuild it with patcher-app/scripts/build-app.sh after scripts/build-wine.sh all and scripts/build-moltenvk.sh all.";
+"content.btn.create_patch" = "Create Patched Copy…";
+"content.btn.patching" = "Patching…";
+"content.btn.automated_setup" = "Automated Setup…";
+"content.automated_setup_desc" = "Automated Setup creates the patched copy if needed, then the Windows 11 bottle, and starts the Gryphline installer.";
+"content.mismatch.title" = "CrossOver version mismatch";
+"content.mismatch.message" = "This CrossOver reports version %1$@, but the bundled modules are built against CrossOver %2$@'s Wine ABI. Patching a different version will almost certainly not work.";
+"content.mismatch.patch_anyway" = "Patch Anyway";
+
+/* Automated Setup Wizard */
+"setup.title" = "Automated Setup";
+"setup.subtitle" = "Sets up everything needed to play Arknights: Endfield on your Mac.";
+"setup.step.crossover" = "CrossOver";
+"setup.step.graphics" = "D3DMetal / GPTK";
+"setup.step.installer" = "Installer";
+"setup.step.bottle" = "Bottle";
+"setup.step.progress" = "Progress";
+"setup.crossover.source_desc" = "The source CrossOver app that will be copied and patched.";
+"setup.crossover.will_create" = "Will create %1$@";
+"setup.crossover.recreate_existing" = "Re-create the existing patched copy";
+"setup.crossover.using_existing" = "Using %1$@";
+"setup.crossover.recreate_from_source" = "Re-create it from the selected CrossOver";
+"setup.crossover.version_warning" = "CrossOver %1$@ is not %2$@ — the bundled modules need that Wine ABI. Install CrossOver %2$@, or use “Create Patched Copy…” on the main window to patch anyway.";
+"setup.graphics.title" = "Replace the bundled D3DMetal with Apple's GPTK4 (optional)";
+"setup.graphics.desc" = "GPTK4 upgrades CrossOver's D3DMetal 3.0 to D3DMetal 4 (Metal 4 / MetalFX — DLSS and frame generation). Apple's Game Porting Toolkit is never bundled or redistributed: download the “Evaluation environment for Windows games 4.0” DMG from Apple's developer page yourself, mount it, then pick it here.";
+"setup.graphics.open_page" = "Open Apple's GPTK page";
+"setup.graphics.creating" = "Creating the patched copy%1$@ — copying CrossOver, installing the modules, re-sealing and verifying it. This can take about a minute.";
+"setup.installer.title" = "Gryphline Installer";
+"setup.installer.desc" = "Point at the Windows installer you downloaded from Gryphline (endfield.gryphline.com) to install the launcher and game into the new bottle.";
+"setup.installer.open_page" = "Open Endfield download page";
+"setup.installer.drop_or_choose" = "Drop GRYPHLINK_*.exe here, or";
+"setup.installer.choose_button" = "Choose Installer…";
+"setup.installer.selected" = "Selected: %1$@";
+"setup.installer.ready" = "Ready to create the bottle and start the installer.";
+"setup.bottle.title" = "Bottle settings";
+"setup.bottle.desc" = "Creates a Windows 11 bottle named for the game and configures it with the settings below.";
+"setup.bottle.name_label" = "Bottle name";
+"setup.bottle.backend_label" = "Graphics backend";
+"setup.bottle.msync_label" = "MSync";
+"setup.bottle.msync_hint" = "Recommended on. Turn it off if the launcher or game crashes with leftover Wine processes.";
+"setup.bottle.upscaler_label" = "DLSS via MetalFX / NVEXT";
+"setup.bottle.upscaler_hint_active" = "Uses the backend's upscaler toggle (D3DMetal → MetalFX, DXMT → NVEXT).";
+"setup.bottle.upscaler_hint_inactive" = "Only applies to D3DMetal and DXMT bottles.";
+"setup.bottle.hud_label" = "Metal Performance HUD";
+"setup.bottle.hud_hint" = "Optional Apple performance overlay (FPS, memory, frame times) on Metal clients. Off by default.";
+"setup.bottle.footer_notes" = "Windows 11 64-bit · High Resolution Mode off · these defaults match scripts/create-bottle.sh. In the game's launcher, DirectX 11 is the most-tested renderer (DirectX 12 renders a white screen); Vulkan is also supported.";
+"setup.progress.created" = "Bottle “%1$@” created";
+"setup.progress.msync_fallback" = "MSync was disabled for this bottle: creating it failed with MSync on, so setup retried once without it. You can turn MSync back on in the bottle's settings if the game runs.";
+"setup.progress.installer_running" = "The Gryphline installer is open. Finish it in the window behind this sheet — log in and let it download the game. When it exits, this app registers the launcher's menu entries.";
+"setup.progress.installer_success" = "The installer finished. GRYPHLINK should now be listed in the bottle's page in the patched CrossOver.";
+"setup.progress.installer_failed" = "The installer exited with status %1$@. Check the log — you can start it again from the bottle's page.";
+"setup.btn.start" = "Create Bottle & Install";
+
+/* Bottle Settings */
+"bottle.title" = "Bottle Settings";
+"bottle.picker_label" = "Select Bottle:";
+"bottle.none_found" = "No CrossOver bottles found.";
+"bottle.graphics_section" = "Graphics & Performance";
+"bottle.backend_label" = "Graphics Backend:";
+"bottle.msync_toggle" = "MSync (WINEMSYNC)";
+"bottle.upscaler_toggle" = "Upscaler (%1$@)";
+"bottle.metal_hud_toggle" = "Metal Performance HUD (MTL_HUD_ENABLED)";
+"bottle.fps_cap_label" = "D3DMetal FPS Cap:";
+"bottle.fps.uncapped" = "Uncapped";
+"bottle.fps.60" = "60 FPS";
+"bottle.fps.120" = "120 FPS";
+"bottle.btn.stop" = "Stop Bottle";
+"bottle.stop_help" = "Stops running Wine processes so settings take effect.";
+"bottle.restart_notice" = "Restart the bottle after applying for changes to take effect.";
+"bottle.alias.title" = "Dock Shortcut";
+"bottle.alias.desc" = "Creates a standalone Arknights Endfield.app in ~/Applications that opens the Gryphline launcher through the patched CrossOver. One clean Dock icon — Wine sub-processes share its tile.";
+"bottle.alias.create" = "Create App Alias";
+"bottle.alias.recreate" = "Recreate App Alias";
+"bottle.gptk.title" = "Upgrade to GPTK4 / D3DMetal 4";
+"bottle.gptk.upgrade_btn" = "Install GPTK4 into this copy";
+"bottle.gptk.desc" = "Replaces the patched copy's D3DMetal with Apple's GPTK4 payload, adding Metal 4 / MetalFX support.";
+
+/* Backends */
+"backend.d3dmetal" = "D3DMetal (recommended)";
+"backend.dxmt" = "DXMT";
+"backend.dxvk" = "DXVK";
+"backend.wined3d" = "WineD3D";
+"backend.auto" = "Automatic (CrossOver chooses)";
+
+/* Metal HUD */
+"hud.title" = "Metal HUD";
+"hud.desc" = "Optional Apple performance overlay (FPS, memory, encoder time) on the D3DMetal / DXMT / MoltenVK Metal device. Off by default — enable it here when you want it, then restart the bottle.";
+"hud.enable_toggle" = "Enable Metal HUD for this bottle";
+"hud.status.enabled" = "Metal HUD is enabled for “%1$@”";
+"hud.status.disabled" = "Metal HUD is disabled for “%1$@”";
+
+/* Steam / NotProton */
+"notproton.title" = "Steam / NotProton";
+"notproton.desc" = "Registers the patched CrossOver Wine as a Steam Play compatibility tool on macOS.";
+"notproton.btn.register" = "Register with Steam";
+"notproton.registered" = "Registered with Steam";
+
+/* Mod Framework */
+"mod.title" = "Mod Framework (EFMI)";
+"mod.desc" = "Manages Endfield Modding Importer (EFMI / XXMI) chained mod loading in your bottle.";
+
+/* Menu */
+"menu.tools" = "Tools";
+"menu.language" = "Language";
+"menu.bottle_settings" = "Bottle Settings…";
+"menu.mod_framework" = "Mod Framework (EFMI)…";
+"menu.steam_notproton" = "Steam / NotProton…";
+"menu.metal_hud" = "Metal HUD…";
+
