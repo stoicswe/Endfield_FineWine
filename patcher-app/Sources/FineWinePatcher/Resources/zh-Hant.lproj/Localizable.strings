@@ -1,0 +1,147 @@
+/* 
+  Localizable.strings (Traditional Chinese / 繁體中文)
+  FineWine Patcher
+*/
+
+"app.title" = "FineWine 補丁工具";
+"app.subtitle" = "建立帶有專屬相容性補丁的 CrossOver %1$@，以便在 Apple 晶片 (Apple Silicon) 上流暢運行《明日方舟：終末地》。";
+"app.unofficial_disclaimer" = "非官方工具 — 與 CodeWeavers、鷹角網絡 (Gryphline/Hypergryph)、騰訊或 Apple 無隸屬關係。需要您自備授權版 CrossOver %1$@ 以及正版遊戲客戶端。";
+"app.telemetry_notice" = "應用程式絕不會自動傳送使用情況統計。在每次補丁或自動化設定完成後，會彈出對話框展示完全匿名的報告內容並由您確認是否傳送。";
+"app.licenses" = "開源許可…";
+"app.buy_crossover" = "購買 CrossOver…";
+"app.language" = "語言 (Language)";
+"app.cancel" = "取消";
+"app.close" = "關閉";
+"app.done" = "完成";
+"app.back" = "上一步";
+"app.next" = "下一步";
+"app.saved" = "已儲存";
+"app.created" = "已建立";
+"app.reveal_finder" = "在訪達 (Finder) 中顯示";
+"app.rescan" = "重新掃描";
+"app.choose" = "選擇…";
+"app.change" = "更改…";
+"app.remove" = "移除";
+"app.apply" = "套用設定";
+
+/* 主畫面 */
+"content.drop_crossover" = "將 CrossOver.app 拖曳至此處，或";
+"content.status.no_modules" = "未找到 Wine 模組 — 這可能不是有效的 CrossOver 應用程式？";
+"content.status.valid" = "版本 %1$@";
+"content.status.mismatch" = "版本 %1$@ — 預期版本 %2$@ (Wine ABI 必須相符)";
+"content.gptk.title" = "Apple 遊戲移植工具包 (GPTK)";
+"content.gptk.keep_bundled" = "保留 CrossOver 內建的 D3DMetal";
+"content.gptk.download" = "前往下載…";
+"content.gptk.hint.v4" = "將 CrossOver 的 D3DMetal %1$@ 替換為 %2$@。D3DMetal 4 引入了 Metal 4 與 MetalFX 超解析度特性（支援 DLSS 與幀生成）。";
+"content.gptk.hint.older" = "已選擇 %1$@。注意：只有 GPTK4 (D3DMetal 4.x) 支援 Metal 4 / MetalFX 特性 — 此檔案似乎為舊版本。";
+"content.gptk.hint.not_found" = "請先掛載 Apple 的「Evaluation environment for Windows games…」DMG 映像檔，然後點擊「重新掃描」，或點擊「選擇…」手動定位 redist/lib/external 目錄。本工具不附帶或轉發 Apple GPTK。";
+"content.gptk.hint.not_bundled" = "本工具不附帶 Apple GPTK — 僅會安裝您手動提供的副本。";
+"content.payload_missing" = "當前建構未包含補丁模組載荷 (Wine + MoltenVK) — 請在執行 scripts/build-wine.sh all 與 scripts/build-moltenvk.sh all 後重新打包。";
+"content.btn.create_patch" = "建立補丁版本…";
+"content.btn.patching" = "正在套用補丁…";
+"content.btn.automated_setup" = "自動化安裝精靈…";
+"content.automated_setup_desc" = "自動化精靈將一鍵建立補丁版 CrossOver、配置 Windows 11 容器，並自動啟動鷹角網絡 (Gryphline) 官方安裝程式。";
+"content.mismatch.title" = "CrossOver 版本不符合";
+"content.mismatch.message" = "此 CrossOver 回報的版本為 %1$@，但內建補丁模組是針對 CrossOver %2$@ 的 Wine ABI 編譯。在不相符的版本上套用補丁通常無法正常運作。";
+"content.mismatch.patch_anyway" = "仍然強制套用補丁";
+
+/* 自動化安裝精靈 */
+"setup.title" = "自動化安裝精靈";
+"setup.subtitle" = "自動配置在 Mac 上暢玩《明日方舟：終末地》所需的一切環境。";
+"setup.step.crossover" = "CrossOver";
+"setup.step.graphics" = "D3DMetal / GPTK";
+"setup.step.installer" = "安裝程式";
+"setup.step.bottle" = "容器設定";
+"setup.step.progress" = "進度";
+"setup.crossover.source_desc" = "將作為範本被複製並套用相容性補丁的原版 CrossOver。";
+"setup.crossover.will_create" = "將建立：%1$@";
+"setup.crossover.recreate_existing" = "重新建立已存在的補丁版本";
+"setup.crossover.using_existing" = "使用現有副本：%1$@";
+"setup.crossover.recreate_from_source" = "基於選取的 CrossOver 重新建立";
+"setup.crossover.version_warning" = "CrossOver %1$@ 不是預期版本 %2$@ — 補丁模組需要相符的 Wine ABI。建議安裝 CrossOver %2$@，或在主畫面使用「建立補丁版本…」強制操作。";
+"setup.graphics.title" = "升級內建 D3DMetal 為 Apple GPTK4 (可選)";
+"setup.graphics.desc" = "GPTK4 可將 CrossOver 的 D3DMetal 3.0 升級到 D3DMetal 4 (Metal 4 / MetalFX — 支援 DLSS 與幀生成)。Apple 的遊戲移植工具包嚴禁重新散佈：請自行從 Apple 開發者網站下載「Evaluation environment for Windows games 4.0」DMG 並掛載，隨後在此處選取。";
+"setup.graphics.open_page" = "開啟 Apple GPTK 下載頁面";
+"setup.graphics.creating" = "正在建立補丁副本%1$@ — 複製 CrossOver、安裝補丁模組、重新簽名並驗證完整性。這大約需要一分鐘。";
+"setup.installer.title" = "鷹角網絡 (Gryphline) 官方安裝程式";
+"setup.installer.desc" = "請選取從鷹角網絡官網 (endfield.gryphline.com) 下載的 Windows 啟動器安裝檔 (GRYPHLINK_*.exe)，以便將其安裝到新容器中。";
+"setup.installer.open_page" = "開啟終末地官網下載頁";
+"setup.installer.drop_or_choose" = "將 GRYPHLINK_*.exe 拖曳至此處，或";
+"setup.installer.choose_button" = "選取安裝程式…";
+"setup.installer.selected" = "已選取：%1$@";
+"setup.installer.ready" = "已準備就緒，可以建立容器並啟動安裝程式。";
+"setup.bottle.title" = "容器 (Bottle) 配置";
+"setup.bottle.desc" = "將為遊戲建立一個 Windows 11 容器，並套用以下推薦的圖形與效能最佳化設定。";
+"setup.bottle.name_label" = "容器名稱";
+"setup.bottle.backend_label" = "圖形後端";
+"setup.bottle.msync_label" = "MSync 同步機制";
+"setup.bottle.msync_hint" = "推薦保持開啟。若啟動器或遊戲崩潰並殘留 Wine 程序，可嘗試關閉此項。";
+"setup.bottle.upscaler_label" = "啟用 MetalFX / NVEXT 實現 DLSS 超解析度";
+"setup.bottle.upscaler_hint_active" = "利用所選後端的超解析度縮放器 (D3DMetal → MetalFX，DXMT → NVEXT)。";
+"setup.bottle.upscaler_hint_inactive" = "僅適用於 D3DMetal 與 DXMT 後端容器。";
+"setup.bottle.hud_label" = "Metal 效能指示器 (HUD)";
+"setup.bottle.hud_hint" = "在畫面中顯示 Apple 官方效能監控浮層（幀率 FPS、顯存佔用、幀生成時間）。預設關閉。";
+"setup.bottle.footer_notes" = "Windows 11 64-bit · 高解析度模式 (High Resolution Mode) 預設關閉 · 與 scripts/create-bottle.sh 配置完全一致。在官方啟動器中，DirectX 11 是經過最充分測試的渲染器 (DirectX 12 會導致白屏)；同時已內建支援 Vulkan。";
+"setup.progress.created" = "容器「%1$@」建立成功";
+"setup.progress.msync_fallback" = "此容器已自動停用 MSync：由於開啟 MSync 時建立失敗，精靈已自動降級重試。若遊戲能穩定執行，您可隨時在容器設定中重新開啟。";
+"setup.progress.installer_running" = "鷹角網絡安裝程式已啟動。請在彈出的安裝視窗中完成登入並下載遊戲檔案。安裝結束後，本工具將自動註冊選單項目。";
+"setup.progress.installer_success" = "安裝程式已完成。現在應可在補丁版 CrossOver 的容器頁面中看到 GRYPHLINK。";
+"setup.progress.installer_failed" = "安裝程式異常退出，退出碼為 %1$@。請檢查記錄檔 — 您亦可從容器頁面手動重新啟動。";
+"setup.btn.start" = "建立容器並開始安裝";
+
+/* 容器設定 */
+"bottle.title" = "容器設定 (Bottle Settings)";
+"bottle.picker_label" = "選取容器：";
+"bottle.none_found" = "未找到任何 CrossOver 容器。";
+"bottle.graphics_section" = "圖形與效能 (Graphics & Performance)";
+"bottle.backend_label" = "圖形後端：";
+"bottle.msync_toggle" = "MSync 快速同步 (WINEMSYNC)";
+"bottle.upscaler_toggle" = "超解析度縮放器 (%1$@)";
+"bottle.metal_hud_toggle" = "Metal 效能指示器 HUD (MTL_HUD_ENABLED)";
+"bottle.fps_cap_label" = "D3DMetal 幀率上限：";
+"bottle.fps.uncapped" = "不限幀率 (Uncapped)";
+"bottle.fps.60" = "60 FPS";
+"bottle.fps.120" = "120 FPS";
+"bottle.btn.stop" = "停止容器 (Stop Bottle)";
+"bottle.stop_help" = "終止所有執行中的 Wine 與遊戲後台程序，以使新設定立即生效。";
+"bottle.restart_notice" = "儲存設定後，請重新啟動容器以確保設定完全生效。";
+"bottle.alias.title" = "程式塢捷徑 (Dock Alias)";
+"bottle.alias.desc" = "在 ~/Applications 中建立一個獨立的「明日方舟：終末地.app」，一鍵透過補丁版 CrossOver 啟動遊戲。擁有乾淨的原生 Dock 圖示，Wine 子程序將合併顯示。";
+"bottle.alias.create" = "建立程式塢捷徑";
+"bottle.alias.recreate" = "重新建立捷徑";
+"bottle.gptk.title" = "升級至 GPTK4 / D3DMetal 4";
+"bottle.gptk.upgrade_btn" = "為此副本安裝 GPTK4";
+"bottle.gptk.desc" = "將補丁版中的 D3DMetal 替換為 Apple GPTK4 核心，提供 Metal 4 與 MetalFX 超採樣支援。";
+
+/* 後端名稱 */
+"backend.d3dmetal" = "D3DMetal (推薦)";
+"backend.dxmt" = "DXMT (DirectX 11 轉 Metal)";
+"backend.dxvk" = "DXVK (DirectX 轉 Vulkan)";
+"backend.wined3d" = "WineD3D (OpenGL/Metal 後端)";
+"backend.auto" = "自動選擇 (CrossOver 預設)";
+
+/* Metal HUD */
+"hud.title" = "Metal 效能指示器 (HUD)";
+"hud.desc" = "在 D3DMetal / DXMT / MoltenVK Metal 裝置上顯示 Apple 官方效能監控浮層（即時幀率、顯存、編碼耗時）。預設關閉 — 需要時在此開啟並重新啟動容器。";
+"hud.enable_toggle" = "為此容器開啟 Metal HUD";
+"hud.status.enabled" = "已為「%1$@」開啟 Metal HUD";
+"hud.status.disabled" = "已為「%1$@」關閉 Metal HUD";
+
+/* Steam / NotProton */
+"notproton.title" = "Steam / NotProton 相容工具";
+"notproton.desc" = "將補丁版 CrossOver Wine 註冊為 macOS 版 Steam 的 Steam Play 相容工具。";
+"notproton.btn.register" = "註冊到 Steam";
+"notproton.registered" = "已成功註冊到 Steam";
+
+/* 模組框架 */
+"mod.title" = "模組框架 (EFMI / XXMI)";
+"mod.desc" = "在您的容器中配置並管理《明日方舟：終末地》模組載入器 (EFMI / XXMI) 鏈式載入。";
+
+/* 選單列 */
+"menu.tools" = "工具";
+"menu.language" = "語言 (Language)";
+"menu.bottle_settings" = "容器設定 (Bottle Settings)…";
+"menu.mod_framework" = "模組框架 (EFMI)…";
+"menu.steam_notproton" = "Steam / NotProton…";
+"menu.metal_hud" = "Metal 效能指示器 (HUD)…";
+

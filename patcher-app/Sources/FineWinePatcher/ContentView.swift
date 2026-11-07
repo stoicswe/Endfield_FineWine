@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @EnvironmentObject var engine: PatcherEngine
     @EnvironmentObject var setup: SetupEngine
+    @EnvironmentObject var l10n: LanguageManager
     @State private var crossover: CrossOverInfo?
     @State private var showLicenses = false
     @State private var showAutomatedSetup = false
@@ -52,6 +53,7 @@ struct ContentView: View {
             AutomatedSetupView(source: crossover, gptk: selectedGPTK)
                 .environmentObject(engine)
                 .environmentObject(setup)
+                .environmentObject(l10n)
         }
         .sheet(isPresented: $showLicenses) { LicensesView() }
         .sheet(isPresented: $showPatchTelemetry, onDismiss: { engine.telemetryPrompt = nil }) {
@@ -63,8 +65,8 @@ struct ContentView: View {
                 )
             }
         }
-        .confirmationDialog("CrossOver version mismatch", isPresented: $showVersionWarning, titleVisibility: .visible) {
-            Button("Patch Anyway", role: .destructive) {
+        .confirmationDialog(l10n.tr("content.mismatch.title"), isPresented: $showVersionWarning, titleVisibility: .visible) {
+            Button(l10n.tr("content.mismatch.patch_anyway"), role: .destructive) {
                 if let destination = pendingDestination, let cx = crossover, let variant = cx.variant {
                     engine.patch(source: cx.url, variant: variant, destination: destination, gptk: selectedGPTK)
                     showPatchTelemetry = false
@@ -72,9 +74,9 @@ struct ContentView: View {
                 }
                 pendingDestination = nil
             }
-            Button("Cancel", role: .cancel) { pendingDestination = nil }
+            Button(l10n.tr("app.cancel"), role: .cancel) { pendingDestination = nil }
         } message: {
-            Text("This CrossOver reports version \(crossover?.version ?? "unknown"), but the bundled modules are built against CrossOver \(selectedVariant?.expectedVersion ?? CrossOverVariant.x64.expectedVersion)'s Wine ABI. Patching a different version will almost certainly not work.")
+            Text(l10n.tr("content.mismatch.message", crossover?.version ?? "unknown", selectedVariant?.expectedVersion ?? CrossOverVariant.x64.expectedVersion))
         }
         .onAppear {
             detectDefaultCrossOver()
@@ -137,9 +139,9 @@ struct ContentView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("FineWine Patcher")
+            Text(l10n.tr("app.title"))
                 .font(.title2.weight(.semibold))
-            Text("Creates a patched copy of CrossOver so Arknights: Endfield runs on Apple Silicon — for the x64 and ARM (aarch64) CrossOver builds.")
+            Text(l10n.tr("app.subtitle", selectedVariant?.expectedVersion ?? CrossOverVariant.x64.expectedVersion))
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -158,7 +160,7 @@ struct ContentView: View {
                             statusLine(for: cx)
                         }
                         Spacer()
-                        Button("Change…", action: chooseCrossOver)
+                        Button(l10n.tr("app.change"), action: chooseCrossOver)
                             .disabled(engine.isRunning)
                     }
                 } else {
@@ -166,9 +168,9 @@ struct ContentView: View {
                         Image(systemName: "app.dashed")
                             .font(.title2)
                             .foregroundStyle(.secondary)
-                        Text("Drop CrossOver.app here, or")
+                        Text(l10n.tr("content.drop_crossover"))
                             .foregroundStyle(.secondary)
-                        Button("Choose…", action: chooseCrossOver)
+                        Button(l10n.tr("app.choose"), action: chooseCrossOver)
                         Spacer()
                     }
                     .padding(.vertical, 6)
@@ -188,19 +190,19 @@ struct ContentView: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Apple GPTK")
+                    Text(l10n.tr("content.gptk.title"))
                         .font(.callout.weight(.medium))
                     Spacer()
-                    Button("Choose…", action: chooseGPTKFolder)
+                    Button(l10n.tr("app.choose"), action: chooseGPTKFolder)
                         .disabled(engine.isRunning)
-                    Button("Rescan", action: refreshGPTK)
+                    Button(l10n.tr("app.rescan"), action: refreshGPTK)
                         .disabled(engine.isRunning)
-                    Button("Download…") {
+                    Button(l10n.tr("content.gptk.download")) {
                         NSWorkspace.shared.open(URL(string: "https://developer.apple.com/games/game-porting-toolkit/")!)
                     }
                 }
                 Picker("D3DMetal", selection: $selectedGPTK) {
-                    Text("Keep CrossOver's bundled D3DMetal").tag(GPTKSource?.none)
+                    Text(l10n.tr("content.gptk.keep_bundled")).tag(GPTKSource?.none)
                     ForEach(gptkSources) { source in
                         Text(source.displayName).tag(GPTKSource?.some(source))
                     }
@@ -229,30 +231,29 @@ struct ContentView: View {
         if let selected = selectedGPTK {
             if let problem = selected.installProblem { return problem }
             if selected.isVersion4 {
-                return "Replaces CrossOver's D3DMetal \(selected.version ?? "3.0") with \(selected.displayName). D3DMetal 4 adds the Metal 4 / MetalFX features (DLSS and frame generation)."
+                return l10n.tr("content.gptk.hint.v4", selected.version ?? "3.0", selected.displayName)
             }
-            return "Selected \(selected.displayName). Note: only GPTK4 (D3DMetal 4.x) adds the Metal 4 / MetalFX features — this looks like an older version."
+            return l10n.tr("content.gptk.hint.older", selected.displayName)
         }
         if gptkSources.isEmpty {
-            return "Mount Apple's “Evaluation environment for Windows games …” DMG, then Rescan, or Choose… the redist/lib/external folder. Apple's GPTK is not bundled or redistributed by this app."
+            return l10n.tr("content.gptk.hint.not_found")
         }
-        return "Apple's GPTK is not bundled — the app only installs the copy you supply."
+        return l10n.tr("content.gptk.hint.not_bundled")
     }
 
     @ViewBuilder
     private func statusLine(for cx: CrossOverInfo) -> some View {
         if cx.variant == nil || !cx.hasWineModules {
-            Label("Unrecognized CrossOver layout — expected x64 (26.3) or ARM (aarch64) Wine modules",
-                  systemImage: "xmark.circle.fill")
+            Label(l10n.tr("content.status.no_modules"), systemImage: "xmark.circle.fill")
                 .font(.caption).foregroundStyle(.red)
         } else if cx.variant == .arm {
             Label("ARM (aarch64) · version \(cx.version ?? "?") · experimental", systemImage: "cpu")
                 .font(.caption).foregroundStyle(.orange)
         } else if cx.isExpectedVersion {
-            Label("x64 · version \(cx.displayVersion)", systemImage: "checkmark.seal.fill")
+            Label("x64 · " + l10n.tr("content.status.valid", cx.displayVersion), systemImage: "checkmark.seal.fill")
                 .font(.caption).foregroundStyle(.green)
         } else {
-            Label("x64 · version \(cx.displayVersion) — expected \(CrossOverVariant.x64.expectedVersion) (Wine ABI must match)",
+            Label("x64 · " + l10n.tr("content.status.mismatch", cx.displayVersion, CrossOverVariant.x64.expectedVersion),
                   systemImage: "exclamationmark.triangle.fill")
                 .font(.caption).foregroundStyle(.orange)
         }
@@ -271,7 +272,7 @@ struct ContentView: View {
         case .arm:
             return "This build has no ARM (aarch64) module payload. Build it with scripts/build-wine-arm.sh, then restage with build-app.sh. The x64 payload is unaffected."
         default:
-            return "This build of the patcher has no module payload (Wine + MoltenVK) — rebuild it with patcher-app/scripts/build-app.sh after scripts/build-wine.sh all and scripts/build-moltenvk.sh all."
+            return l10n.tr("content.payload_missing")
         }
     }
 
@@ -279,7 +280,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Button(action: startPatch) {
-                    Text(engine.isRunning ? "Patching…" : "Create Patched Copy…")
+                    Text(engine.isRunning ? l10n.tr("content.btn.patching") : l10n.tr("content.btn.create_patch"))
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -289,13 +290,13 @@ struct ContentView: View {
                 Button {
                     showAutomatedSetup = true
                 } label: {
-                    Label("Automated Setup…", systemImage: "wand.and.stars")
+                    Label(l10n.tr("content.btn.automated_setup"), systemImage: "wand.and.stars")
                         .frame(maxWidth: .infinity)
                 }
                 .controlSize(.large)
                 .disabled(engine.isRunning || crossover?.hasWineModules != true)
             }
-            Text("Automated Setup creates the patched copy if needed, then the Windows 11 bottle, and starts the Gryphline installer.")
+            Text(l10n.tr("content.automated_setup_desc"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -304,18 +305,38 @@ struct ContentView: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Usage statistics are never sent automatically. After each patch or Automated Setup run, a dialog shows the exact anonymous report and asks whether to send it.")
+            Text(l10n.tr("app.telemetry_notice"))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
-                Button("Licenses…") { showLicenses = true }
+                Button(l10n.tr("app.licenses")) { showLicenses = true }
                 Spacer()
-                Button("Buy CrossOver…") {
+                Menu {
+                    ForEach(AppLanguage.allCases) { lang in
+                        Button {
+                            l10n.selectedLanguage = lang
+                        } label: {
+                            HStack {
+                                Text(lang.displayName)
+                                if l10n.selectedLanguage == lang {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Label(l10n.selectedLanguage.displayName, systemImage: "globe")
+                        .font(.caption)
+                }
+                .menuStyle(.borderlessButton)
+                Spacer()
+                Button(l10n.tr("app.buy_crossover")) {
                     NSWorkspace.shared.open(URL(string: "https://www.codeweavers.com/store")!)
                 }
             }
-            Text("Unofficial software — not affiliated with CodeWeavers, Gryphline/Hypergryph, Tencent, or Apple. Requires your own licensed copy of CrossOver and your own copy of the game.")
+            Text(l10n.tr("app.unofficial_disclaimer", CrossOverVariant.x64.expectedVersion))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

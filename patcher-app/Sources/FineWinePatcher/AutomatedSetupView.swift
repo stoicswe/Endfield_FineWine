@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
 struct AutomatedSetupView: View {
     @EnvironmentObject private var engine: PatcherEngine
     @EnvironmentObject private var setup: SetupEngine
+    @EnvironmentObject private var l10n: LanguageManager
     @Environment(\.dismiss) private var dismiss
 
     /// The CrossOver selected in the main window — the source of the patched copy.
@@ -116,9 +117,9 @@ struct AutomatedSetupView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Automated Setup")
+            Text(l10n.tr("setup.title"))
                 .font(.title2.weight(.semibold))
-            Text("Creates the patched copy, a Windows 11 bottle, and starts the Gryphline installer.")
+            Text(l10n.tr("setup.subtitle"))
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -135,43 +136,43 @@ struct AutomatedSetupView: View {
         HStack {
             switch page {
             case .crossOver:
-                Button("Cancel") { dismiss() }
+                Button(l10n.tr("app.cancel")) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Continue") { page = .graphics }
+                Button(l10n.tr("app.next")) { page = .graphics }
                     .buttonStyle(.borderedProminent)
                     .disabled(!canContinue)
             case .graphics:
                 if isPatching {
                     Spacer()
-                    Button("Patching…") {}
+                    Button(l10n.tr("content.btn.patching")) {}
                         .buttonStyle(.borderedProminent)
                         .disabled(true)
                 } else {
-                    Button("Back") { page = .crossOver }
+                    Button(l10n.tr("app.back")) { page = .crossOver }
                     Spacer()
-                    Button(needsPatch ? "Create Patched Copy & Continue" : "Continue") {
+                    Button(needsPatch ? l10n.tr("content.btn.create_patch") : l10n.tr("app.next")) {
                         applyGraphicsAndContinue()
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(!canContinue)
                 }
             case .installer:
-                Button("Back") { page = .graphics }
+                Button(l10n.tr("app.back")) { page = .graphics }
                 Spacer()
                 if installer == nil {
-                    Button("Choose Installer…") { chooseInstaller() }
+                    Button(l10n.tr("setup.installer.choose_button")) { chooseInstaller() }
                         .buttonStyle(.borderedProminent)
                 } else {
-                    Button("Continue") { page = .bottle }
+                    Button(l10n.tr("app.next")) { page = .bottle }
                         .buttonStyle(.borderedProminent)
                         .disabled(SetupValidation.installerError(installer) != nil)
                 }
             case .bottle:
-                Button("Back") { page = .installer }
+                Button(l10n.tr("app.back")) { page = .installer }
                     .disabled(setup.isRunning)
                 Spacer()
-                Button("Create Bottle & Install…") { createBottle() }
+                Button(l10n.tr("setup.btn.start")) { createBottle() }
                     .buttonStyle(.borderedProminent)
                     .disabled(setup.isRunning || nameError != nil || installer == nil || patchedApp == nil)
             case .progress:
@@ -179,7 +180,7 @@ struct AutomatedSetupView: View {
                 if !setup.logFiles.isEmpty {
                     Button("Show Logs") { revealLogs() }
                 }
-                Button(setup.isRunning ? "Working…" : "Close") { dismiss() }
+                Button(setup.isRunning ? "Working…" : l10n.tr("app.close")) { dismiss() }
                     .buttonStyle(.borderedProminent)
                     .disabled(setup.isRunning)
             }
@@ -202,21 +203,21 @@ struct AutomatedSetupView: View {
                         }
                         Divider()
                         if needsPatch {
-                            Label("Will create \(destination.path)", systemImage: "plus.square.on.square")
+                            Label(l10n.tr("setup.crossover.will_create", destination.path), systemImage: "plus.square.on.square")
                                 .font(.callout)
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
                             if existingPatched != nil {
-                                Toggle("Re-create the existing patched copy", isOn: $reCreate)
+                                Toggle(l10n.tr("setup.crossover.recreate_existing"), isOn: $reCreate)
                             }
                         } else if let patchedApp {
-                            Label("Using \(patchedApp.path)", systemImage: "checkmark.seal.fill")
+                            Label(l10n.tr("setup.crossover.using_existing", patchedApp.path), systemImage: "checkmark.seal.fill")
                                 .font(.callout)
                                 .foregroundStyle(.green)
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
-                            Toggle("Re-create it from the selected CrossOver", isOn: $reCreate)
-                            Button("Reveal in Finder") {
+                            Toggle(l10n.tr("setup.crossover.recreate_from_source"), isOn: $reCreate)
+                            Button(l10n.tr("app.reveal_finder")) {
                                 NSWorkspace.shared.activateFileViewerSelecting([patchedApp])
                             }
                         }
@@ -226,7 +227,7 @@ struct AutomatedSetupView: View {
                 }
 
                 if let source, !source.isExpectedVersion {
-                    Text("CrossOver \(source.displayVersion) is not \(CrossOverVariant.x64.expectedVersion) — the bundled modules need that Wine ABI. Install CrossOver \(CrossOverVariant.x64.expectedVersion), or use “Create Patched Copy…” on the main window to patch anyway.")
+                    Text(l10n.tr("setup.crossover.version_warning", source.displayVersion, CrossOverVariant.x64.expectedVersion))
                         .font(.caption)
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
@@ -252,7 +253,7 @@ struct AutomatedSetupView: View {
     private var graphicsPage: some View {
         if isPatching {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Creating the patched copy\(selectedGPTK != nil ? " with GPTK4 / D3DMetal 4" : "") — copying CrossOver, installing the modules, re-sealing and verifying it. This can take about a minute.")
+                Text(l10n.tr("setup.graphics.creating", selectedGPTK != nil ? " with GPTK4 / D3DMetal 4" : ""))
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
                 if !engine.steps.isEmpty { StepsListView(steps: engine.steps) }
@@ -267,17 +268,17 @@ struct AutomatedSetupView: View {
             VStack(alignment: .leading, spacing: 10) {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Replace the bundled D3DMetal with Apple's GPTK4 (optional)")
+                        Text(l10n.tr("setup.graphics.title"))
                             .font(.callout.weight(.medium))
-                        Text("GPTK4 upgrades CrossOver's D3DMetal 3.0 to D3DMetal 4 (Metal 4 / MetalFX — DLSS and frame generation). Apple's Game Porting Toolkit is **never bundled or redistributed**: download the “Evaluation environment for Windows games 4.0” DMG from Apple's developer page yourself, mount it, then pick it here.")
+                        Text(l10n.tr("setup.graphics.desc"))
                             .font(.callout)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 8) {
-                            Button("Open Apple's GPTK page") {
+                            Button(l10n.tr("setup.graphics.open_page")) {
                                 NSWorkspace.shared.open(gptkPage)
                             }
-                            Button("Rescan") { refreshGPTK() }
-                            Button("Choose…") { chooseGPTK() }
+                            Button(l10n.tr("app.rescan")) { refreshGPTK() }
+                            Button(l10n.tr("app.choose")) { chooseGPTK() }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -285,7 +286,7 @@ struct AutomatedSetupView: View {
                 }
 
                 Picker("D3DMetal", selection: $selectedGPTK) {
-                    Text("Keep CrossOver's bundled D3DMetal").tag(GPTKSource?.none)
+                    Text(l10n.tr("content.gptk.keep_bundled")).tag(GPTKSource?.none)
                     ForEach(gptkSources) { source in
                         Text(source.displayName).tag(GPTKSource?.some(source))
                     }
@@ -300,29 +301,23 @@ struct AutomatedSetupView: View {
                             .foregroundStyle(.red)
                             .fixedSize(horizontal: false, vertical: true)
                     } else if selectedGPTK.isVersion4 {
-                        Text("Installs \(selectedGPTK.displayName) over CrossOver's D3DMetal 3.0 when the patched copy is created.")
+                        Text(l10n.tr("content.gptk.hint.v4", selectedGPTK.version ?? "3.0", selectedGPTK.displayName))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
-                        Text("Selected \(selectedGPTK.displayName). Only GPTK4 (D3DMetal 4.x) adds the Metal 4 / MetalFX features — this looks like an older version.")
+                        Text(l10n.tr("content.gptk.hint.older", selectedGPTK.displayName))
                             .font(.caption)
                             .foregroundStyle(.orange)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    if !needsPatch {
-                        Text("The existing patched copy is reused as-is — selecting a GPTK re-creates it so the new D3DMetal is installed.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
                 } else if gptkSources.isEmpty {
-                    Text("No GPTK redist found. Mount Apple's “Evaluation environment for Windows games …” DMG, then click Rescan — or Choose… the redist/lib/external folder.")
+                    Text(l10n.tr("content.gptk.hint.not_found"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Text("Keeping CrossOver's bundled D3DMetal 3.0. The GPTK upgrade is optional.")
+                    Text(l10n.tr("content.gptk.hint.not_bundled"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -345,24 +340,21 @@ struct AutomatedSetupView: View {
         VStack(alignment: .leading, spacing: 10) {
             GroupBox {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Download the Gryphline installer")
+                    Text(l10n.tr("setup.installer.title"))
                         .font(.callout.weight(.medium))
-                    Text("1. Open the official Endfield download page and download the **Windows** launcher installer (`GRYPHLINK_….exe`, about 170 MB).")
+                    Text(l10n.tr("setup.installer.desc"))
                         .font(.callout)
                         .fixedSize(horizontal: false, vertical: true)
-                    Button("Open endfield.gryphline.com") {
+                    Button(l10n.tr("setup.installer.open_page")) {
                         NSWorkspace.shared.open(downloadPage)
                     }
-                    Text("2. When the download has finished, click **Find Installer…** and select that `.exe` in the file prompt. Then click **Continue**.")
-                        .font(.callout)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(4)
             }
 
             HStack(spacing: 8) {
-                Button("Find Installer…") { chooseInstaller() }
+                Button(l10n.tr("setup.installer.choose_button")) { chooseInstaller() }
                     .buttonStyle(.borderedProminent)
                 if let installer {
                     Text(installer.lastPathComponent)
@@ -374,7 +366,7 @@ struct AutomatedSetupView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("No installer selected yet")
+                    Text(l10n.tr("setup.installer.drop_or_choose"))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -399,7 +391,7 @@ struct AutomatedSetupView: View {
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        Text("Bottle name")
+                        Text(l10n.tr("setup.bottle.name_label"))
                         Spacer()
                         TextField("Arknights Endfield", text: $settings.name)
                             .frame(width: 260)
@@ -413,7 +405,7 @@ struct AutomatedSetupView: View {
                     }
 
                     HStack {
-                        Text("Graphics backend")
+                        Text(l10n.tr("setup.bottle.backend_label"))
                         Spacer()
                         Picker("", selection: $settings.backend) {
                             ForEach(BottleBackend.available(for: source?.variant)) { backend in
@@ -424,23 +416,23 @@ struct AutomatedSetupView: View {
                         .frame(width: 260)
                     }
 
-                    Toggle("MSync", isOn: $settings.msync)
-                    Text("Recommended on. Turn it off if the launcher or game crashes with leftover Wine processes.")
+                    Toggle(l10n.tr("setup.bottle.msync_label"), isOn: $settings.msync)
+                    Text(l10n.tr("setup.bottle.msync_hint"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Toggle("DLSS via MetalFX / NVEXT", isOn: $settings.upscaling)
+                    Toggle(l10n.tr("setup.bottle.upscaler_label"), isOn: $settings.upscaling)
                         .disabled(!settings.backend.supportsUpscaling)
                     Text(settings.backend.supportsUpscaling
-                         ? "Uses the backend's upscaler toggle (D3DMetal → MetalFX, DXMT → NVEXT)."
-                         : "Only applies to D3DMetal and DXMT bottles.")
+                         ? l10n.tr("setup.bottle.upscaler_hint_active")
+                         : l10n.tr("setup.bottle.upscaler_hint_inactive"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Toggle("Metal Performance HUD", isOn: $settings.metalHUD)
-                    Text("Optional Apple performance overlay (FPS, memory, frame times) on Metal clients. Off by default.")
+                    Toggle(l10n.tr("setup.bottle.hud_label"), isOn: $settings.metalHUD)
+                    Text(l10n.tr("setup.bottle.hud_hint"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -449,7 +441,7 @@ struct AutomatedSetupView: View {
                 .padding(4)
             }
 
-            Text("Windows 11 64-bit · High Resolution Mode off · these defaults match `scripts/create-bottle.sh`. In the game's launcher, DirectX 11 is the most-tested renderer (DirectX 12 renders a white screen); Vulkan is also supported.")
+            Text(l10n.tr("setup.bottle.footer_notes"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -470,24 +462,24 @@ struct AutomatedSetupView: View {
             if let bottle = setup.createdBottle {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 6) {
-                        Label("Bottle “\(bottle)” created", systemImage: "checkmark.seal.fill")
+                        Label(l10n.tr("setup.progress.created", bottle), systemImage: "checkmark.seal.fill")
                             .font(.callout.weight(.medium))
                             .foregroundStyle(.green)
                         if setup.msyncFallback {
-                            Text("MSync was disabled for this bottle: creating it failed with MSync on, so setup retried once without it (the same workaround scripts/create-bottle.sh documents). You can turn MSync back on in the bottle's settings if the game runs.")
+                            Text(l10n.tr("setup.progress.msync_fallback"))
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         if setup.installerRunning {
-                            Text("The Gryphline installer is open. Finish it in the window behind this sheet — log in and let it download the game. When it exits, this app registers the launcher's menu entries.")
+                            Text(l10n.tr("setup.progress.installer_running"))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         } else if let exit = setup.installerExit {
                             Text(exit == 0
-                                 ? "The installer finished. GRYPHLINK should now be listed in the bottle's page in the patched CrossOver."
-                                 : "The installer exited with status \(exit). Check the log — you can start it again from the bottle's page.")
+                                 ? l10n.tr("setup.progress.installer_success")
+                                 : l10n.tr("setup.progress.installer_failed", "\(exit)"))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -497,7 +489,7 @@ struct AutomatedSetupView: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack {
-                            Button("Reveal Bottle in Finder") {
+                            Button(l10n.tr("app.reveal_finder")) {
                                 NSWorkspace.shared.activateFileViewerSelecting([bottleURL(bottle)])
                             }
                             if !setup.logFiles.isEmpty {

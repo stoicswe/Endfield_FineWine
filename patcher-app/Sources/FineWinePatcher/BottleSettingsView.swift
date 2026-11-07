@@ -8,6 +8,7 @@ import AppKit
 /// (in AutomatedSetup.swift).
 struct BottleSettingsView: View {
     @EnvironmentObject private var engine: PatcherEngine
+    @EnvironmentObject private var l10n: LanguageManager
 
     @State private var bottles: [BottleInfo] = []
     @State private var selected: BottleInfo?
@@ -61,9 +62,9 @@ struct BottleSettingsView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Bottle Settings")
+            Text(l10n.tr("bottle.title"))
                 .font(.title2.weight(.semibold))
-            Text("Edit the environment variables in your bottle's cxbottle.conf without touching a terminal. Changes take effect after restarting the bottle.")
+            Text(l10n.tr("setup.bottle.desc"))
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -76,7 +77,7 @@ struct BottleSettingsView: View {
         GroupBox {
             HStack {
                 if bottles.isEmpty {
-                    Text("No CrossOver bottles found.")
+                    Text(l10n.tr("bottle.none_found"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -89,7 +90,7 @@ struct BottleSettingsView: View {
                     .onChange(of: selected) { _ in loadSettings() }
                 }
                 Spacer()
-                Button("Choose…", action: chooseBottle)
+                Button(l10n.tr("app.choose"), action: chooseBottle)
             }
             .padding(4)
         }
@@ -100,38 +101,38 @@ struct BottleSettingsView: View {
     private var settingsBox: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
-                Label("Graphics & Performance", systemImage: "gearshape.2")
+                Label(l10n.tr("bottle.graphics_section"), systemImage: "gearshape.2")
                     .font(.callout.weight(.medium))
 
                 // Backend
-                Picker("Graphics Backend:", selection: $backend) {
+                Picker(l10n.tr("bottle.backend_label"), selection: $backend) {
                     ForEach(BottleBackend.allCases) { b in
                         Text(b.displayName).tag(b)
                     }
                 }
 
                 // MSync
-                Toggle("MSync (WINEMSYNC)", isOn: $msync)
+                Toggle(l10n.tr("bottle.msync_toggle"), isOn: $msync)
                     .font(.callout)
 
                 // Upscaler
                 if backend.supportsUpscaling {
-                    Toggle("Upscaler (\(backend.upscalerKey ?? "MetalFX"))", isOn: $upscaling)
+                    Toggle(l10n.tr("bottle.upscaler_toggle", backend.upscalerKey ?? "MetalFX"), isOn: $upscaling)
                         .font(.callout)
                 }
 
                 // Metal HUD
-                Toggle("Metal Performance HUD (MTL_HUD_ENABLED)", isOn: $metalHUD)
+                Toggle(l10n.tr("bottle.metal_hud_toggle"), isOn: $metalHUD)
                     .font(.callout)
 
                 // FPS Cap
                 HStack {
-                    Text("D3DMetal FPS Cap:")
+                    Text(l10n.tr("bottle.fps_cap_label"))
                         .font(.callout)
                     Picker("", selection: $fpsCap) {
-                        Text("Uncapped").tag("uncapped")
-                        Text("60 FPS").tag("60")
-                        Text("120 FPS").tag("120")
+                        Text(l10n.tr("bottle.fps.uncapped")).tag("uncapped")
+                        Text(l10n.tr("bottle.fps.60")).tag("60")
+                        Text(l10n.tr("bottle.fps.120")).tag("120")
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
@@ -140,27 +141,27 @@ struct BottleSettingsView: View {
 
                 // Actions
                 HStack {
-                    Button("Apply Settings") { saveSettings() }
+                    Button(l10n.tr("app.apply")) { saveSettings() }
                         .buttonStyle(.borderedProminent)
 
                     if saved {
-                        Label("Saved", systemImage: "checkmark.circle.fill")
+                        Label(l10n.tr("app.saved"), systemImage: "checkmark.circle.fill")
                             .font(.caption)
                             .foregroundStyle(.green)
                     }
 
                     Spacer()
 
-                    Button("Stop Bottle") {
+                    Button(l10n.tr("bottle.btn.stop")) {
                         if let bottle = selected {
                             engine.stopBottle(bottle: bottle.url)
                         }
                     }
                     .disabled(selected == nil)
-                    .help("Stops running Wine processes so settings take effect.")
+                    .help(l10n.tr("bottle.stop_help"))
                 }
 
-                Text("Restart the bottle after applying for changes to take effect.")
+                Text(l10n.tr("bottle.restart_notice"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -173,36 +174,36 @@ struct BottleSettingsView: View {
     private var aliasBox: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
-                Label("Dock Shortcut", systemImage: "dock.rectangle")
+                Label(l10n.tr("bottle.alias.title"), systemImage: "dock.rectangle")
                     .font(.callout.weight(.medium))
 
-                Text("Creates a standalone Arknights Endfield.app in ~/Applications that opens the Gryphline launcher through the patched CrossOver. One clean Dock icon — Wine sub-processes share its tile.")
+                Text(l10n.tr("bottle.alias.desc"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack {
-                    Button(aliasExists ? "Recreate App Alias" : "Create App Alias") {
+                    Button(aliasExists ? l10n.tr("bottle.alias.recreate") : l10n.tr("bottle.alias.create")) {
                         createAlias()
                     }
                     .buttonStyle(.bordered)
                     .disabled(selected == nil)
 
                     if aliasCreated {
-                        Label("Created", systemImage: "checkmark.circle.fill")
+                        Label(l10n.tr("app.created"), systemImage: "checkmark.circle.fill")
                             .font(.caption)
                             .foregroundStyle(.green)
                     }
 
                     if aliasExists {
-                        Button("Reveal in Finder") {
+                        Button(l10n.tr("app.reveal_finder")) {
                             if let url = AppAlias.existingAlias() {
                                 NSWorkspace.shared.selectFile(url.path, inFileViewerRootedAtPath: url.deletingLastPathComponent().path)
                             }
                         }
                         .font(.caption)
 
-                        Button("Remove") {
+                        Button(l10n.tr("app.remove")) {
                             try? AppAlias.remove()
                             checkAlias()
                             aliasCreated = false

@@ -99,6 +99,13 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/licenses" \
 cp "$BIN" "$APP/Contents/MacOS/$EXE"
 cp "$HERE/Resources/licenses/"*.txt "$APP/Contents/Resources/licenses/"
 
+# Copy localization bundles
+for lproj in "$HERE/Sources/FineWinePatcher/Resources/"*.lproj; do
+  if [ -d "$lproj" ]; then
+    cp -R "$lproj" "$APP/Contents/Resources/"
+  fi
+done
+
 ICON_PLIST=""
 if [ -f "$HERE/Resources/AppIcon.icns" ]; then
   cp "$HERE/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
@@ -128,6 +135,16 @@ $ICON_PLIST
 	<string>$VERSION</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hans</string>
+		<string>zh-Hant</string>
+		<string>ja</string>
+		<string>ko</string>
+	</array>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>LSMinimumSystemVersion</key>
