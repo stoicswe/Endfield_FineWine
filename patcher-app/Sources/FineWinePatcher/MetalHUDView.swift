@@ -9,6 +9,7 @@ import AppKit
 /// client in that bottle. Matching macOS launcher stubs get the same key in `LSEnvironment`.
 struct MetalHUDView: View {
     @EnvironmentObject private var engine: PatcherEngine
+    @EnvironmentObject private var l10n: LanguageManager
 
     @State private var bottles: [BottleInfo] = []
     @State private var selected: BottleInfo?
@@ -35,9 +36,9 @@ struct MetalHUDView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Metal HUD")
+            Text(l10n.tr("hud.title"))
                 .font(.title2.weight(.semibold))
-            Text("Optional Apple performance overlay (FPS, memory, encoder time) on the D3DMetal / DXMT / MoltenVK Metal device. Off by default — enable it here when you want it, then restart the bottle.")
+            Text(l10n.tr("hud.desc"))
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

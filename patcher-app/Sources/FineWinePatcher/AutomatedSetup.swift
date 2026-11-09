@@ -16,11 +16,11 @@ enum BottleBackend: String, CaseIterable, Identifiable, Hashable {
 
     var displayName: String {
         switch self {
-        case .d3dmetal: return "D3DMetal (recommended)"
-        case .dxmt:     return "DXMT"
-        case .dxvk:     return "DXVK"
-        case .wined3d:  return "WineD3D"
-        case .auto:     return "Automatic (CrossOver chooses)"
+        case .d3dmetal: return tr("backend.d3dmetal")
+        case .dxmt:     return tr("backend.dxmt")
+        case .dxvk:     return tr("backend.dxvk")
+        case .wined3d:  return tr("backend.wined3d")
+        case .auto:     return tr("backend.auto")
         }
     }
 
