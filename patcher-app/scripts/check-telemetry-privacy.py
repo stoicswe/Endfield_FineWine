@@ -221,10 +221,28 @@ check("CelebrationConfetti" in thanks, "thank-you dialog includes confetti")
 check("ConfettiPiece.makePieces()" in thanks and ".animation(" in thanks,
       "confetti celebration is animated")
 
-# 8. The user-facing copy and README must describe the per-run prompt.
-check("never sent automatically" in content, "footer says statistics are never sent automatically")
-check("after each patch or automated setup run" in content.lower(),
+# 8. The user-facing copy and README must describe the per-run prompt. The footer is localized:
+# ContentView shows l10n.tr("app.telemetry_notice"), so audit the English string behind that key
+# (falling back to a literal in ContentView), and require the notice in every language.
+NOTICE_KEY = "app.telemetry_notice"
+LOCALES = sorted((SOURCES / "Resources").glob("*.lproj/Localizable.strings"))
+
+
+def localized(strings_file: Path, key: str) -> str:
+    match = re.search(r'^\s*"' + re.escape(key) + r'"\s*=\s*"((?:[^"\\]|\\.)*)"\s*;',
+                      strings_file.read_text(encoding="utf-8"), re.M)
+    return match.group(1) if match else ""
+
+
+footer = content
+if f'tr("{NOTICE_KEY}")' in content:
+    footer = localized(SOURCES / "Resources/en.lproj/Localizable.strings", NOTICE_KEY)
+check("never sent automatically" in footer, "footer says statistics are never sent automatically")
+check("after each patch or automated setup run" in footer.lower(),
       "footer says the prompt follows each patch and setup run")
+if f'tr("{NOTICE_KEY}")' in content:
+    missing = [f.parent.name for f in LOCALES if not localized(f, NOTICE_KEY)]
+    check(not missing, f"every language has the footer notice ({', '.join(missing) or 'all present'})")
 check("## Per-run anonymous usage statistics" in readme, "README has a per-run privacy section")
 check("**Why this helps.**" in readme, "README explains how the data improves compatibility")
 check("**What is collected.**" in readme, "README documents the collected fields")
