@@ -211,17 +211,20 @@ final class VariantTests: XCTestCase {
         XCTAssertEqual(CrossOverVariant.x64.modules.first?.crossoverSubpath, "lib/wine/x86_64-unix/ntdll.so")
         XCTAssertTrue(CrossOverVariant.x64.modules.contains { $0.crossoverSubpath == "lib64/libMoltenVK.dylib" })
 
-        // ARM: the ARM64 PE modules an arm64 bottle loads, and nothing else.
+        // ARM: the ARM64 PE modules an arm64 bottle loads, plus the launcher-alpha library that
+        // CrossOver ARM's own winemac.so is made to load. Nothing of CrossOver's is replaced
+        // except those PE modules.
         let arm = CrossOverVariant.arm.modules.map(\.crossoverSubpath)
         XCTAssertEqual(arm.sorted(), [
+            "lib/wine/aarch64-unix/fwalpha.dylib",
             "lib/wine/aarch64-windows/ntoskrnl.exe",
             "lib/wine/aarch64-windows/rundll32.exe",
             "lib/wine/aarch64-windows/wdfldr.sys",
         ])
-        // Upstream's ntdll.so and wineserver can't run inside CrossOver ARM (protocol 961 vs 1809).
-        XCTAssertFalse(arm.contains { $0.contains("ntdll") || $0.contains("wineserver") })
+        // Upstream's ntdll.so and wineserver can't run inside CrossOver ARM.
+        XCTAssertFalse(arm.contains { $0.contains("ntdll") || $0.contains("wineserver") || $0.contains("winemac") })
         XCTAssertFalse(arm.contains { $0.contains("x86_64-windows") })
-        XCTAssertEqual(CrossOverVariant.arm.modules.filter(\.isNew).map(\.crossoverSubpath),
-                       ["lib/wine/aarch64-windows/wdfldr.sys"])
+        XCTAssertEqual(CrossOverVariant.arm.modules.filter(\.isNew).map(\.crossoverSubpath).sorted(),
+                       ["lib/wine/aarch64-unix/fwalpha.dylib", "lib/wine/aarch64-windows/wdfldr.sys"])
     }
 }

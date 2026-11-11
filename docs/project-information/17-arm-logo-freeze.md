@@ -4,6 +4,10 @@
 > Rosetta, Endfield froze at the Gryphline logo. It now reaches its menu background, and the login
 > panel appears after about a minute in runs with light logging. Logging in and gameplay are **untested**, and ACE does
 > not start its drivers on ARM, so the ARM variant stays experimental.
+>
+> **Update (2026-11-11):** these findings are on preview 20261015 (Wine 11.17). Preview 20261111 is on
+> Wine 11.21; the ARM patches and this ntdll fix were carried over, see
+> [19-arm-wine-11.21.md](19-arm-wine-11.21.md).
 
 ## Symptom
 

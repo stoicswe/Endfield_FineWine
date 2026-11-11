@@ -2,7 +2,8 @@
 
 > **Status: fixed by `patches/x64/stage1-macos/0009` and `0010`, tested on one machine (Nov 2026).** The launcher's
 > rounded window used to sit inside a square black box. It now has real transparent corners and
-> its soft shadow, and the game still starts from it and stays opaque.
+> its soft shadow, and the game still starts from it and stays opaque. On CrossOver ARM the same fix
+> is applied at runtime by `patches/ARM/winemac-shim` (2026-11-11), see [CrossOver ARM](#crossover-arm).
 
 ## Cause
 
@@ -60,6 +61,46 @@ The middle row showed that D3DMetal passes alpha through: one shadow pixel read 
 228 over white.
 
 Started from the patched launcher, the game ran and its window measured 100% opaque.
+
+## CrossOver ARM
+
+The same margin shows up on CrossOver ARM (preview 20261111), but the launcher draws differently
+there. CrossOver's `d3d11.dll` for `aarch64-windows` is wined3d, which presents through Vulkan, so
+the window holds a Metal layer created by MoltenVK's swapchain, not D3DMetal's. MoltenVK sets that
+layer opaque for `VK_COMPOSITE_ALPHA_OPAQUE_BIT` on every swapchain.
+
+CrossOver ARM's `winemac.so` can't be rebuilt, so
+[`patches/ARM/winemac-shim/fwalpha.m`](../../patches/ARM/winemac-shim/fwalpha.m) applies the change
+at runtime instead, and the patcher adds an `LC_LOAD_DYLIB` for it to `winemac.so`. The command fits
+in the 88 bytes of header padding, and the loader has `disable-library-validation`, so the ad-hoc
+signed library loads. `DYLD_INSERT_LIBRARIES` doesn't work: the loader runs under the hardened
+runtime without `allow-dyld-environment-variables`.
+
+The library is active only when `argv[0]` (which Wine sets to the Windows path) names `Games.exe`.
+There is no per-window signal on ARM, since the patched `dwmapi.dll` is x64-only, so every
+`Games.exe` window that hosts a Metal view is treated as compositing. For those it:
+
+- returns `NO` from `WineMetalView isOpaque`;
+- gives the Metal layer a subclass whose `setOpaque:` always passes `NO`, with a clear background,
+  because MoltenVK would otherwise set it opaque again;
+- marks the window when the Metal view moves into it (the Vulkan path doesn't go through
+  `newMetalViewWithDevice:`), then keeps it non-opaque with per-pixel alpha and a clear background;
+- skips drawing the window surface behind the Metal view in `WineContentView updateLayer`.
+
+Measured the same way as x64:
+
+| Build | Corner RGBA | Fully transparent | Partly transparent |
+|---|---|---|---|
+| Stock CrossOver ARM | `(0,0,0,255)` | 0% | 0% |
+| Layer and view only | `(40,40,40,255)` | 0% | 0% |
+| Library as shipped | `(0,0,0,0)` | 6.9% | 5.6% |
+
+The middle row is the main window's own background (`windowBackgroundColor`, opaque) showing
+through. Of the three `Games.exe` windows with a Metal view, the main one was the only opaque one.
+
+Replacing a signed Mach-O in place (`cp` over it) left the kernel's cached signature stale, and the
+process was killed with `Code Signature Invalid` when `winemac.so` loaded. The patcher writes the
+edited file as a new file.
 
 ## Testing notes
 
