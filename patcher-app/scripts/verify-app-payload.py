@@ -77,8 +77,8 @@ def verify_arm(payload, modules, errors):
     errors.extend(f"partial ARM payload, missing: {m}" for m in missing)
     for module in set(modules) - set(missing):
         path = os.path.join(root, module)
-        if module.startswith("aarch64-unix/"):
-            # The launcher-alpha library loaded into CrossOver ARM's own winemac.so.
+        if module.endswith(".dylib"):
+            # The launcher-alpha library and the arm64 MoltenVK.
             check_mach_o(path, "arm64", None, errors)
             if subprocess.run(["codesign", "--verify", path], capture_output=True).returncode:
                 errors.append(f"ARM module isn't signed: {module}")

@@ -83,9 +83,11 @@ the launcher's own command, so a shortcut always opens the copy its bottle was s
 A bottle created any other way runs CrossOver's unpatched x86_64 tree, and the ARM payload never
 loads.
 
-**The ARM payload is experimental, and CI doesn't build it.** It holds `ntoskrnl.exe`,
+**The ARM payload is experimental.** CI builds it with every app build (the `moltenvk-arm` and
+`build-wine-arm` jobs in `build-wine.yml`), and the app job fails without it. It holds `ntoskrnl.exe`,
 `rundll32.exe` and `wdfldr.sys`, built from `patches/ARM` on public Wine 11.21, plus
-`fwalpha.dylib` (below). The PE modules are ARM64, because an `arm64` bottle only loads
+`fwalpha.dylib` (below) and the patched MoltenVK built for arm64, which replaces CrossOver ARM's
+stock 1.2.10. The PE modules are ARM64, because an `arm64` bottle only loads
 `aarch64-windows`. They run inside stock CrossOver ARM, which keeps its own `ntdll.so` and
 `wineserver`:
 
@@ -364,13 +366,15 @@ Requires the Xcode Command Line Tools only (no Xcode):
 open "patcher-app/build/FineWine Patcher.app"
 ```
 
-To also bundle the experimental ARM payload (optional), build it with the separate pipeline
-first; `build-app.sh` stages `build/wine-arm-payload` automatically when it exists:
+To also bundle the ARM payload, as CI does, build it with the separate pipeline first;
+`build-app.sh` stages `build/wine-arm-payload` automatically when it exists (`ARM_PAYLOAD_DIR`
+overrides the path):
 
 ```bash
-# aarch64 MoltenVK (optional) and the ARM Wine modules
+# the arm64 MoltenVK first: the ARM payload includes it
 MVK_ARCH=aarch64 ./scripts/build-moltenvk.sh all
-CX_ARM_VER=<crossover-arm-version> ./scripts/build-wine-arm.sh all   # or ARM_SRC_DIR/ARM_SRC_TARBALL
+# the ARM Wine modules (upstream Wine at ARM_WINE_TAG, default wine-11.21) + launcher-alpha library
+./scripts/build-wine-arm.sh all
 ./patcher-app/scripts/build-app.sh
 ```
 

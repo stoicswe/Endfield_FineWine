@@ -176,6 +176,10 @@ enum CrossOverVariant: String, CaseIterable, Sendable {
                 // The launcher-alpha fix, loaded into CrossOver ARM's own winemac.so (see ArmLauncherAlpha).
                 PayloadModule(payloadSubpath: "aarch64-unix/fwalpha.dylib",
                               crossoverSubpath: "lib/wine/aarch64-unix/fwalpha.dylib", isNew: true),
+                // The same patched MoltenVK as x64, built for arm64. CrossOver ARM's stock 1.2.10 has
+                // the swapchain-recreate black window. Built by MVK_ARCH=aarch64 build-moltenvk.sh.
+                PayloadModule(payloadSubpath: "lib/aarch64/libMoltenVK.dylib",
+                              crossoverSubpath: "lib/aarch64/libMoltenVK.dylib"),
             ]
         }
     }

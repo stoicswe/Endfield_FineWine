@@ -47,6 +47,7 @@ final class VariantTests: XCTestCase {
 
     private let armLayout = [
         "lib/wine/aarch64-unix/ntdll.so",
+        "lib/aarch64/libMoltenVK.dylib",
         "lib/wine/aarch64-windows/ntoskrnl.exe",
         "lib/wine/aarch64-windows/rundll32.exe",
     ]
@@ -211,11 +212,11 @@ final class VariantTests: XCTestCase {
         XCTAssertEqual(CrossOverVariant.x64.modules.first?.crossoverSubpath, "lib/wine/x86_64-unix/ntdll.so")
         XCTAssertTrue(CrossOverVariant.x64.modules.contains { $0.crossoverSubpath == "lib64/libMoltenVK.dylib" })
 
-        // ARM: the ARM64 PE modules an arm64 bottle loads, plus the launcher-alpha library that
-        // CrossOver ARM's own winemac.so is made to load. Nothing of CrossOver's is replaced
-        // except those PE modules.
+        // ARM: the ARM64 PE modules an arm64 bottle loads, the patched arm64 MoltenVK, and the
+        // launcher-alpha library that CrossOver ARM's own winemac.so is made to load.
         let arm = CrossOverVariant.arm.modules.map(\.crossoverSubpath)
         XCTAssertEqual(arm.sorted(), [
+            "lib/aarch64/libMoltenVK.dylib",
             "lib/wine/aarch64-unix/fwalpha.dylib",
             "lib/wine/aarch64-windows/ntoskrnl.exe",
             "lib/wine/aarch64-windows/rundll32.exe",

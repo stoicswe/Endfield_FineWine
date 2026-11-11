@@ -6,10 +6,12 @@
 #      SHA256SUMS + BUILD-INFO.txt. These feed swap-into-crossover.sh / the Patcher app.
 #   2. `moltenvk-out` — the patched libMoltenVK.dylib (x86_64), built by build-moltenvk.sh.
 #      Used by apply-modules.sh and bundled into the Patcher app.
-#   3. `patcher-app` (optional) — FineWine Patcher.app assembled around the Wine modules
-#      AND libMoltenVK.dylib, then checked by patcher-app/scripts/verify-app-payload.py.
-#      It carries the x64 payload only: the ARM payload needs CrossOver ARM sources, which
-#      CodeWeavers has not published (see "CrossOver variants" in patcher-app/README.md).
+#   3. `moltenvk-out-aarch64` — the same patched MoltenVK built for arm64 (CrossOver ARM).
+#   4. `wine-arm-payload` — the ARM payload: ntoskrnl.exe, rundll32.exe and wdfldr.sys built from
+#      patches/ARM on upstream Wine (the release CrossOver ARM is based on), the launcher-alpha
+#      library (patches/ARM/winemac-shim) and the arm64 MoltenVK. See scripts/build-wine-arm.sh.
+#   5. `patcher-app` (optional) — FineWine Patcher.app assembled around both payloads, then
+#      checked by patcher-app/scripts/verify-app-payload.py, which must find the ARM payload.
 #
 # Runner: `xcode-27` = the "latest macOS + latest Xcode" image (macOS 27.0 + Xcode 27.0 RC,
 # public preview; arm64). Override with `runner: macos-26` (GA image, default Xcode 26.6)
@@ -291,6 +293,149 @@ jobs:
             build/moltenvk-build.log
           if-no-files-found: ignore
 
+  # The same patched MoltenVK for CrossOver ARM, which replaces its stock 1.2.10 (aarch64 build).
+  moltenvk-arm:
+    runs-on: ${{ inputs.runner || 'xcode-27' }}
+    timeout-minutes: 30
+    env:
+      MVK_ARCH: aarch64
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Identify toolchain
+        id: toolchain
+        run: |
+          hash=$({ sw_vers; xcodebuild -version; clang --version; } | shasum -a 256 | cut -d ' ' -f 1)
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Cache MoltenVK build
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: build/moltenvk-out-aarch64
+          key: moltenvk-aarch64-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.hash }}-${{ hashFiles('patches/x64/moltenvk/**', 'scripts/build-moltenvk.sh', '.github/workflows/build-wine.yml') }}
+
+      - name: Fetch MoltenVK source
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-moltenvk.sh fetch
+
+      - name: Apply patches
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-moltenvk.sh apply
+
+      - name: Build dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-moltenvk.sh deps
+
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-moltenvk.sh build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: moltenvk-out-aarch64
+          path: build/moltenvk-out-aarch64
+          if-no-files-found: error
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: moltenvk-aarch64-logs
+          path: |
+            build/moltenvk-deps.log
+            build/moltenvk-build.log
+          if-no-files-found: ignore
+
+  # The ARM payload: ntoskrnl.exe, rundll32.exe and wdfldr.sys built from patches/ARM on the upstream
+  # Wine release CrossOver ARM is based on (ARM_WINE_TAG in build-wine-arm.sh), plus the
+  # launcher-alpha library and the arm64 MoltenVK. See patches/README.md and docs 19.
+  build-wine-arm:
+    name: ARM payload (macOS ${{ inputs.runner || 'xcode-27' }})
+    needs: moltenvk-arm
+    runs-on: ${{ inputs.runner || 'xcode-27' }}
+    timeout-minutes: 120
+    env:
+      BUILD_DIR: ${{ github.workspace }}/build
+      MVK_ARM_DIR: ${{ github.workspace }}/build/moltenvk-out-aarch64
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Identify toolchain
+        id: toolchain
+        run: |
+          hash=$({ sw_vers; xcodebuild -version; clang --version; } | shasum -a 256 | cut -d ' ' -f 1)
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Download the arm64 MoltenVK
+        uses: actions/download-artifact@v8
+        with:
+          name: moltenvk-out-aarch64
+          path: build/moltenvk-out-aarch64
+
+      # Only the three Wine modules are cached; 'payload' adds the rest on every run, so changes
+      # to winemac-shim or MoltenVK never need a Wine rebuild.
+      - name: Cache ARM Wine modules
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            build/wine-arm-payload/aarch64-windows
+            build/wine-arm-payload/COPYING.LIB
+          key: wine-arm-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.hash }}-${{ hashFiles('patches/ARM/stage1-macos/**', 'patches/ARM/stage2-dwproton/**', 'scripts/build-wine-arm.sh') }}
+
+      - name: Install build dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-wine-arm.sh deps
+
+      # WineHQ's GitLab has refused connections now and then; fetch starts clean each attempt.
+      - name: Fetch Wine source
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            ./scripts/build-wine-arm.sh fetch && exit 0
+            echo "::warning::Wine source fetch failed (attempt $attempt); retrying in 30 s"
+            sleep 30
+          done
+          exit 1
+
+      - name: Apply patches
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-wine-arm.sh apply
+
+      - name: Configure
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-wine-arm.sh configure
+
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-wine-arm.sh build
+
+      - name: Assemble payload from cached modules
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: ./scripts/build-wine-arm.sh payload
+
+      - name: List payload
+        run: find build/wine-arm-payload -type f | sort
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wine-arm-payload
+          path: build/wine-arm-payload
+          if-no-files-found: error
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wine-arm-logs
+          path: |
+            build/configure-arm.log
+            build/build-arm.log
+          if-no-files-found: ignore
+
   package:
     needs: [build-wine, moltenvk]
     runs-on: ${{ inputs.runner || 'xcode-27' }}
@@ -323,8 +468,8 @@ jobs:
 
   patcher-app:
     name: FineWine Patcher.app
-    needs: [build-wine, moltenvk]
-    if: ${{ inputs.build_patcher_app != false && needs.build-wine.result == 'success' && needs.moltenvk.result == 'success' }}
+    needs: [build-wine, moltenvk, build-wine-arm]
+    if: ${{ inputs.build_patcher_app != false && needs.build-wine.result == 'success' && needs.moltenvk.result == 'success' && needs.build-wine-arm.result == 'success' }}
     runs-on: ${{ inputs.runner || 'xcode-27' }}
     timeout-minutes: 30
     env:
@@ -364,6 +509,13 @@ jobs:
           name: moltenvk-out
           path: moltenvk
 
+      # build-app.sh stages build/wine-arm-payload when it exists.
+      - name: Download ARM payload artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wine-arm-payload
+          path: build/wine-arm-payload
+
       - name: Unzip modules into a payload tree
         shell: bash
         run: |
@@ -380,10 +532,15 @@ jobs:
         run: ./patcher-app/scripts/build-app.sh
 
       # Reads the module lists from PatcherEngine.swift. Fails on a missing module, a wrong
-      # architecture or rpath, a stock winemac.so, or a partial ARM payload.
+      # architecture or rpath, a stock winemac.so, or a partial ARM payload — and here also on a
+      # missing ARM payload, which this workflow always builds.
       - name: Verify the bundled module payload
         shell: bash
-        run: python3 ./patcher-app/scripts/verify-app-payload.py "patcher-app/build/FineWine Patcher.app"
+        run: |
+          set -euo pipefail
+          out="$(python3 ./patcher-app/scripts/verify-app-payload.py "patcher-app/build/FineWine Patcher.app")"
+          echo "$out"
+          grep -q '^ARM payload OK' <<<"$out" || { echo "::error::FineWine Patcher.app has no ARM payload"; exit 1; }
 
       - name: Verify the requested Patcher.app version
         if: ${{ inputs.app_version != '' }}
@@ -430,7 +587,7 @@ jobs:
           | Artifact | `patcher-app` — finewine-patcher-${{ env.CX_VER }}-${{ env.SHORT_SHA }}.zip |
           | Signing | ad-hoc (right-click → Open on first launch) |
           | x64 payload | verified |
-          | ARM payload | not built: CodeWeavers has not published CrossOver ARM sources |
+          | ARM payload | verified (upstream Wine modules + launcher-alpha library + arm64 MoltenVK) |
           EOF
 
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'

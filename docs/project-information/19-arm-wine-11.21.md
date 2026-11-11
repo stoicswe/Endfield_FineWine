@@ -1,6 +1,6 @@
 # 19 — CrossOver ARM on Wine 11.21
 
-> **Status (2026-11-11): ported; the game runs, ACE's drivers still don't start.** CrossOver ARM
+> **Status (2026-11-11): ported; the game runs in the world with DXMT, ACE's drivers still don't start.** CrossOver ARM
 > preview 20261111 (build 27.0.0.41303) is built on Wine 11.21, so `patches/ARM` now targets 11.21.
 > The modules build, everything they import exists in that preview, the launcher runs with its black
 > margin fixed ([16](16-launcher-black-margin.md#crossover-arm)), and the game reaches its terms
@@ -271,10 +271,90 @@ service a configuration without the driver step. The two readings that fit:
 Reporting x64 to ACE isn't an option: ACE would then start its x64 drivers, which can't run in an
 ARM64 `winedevice.exe`.
 
+## Logged in, in the world
+
+With a login on ARM (2026-11-11), the game downloaded its resources and entered the world.
+
+- **ACE never started its drivers.** Traced with `+service,+ntoskrnl` through login, the resource
+  download and entering the world: the only ACE activity is the usual one at game start
+  (`ACE-Service64` running for about 60 ms). No `ACE-CORE` service was created and no ACE driver
+  loaded. There was also no ACE message, kick or disconnect while playing.
+- **DirectX 11 with DXMT renders, but stalls.** In a bottle without a backend, the game runs Unity's
+  Vulkan renderer through MoltenVK, and parts of the UI rendered as white blocks; MoltenVK also logs
+  `'sampler' attribute parameter is out of bounds: must be between 0 and 15`, the known Vulkan-mode
+  limit. With `CX_GRAPHICS_BACKEND = dxmt` in the bottle and **DirectX 11** chosen in the launcher's
+  settings, the game starts with `-force-d3d11` and loads DXMT (`winemetal.dll`, DXMT's `d3d11.dll`
+  and `dxgi.dll`). D3DMetal can't be used on ARM: every part CrossOver ARM ships of it (`apple_gptk`
+  and `apple_gptk3`) is x86_64-only, and an ARM64 process can't load its x86_64 native half.
+- **DXMT stalls far more than Vulkan.** Every shader is compiled to Metal once, which explained some
+  first-session freezes, but later DXMT sessions kept hitching, including at startup, and weren't
+  playable. Counting the game's 5 s+ lock waits (`RtlpWaitForCriticalSection ... wait timed out`):
+
+  | Run | Lock waits |
+  |---|---|
+  | Vulkan (Auto), MSync on, through login | 3 |
+  | Vulkan (Auto), MSync on, into the world, `+seh,+unwind` | 0 |
+  | DXMT, MSync on, 621 s | 59 (40 loader, 13 unnamed, 6 heap) |
+  | DXMT, MSync off, first 161 s | 5 (1 loader, 2 unnamed, 2 heap) |
+
+  The runs log different amounts, so the counts are rough, but DXMT is clearly the main source and
+  MSync makes it worse. The bottle went back to Auto (Vulkan) with MSync off; whether that stays
+  smooth, and whether the white UI blocks come back, is the next test. That session's log also showed loader-lock
+  waits of 5 s or more, with the holder changing between threads and nothing being loaded at the
+  time; they weren't investigated further, since the freezes went away with the shader cache.
+- **One crash on entering the world**, in the Vulkan run before switching to DXMT: Wine logged
+  `call_seh_handlers invalid frame 6fffffefe6ac (0000000000052000-0000000000150000)` and
+  `Exception frame is not in stack limits => unable to dispatch exception` on the game's main thread.
+  The stack walk reached a "frame" inside `ntdll`'s image, the same kind of wrong unwind as the logo
+  freeze ([17](17-arm-logo-freeze.md)). It didn't happen with `endfield.exe:+seh,+unwind` tracing on,
+  which handles about 9,800 exceptions per world load (9,554 of them C++ `e06d7363`), so it looks
+  timing-dependent.
+- **`DXMT_ENABLE_NVEXT` and `D3DM_ENABLE_METALFX`** were both set in that bottle. With them the game
+  tries DLSS, and CrossOver logged `HACK: redirecting nvngx.dll to D3DMetal original`, whose target
+  is x86_64-only on ARM. `D3DM_ENABLE_METALFX` does nothing on ARM. Turning them off wasn't needed
+  for the stutter and hasn't been tested.
+
+### Server connection timeout
+
+Later in the same DXMT session the game logged `[Error] [Network] Server connection timed out`
+(`Player.log`, frame 6271) while still running. ACE did nothing new; its service ran only at start.
+The Wine log shows process-wide stalls around it, all on the game:
+
+- a wait of 5 s or more on the **main process heap lock** (`heap.c: main process heap section`);
+- more 5 s+ waits on `loader_section` and on an unnamed lock, with one thread (`0848`) holding it
+  while several waited.
+
+With enough threads blocked, the game can't answer the server in time, so the timeout is most likely
+a symptom of the stalls. A thread holding the heap lock for seconds is stopped, not working. Two
+suspects:
+
+- **MSync** (`WINEMSYNC=1`), which replaces how Wine waits on locks and events and is untested on
+  CrossOver ARM. Turning it off is the next test.
+- **Thread suspension**: another thread (the game's protection, or CrashSight) suspending a thread
+  that holds a lock, which is slower under ARM64EC. `NtSuspendThread` has no trace in Wine 11.21, so
+  this needs server-side tracing.
+
+The first session's freezes, which went away with the shader cache, may have hidden some of these
+stalls.
+
 ## Open
 
-- **Whether ACE loads its drivers after login on ARM.** Telling the two readings apart takes logging
-  in on ARM and watching the service manager and `winedevice.exe` with `+service,+ntoskrnl`. Not done
-  yet; logging in on ARM is the user's call.
+- **The ARM stalls behind the server timeout** (above): mostly a DXMT problem, partly MSync.
+- **Vulkan's white UI blocks**, if they persist on Auto. The ARM payload now replaces CrossOver
+  ARM's stock MoltenVK 1.2.10 with the patched 1.4.2 built for arm64 (`MVK_ARCH=aarch64
+  scripts/build-moltenvk.sh`, which needed `aarch64` mapped to Xcode's `arm64`). Whether that cures
+  them is untested; MoltenVK's 16-sampler limit is the other lead. With it, the launcher draws through
+  desktop OpenGL instead of ANGLE, which the launcher-alpha library now handles
+  ([16](16-launcher-black-margin.md#with-the-patched-moltenvk-the-opengl-path)).
+- **The patcher's ARM defaults** (DXMT, MSync on) don't match the recommendation in
+  [graphics-performance.md](../graphics-performance.md#crossover-arm-experimental-recommended-settings)
+  (Auto, MSync off).
+- **Whether ACE needs its drivers on ARM at all.** It has stayed quiet through login and play
+  without them. Whether it loads them later, or whether the servers notice their absence over a
+  longer session, is still unknown.
+- **The world-entry crash** (above), if it comes back under DXMT.
+- **Why that bottle had no backend and both upscaler keys.** Automated Setup writes one upscaler key
+  for the chosen backend, so they were probably changed afterwards; check the patcher's bottle
+  settings for ARM.
 - When a newer preview ships, check its base again. If it moves past 11.21, retarget `ARM_WINE_TAG`
   and add its `ntdll.dll` to `ArmNtdllFix.builds`.

@@ -102,6 +102,33 @@ Replacing a signed Mach-O in place (`cp` over it) left the kernel's cached signa
 process was killed with `Code Signature Invalid` when `winemac.so` loaded. The patcher writes the
 edited file as a new file.
 
+### With the patched MoltenVK: the OpenGL path
+
+Since the ARM payload also replaces CrossOver ARM's stock MoltenVK 1.2.10 with this repo's patched
+1.4.2, the launcher draws differently again. Qt no longer goes through ANGLE (Direct3D 11 → wined3d →
+Vulkan); it falls back to desktop OpenGL (`CGLFlushDrawable`), and the margin came back black (7.1%).
+wined3d itself still picks Vulkan. Forcing the launcher's Direct3D onto Vulkan
+(`AppDefaults\Games.exe\Direct3D`, `renderer=vulkan`) rendered garbage, so the library handles OpenGL
+as well:
+
+- **When Wine attaches an OpenGL context to a content view** (`addGLContext:`), the context's surface
+  opacity is set to 0 (`NSOpenGLContextParameterSurfaceOpacity`), which is what the Mac driver's
+  `OpenGLSurfaceMode=transparent` does at context creation, and the window is marked.
+- **The window surface image is dropped.** A layer dump showed Wine setting that image straight on the
+  content view's layer, under the `_NSOpenGLViewBackingLayer`, not through `updateLayer`. With the
+  OpenGL surface transparent, the margin turned **white** (that image). The library hooks
+  `setContents:` on view-backing layers in `Games.exe` and drops the image for content views in a
+  marked window that draw with OpenGL or Metal.
+- **Every `CAMetalLayer` in `Games.exe` stays non-opaque**, in case MoltenVK installs its own layer.
+
+| Build | Corner RGBA | Fully transparent | Partly transparent |
+|---|---|---|---|
+| Patched MoltenVK, Metal-only library | `(0,0,0,255)` | 0% | 0% |
+| OpenGL surface transparent, image kept | `(255,255,255,255)` | 0% | 0% |
+| Library as shipped | `(0,0,0,0)` | 6.9% | 5.6% |
+
+The last row was measured with no registry setting in the bottle, so the patched app alone fixes it.
+
 ## Testing notes
 
 - **Test copies must live in `/Applications`.** A byte-identical copy of the patched app run from

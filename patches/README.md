@@ -32,7 +32,8 @@ See [17-arm-logo-freeze.md](../docs/project-information/17-arm-logo-freeze.md).
 
 `winemac-shim/fwalpha.m` is the ARM version of `stage1-macos/0009` (the launcher's black margin).
 CrossOver ARM's `winemac.so` can't be rebuilt, so this library applies the same change at runtime,
-and the patcher adds a load command for it to `winemac.so`. See
+for both the Metal and the OpenGL drawing paths, and the patcher adds a load command for it to
+`winemac.so`. `patches/x64/moltenvk` also serves ARM: the ARM payload carries an arm64 build. See
 [16-launcher-black-margin.md](../docs/project-information/16-launcher-black-margin.md).
 
 ## `stage1-macos/` — our macOS/Rosetta-2 fixes (+ build + msync fixes)
