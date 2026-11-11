@@ -344,6 +344,15 @@ Under the menu bar **Tools → Steam / NotProton…**, the patcher provides an a
 
 CLI equivalent: [`scripts/notproton-register.sh`](../scripts/notproton-register.sh). Full guide: [docs/notproton.md](../docs/notproton.md).
 
+## Sikarugir Engine — optional tools phase
+
+Under the menu bar **Tools → Sikarugir Engine…**, the patcher integrates with [Sikarugir](https://github.com/Sikarugir-App/Sikarugir) (free Wineskin successor; `brew install --cask sikarugir-app/sikarugir/sikarugir`):
+
+- **Automatic Tarball Discovery**: Automatically scans `~/Downloads` and `~/Desktop` for `WS12WineFineWine26.3.0_1.tar.xz` built by `scripts/package-sikarugir-engine.sh`.
+- **1-Click Engine Installation**: Extracts and registers the FineWine engine cleanly into `~/Library/Application Support/Sikarugir/Engines/`.
+- **1-Click Uninstallation**: Safely removes the engine if no longer needed.
+- **CrossOver-free & Steam Support**: Allows running Arknights: Endfield (including the Steam version) inside Sikarugir wrappers without needing a CrossOver licence.
+
 ## Building the app
 
 Requires the Xcode Command Line Tools only (no Xcode):
