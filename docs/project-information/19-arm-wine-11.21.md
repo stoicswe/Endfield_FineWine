@@ -1,6 +1,8 @@
 # 19 — CrossOver ARM on Wine 11.21
 
-> **Status (2026-11-11): ported; the game runs in the world with DXMT, ACE's drivers still don't start.** CrossOver ARM
+> **Status (2026-11-12): ported; the game loads into the world on Vulkan and renders correctly, ACE's drivers still don't start.**
+> The intermittent world-load crash or hang was a stack-walk bug in CrossOver ARM's `ntdll.dll`, now
+> fixed by the patcher; see [The world-load crash](#the-world-load-crash-rtlwalkframechain). CrossOver ARM
 > preview 20261111 (build 27.0.0.41303) is built on Wine 11.21, so `patches/ARM` now targets 11.21.
 > The modules build, everything they import exists in that preview, the launcher runs with its black
 > margin fixed ([16](16-launcher-black-margin.md#crossover-arm)), and the game reaches its terms
@@ -102,6 +104,11 @@ hash, offsets) instead of one pinned build:
 | 41303 | `3c2d6459…` | `0xc8380` |
 
 A test runs the fix on whichever known preview is installed and checks the exact output hash.
+
+For 41303 the table also holds the frame-walk fix
+([below](#the-world-load-crash-rtlwalkframechain)), so its fixed hash is now `cb06b764…`. A file with
+only the nine lookups clamped (`d998d34c…`, from before that fix) is upgraded in place. 41073 doesn't
+get the frame-walk fix; that preview is superseded and wasn't retested.
 
 ## Practical notes
 
@@ -302,7 +309,8 @@ With a login on ARM (2026-11-11), the game downloaded its resources and entered 
   smooth, and whether the white UI blocks come back, is the next test. That session's log also showed loader-lock
   waits of 5 s or more, with the holder changing between threads and nothing being loaded at the
   time; they weren't investigated further, since the freezes went away with the shader cache.
-- **One crash on entering the world**, in the Vulkan run before switching to DXMT: Wine logged
+- **One crash on entering the world** (since root-caused and fixed, see
+  [The world-load crash](#the-world-load-crash-rtlwalkframechain)), in the Vulkan run before switching to DXMT: Wine logged
   `call_seh_handlers invalid frame 6fffffefe6ac (0000000000052000-0000000000150000)` and
   `Exception frame is not in stack limits => unable to dispatch exception` on the game's main thread.
   The stack walk reached a "frame" inside `ntdll`'s image, the same kind of wrong unwind as the logo
@@ -337,22 +345,98 @@ suspects:
 The first session's freezes, which went away with the shader cache, may have hidden some of these
 stalls.
 
+## The world-load crash: `RtlWalkFrameChain`
+
+**Fixed (2026-11-12).** On Vulkan, entering the world crashed or hung on some runs and worked on
+others. Crashes logged `call_seh_handlers invalid frame` / `Exception frame is not in stack limits`
+on the main thread. In hangs, the main thread sat in `ntdll`'s unwinder and `Player.log` stopped
+after the `Lua ifix` error line.
+
+### Getting at it without a debugger
+
+lldb can't attach to the game: CrossOver's `wine.app` carries the restricted
+`com.apple.developer.cross-architecture-support` entitlement with a provisioning profile, so an
+ad-hoc re-sign that adds `get-task-allow` gets the loader killed at launch (exit 137). Tracing
+(`+seh,+unwind`) made the bug go away, because it changes what is left in dead stack memory.
+Instead, debug copies of `ntdll.dll` were built:
+
+- `.text`, `.rdata` and `.data` in this file have raw pointer equal to RVA, and the padding after
+  each section's `VirtualSize` is mapped from the file. A code cave went into the `int3` padding at
+  `0x180101dc0`, a ring buffer into `.data` at `0x180188980`, and a format string into `.rdata`.
+- The cave was called from `call_seh_handlers`'s call to `virtual_unwind` and recorded each step's
+  `Rip`/`Rsp`. The existing `ERR` call for the invalid frame was rewired to print the buffer. As an
+  ARM64EC varargs call, that takes `x4` = the argument block and `w5` = its size.
+- `sample` of the hung process showed where the main thread was spinning.
+
+### What the recordings showed
+
+- The walks slid up the stack one word at a time, taking each word as a return address. That is
+  the x64 leaf rule (`Rip = [Rsp]`, `Rsp += 8`), applied when no function entry is found. The
+  "registers" they produced were ARM64 instruction words and `ntdll` code addresses, such as
+  `0x6fffffefe6dc` (`ntdll+0xde6dc`, in the x64 unwinder).
+- `ntdll+0xde6dc` is an `ldrh w8, [x20, #2]` that reads `UNWIND_INFO`. It was the pc of a fault
+  inside the unwinder: the walk had read junk unwind data. The dispatch for that fault had to unwind
+  through the same broken stack, derailed too, and nested. That gave either the "invalid frame" crash
+  or the hang.
+- In the hang, the unwinder was called directly from `GameAssembly.dll+0xeaea`. That is il2cpp
+  calling `RtlCaptureStackBackTrace(0, 0x80, buffer, NULL)`, imported from `KERNEL32`, to record a
+  stack trace (here around the `Lua ifix` error).
+
+### Root cause
+
+Wine 11.21's ARM64EC `RtlWalkFrameChain` (`signal_arm64ec.c`), which `RtlCaptureStackBackTrace`
+calls, doesn't stop when `RtlLookupFunctionEntry` returns NULL:
+
+```c
+func = RtlLookupFunctionEntry( pc, &base, &table );
+if (RtlVirtualUnwind2( UNW_FLAG_NHANDLER, base, pc, func, &context, ... ))
+    break;
+```
+
+The x86_64 version has `if (!func) break;` before the unwind. Without it, a NULL `func` hits the leaf
+rule. The walk then follows stale stack words until one lands somewhere with plausible-looking
+unwind data that isn't. The frame-validity check doesn't catch it, because each slid `Rsp` is still
+inside the stack. Whether the walk derails depends on what earlier calls left on the stack, which is
+why it was intermittent and why tracing hid it. The logo freeze ([17](17-arm-logo-freeze.md)) had
+the same junk-pc symptom and was very likely the same walk.
+
+CrossOver ARM's build of the function is at `0x1800ce7b8` in 41303. `ldr x1, [sp, #0x510]` at
+`0x1800ce848` comes right after the lookup returns `func` in `x0`.
+
+### The fix
+
+`ArmNtdllFix` adds the missing check with 16 bytes:
+
+| Address | Was | Now |
+|---|---|---|
+| `0x1800ce848` | `ldr x1, [sp, #0x510]` | `b 0x180101dc0` |
+| `0x180101dc0` | `int3` padding | `cbz x0, 0x1800ce8e4` (the loop's exit: return the frames so far) |
+| `0x180101dc4` | `int3` padding | `ldr x1, [sp, #0x510]` (the moved instruction) |
+| `0x180101dc8` | `int3` padding | `b 0x1800ce84c` |
+
+The cave makes no calls and touches no memory except the moved load, so it can't fault itself.
+A walk that stops at a frame with no function entry returns a shorter trace, which is what x86_64
+Wine and Windows do.
+
+After the fix, the game loaded into the world on Vulkan (Auto) with everything rendering correctly
+(2026-11-12).
+
 ## Open
 
 - **The ARM stalls behind the server timeout** (above): mostly a DXMT problem, partly MSync.
-- **Vulkan's white UI blocks**, if they persist on Auto. The ARM payload now replaces CrossOver
-  ARM's stock MoltenVK 1.2.10 with the patched 1.4.2 built for arm64 (`MVK_ARCH=aarch64
-  scripts/build-moltenvk.sh`, which needed `aarch64` mapped to Xcode's `arm64`). Whether that cures
-  them is untested; MoltenVK's 16-sampler limit is the other lead. With it, the launcher draws through
-  desktop OpenGL instead of ANGLE, which the launcher-alpha library now handles
-  ([16](16-launcher-black-margin.md#with-the-patched-moltenvk-the-opengl-path)).
+- **Vulkan's white UI blocks** did not appear in the 2026-11-12 run with the patched MoltenVK 1.4.2
+  built for arm64 (`MVK_ARCH=aarch64 scripts/build-moltenvk.sh`, which needed `aarch64` mapped to
+  Xcode's `arm64`), which replaces CrossOver ARM's stock 1.2.10. That's one session, so watch for
+  them. With this MoltenVK, the launcher draws through desktop OpenGL instead of ANGLE, which the
+  launcher-alpha library handles ([16](16-launcher-black-margin.md#with-the-patched-moltenvk-the-opengl-path)).
 - **The patcher's ARM defaults** (DXMT, MSync on) don't match the recommendation in
   [graphics-performance.md](../graphics-performance.md#crossover-arm-experimental-recommended-settings)
   (Auto, MSync off).
 - **Whether ACE needs its drivers on ARM at all.** It has stayed quiet through login and play
   without them. Whether it loads them later, or whether the servers notice their absence over a
   longer session, is still unknown.
-- **The world-entry crash** (above), if it comes back under DXMT.
+- **Upstreaming the frame-walk fix**: upstream Wine 11.21 still lacks the `!func` check in ARM64EC
+  `RtlWalkFrameChain`. Once CrossOver ships with it, drop `walkEdits` for that build.
 - **Why that bottle had no backend and both upscaler keys.** Automated Setup writes one upscaler key
   for the chosen backend, so they were probably changed afterwards; check the patcher's bottle
   settings for ARM.

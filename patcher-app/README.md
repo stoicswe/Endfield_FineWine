@@ -67,8 +67,11 @@ bottle created with `cxbottle --winearch arm64` uses the aarch64 host, with FEX 
 Windows code inside native processes. So for an ARM source the patcher:
 
 - skips the Rosetta 2 step when patching and in the Automated Setup preflight,
-- applies a 9-byte fix to CrossOver ARM's `ntdll.dll`, without which the game freezes at the logo
-  (see [17-arm-logo-freeze.md](../docs/project-information/17-arm-logo-freeze.md)),
+- applies two byte fixes to CrossOver ARM's `ntdll.dll`, without which the game freezes at the logo
+  or crashes or hangs loading into the world: bounds-clamped `EcCodeBitMap` lookups (9 bytes) and the
+  missing `!func` check in `RtlWalkFrameChain` (16 bytes). See
+  [17-arm-logo-freeze.md](../docs/project-information/17-arm-logo-freeze.md) and
+  [19-arm-wine-11.21.md](../docs/project-information/19-arm-wine-11.21.md#the-world-load-crash-rtlwalkframechain),
 - creates `arm64` bottles,
 - hides GPTK and D3DMetal, which are x86_64-only even in CrossOver ARM (DXMT is the default),
 - names the copy `CrossOver_Endfield_Patch_ARM.app`, and only reuses a copy of the same variant,

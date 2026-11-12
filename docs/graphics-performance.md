@@ -68,11 +68,11 @@ Things to expect:
 - **The patcher replaces CrossOver ARM's stock MoltenVK 1.2.10** with this repo's patched 1.4.2,
   built for arm64. Copies patched before that still have 1.2.10, where changing FPS or V-Sync can
   leave the window black, and some UI elements drew as **white blocks**; re-patch to get the fixes.
-  Whether the patched build cures the white blocks is still being tested.
+  With the patched build the world rendered correctly in testing (2026-11-12).
 - **ACE's kernel drivers don't load on ARM.** The game still logged in and played in testing, with
   no ACE message, but longer sessions are untested.
-- **One crash on entering the world** has been seen (a failed exception dispatch); entering again
-  worked.
+- **Entering the world could crash or hang** in copies patched before 2026-11-12, from a stack-walk
+  bug in CrossOver ARM's `ntdll.dll`. The patcher now fixes it; re-patch if you still see it.
 
 Details and measurements: [19-arm-wine-11.21.md](project-information/19-arm-wine-11.21.md).
 

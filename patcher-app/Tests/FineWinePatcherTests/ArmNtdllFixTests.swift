@@ -19,11 +19,15 @@ final class ArmNtdllFixTests: XCTestCase {
 
     /// A file holding the build's expected instruction at every site and zeroes elsewhere.
     private func fixture(_ build: ArmNtdllFix.Build) -> Data {
-        var data = Data(count: build.sites.map(\.offset).max()! + 4)
-        for site in build.sites {
-            for index in 0..<4 { data[site.offset + index] = UInt8((site.instruction >> (8 * UInt32(index))) & 0xff) }
-        }
+        let end = (build.sites.map(\.offset) + build.walkEdits.map(\.offset)).max()! + 4
+        var data = Data(count: end)
+        for site in build.sites { put(&data, site.offset, site.instruction) }
+        for edit in build.walkEdits { put(&data, edit.offset, edit.from) }
         return data
+    }
+
+    private func put(_ data: inout Data, _ offset: Int, _ value: UInt32) {
+        for index in 0..<4 { data[offset + index] = UInt8((value >> (8 * UInt32(index))) & 0xff) }
     }
 
     private func word(_ data: Data, _ offset: Int) -> UInt32 {
@@ -69,6 +73,34 @@ final class ArmNtdllFixTests: XCTestCase {
         XCTAssertThrowsError(try ArmNtdllFix.clampLookups(in: data, build: build))
     }
 
+    /// The 41303 frame-walk cave, decoded: a branch out after the lookup, then `cbz x0` to the
+    /// loop's exit, the moved `ldr`, and a branch back. Checked against llvm-mc.
+    func testFrameWalkCaveBranchesWhereExpected() throws {
+        let build = try XCTUnwrap(ArmNtdllFix.builds.first { $0.name.hasPrefix("27.0.0.41303") })
+        let fixed = try ArmNtdllFix.fix(fixture(build), build: build)
+        let va = { (offset: Int) in 0x1_8000_0000 + offset }
+        func branch(_ offset: Int) -> Int {   // b imm26
+            let imm = Int(Int32(bitPattern: word(fixed, offset) << 6) >> 6)
+            return va(offset) + imm * 4
+        }
+        func cbz(_ offset: Int) -> Int {      // cbz imm19
+            let imm = Int(Int32(bitPattern: (word(fixed, offset) >> 5) << 13) >> 13)
+            return va(offset) + imm * 4
+        }
+        XCTAssertEqual(branch(0xce848), 0x1_8010_1dc0)
+        XCTAssertEqual(word(fixed, 0x101dc0) & 0xff00_001f, 0xb400_0000, "cbz x0")
+        XCTAssertEqual(cbz(0x101dc0), 0x1_800c_e8e4)
+        XCTAssertEqual(word(fixed, 0x101dc4), 0xf9428be1, "the moved ldr x1, [sp, #0x510]")
+        XCTAssertEqual(branch(0x101dc8), 0x1_800c_e84c)
+    }
+
+    func testFrameWalkRefusesUnexpectedCode() throws {
+        let build = try XCTUnwrap(ArmNtdllFix.builds.first { !$0.walkEdits.isEmpty })
+        var data = fixture(build)
+        data[build.walkEdits[1].offset] = 0
+        XCTAssertThrowsError(try ArmNtdllFix.fix(data, build: build))
+    }
+
     func testRefusesAnUnknownBuild() throws {
         let cxr = tempDir.appendingPathComponent("cx", isDirectory: true)
         let url = cxr.appendingPathComponent(ArmNtdllFix.subpath)
@@ -91,7 +123,19 @@ final class ArmNtdllFixTests: XCTestCase {
             guard let stock = try? Data(contentsOf: source),
                   let build = ArmNtdllFix.builds.first(where: { $0.stockSHA256 == ArmNtdllFix.sha256Hex(stock) })
             else { continue }
-            XCTAssertEqual(ArmNtdllFix.sha256Hex(try ArmNtdllFix.clampLookups(in: stock, build: build)), build.fixedSHA256, build.name)
+            XCTAssertEqual(ArmNtdllFix.sha256Hex(try ArmNtdllFix.fix(stock, build: build)), build.fixedSHA256, build.name)
+            // An earlier FineWine release's file (lookups clamped only) is upgraded to the same file.
+            let earlier = try ArmNtdllFix.clampLookups(in: stock, build: build)
+            if !build.walkEdits.isEmpty {
+                XCTAssertTrue(build.earlierFixedSHA256.contains(ArmNtdllFix.sha256Hex(earlier)), build.name)
+            }
+            let cxr = tempDir.appendingPathComponent("cx-\(tested)", isDirectory: true)
+            let url = cxr.appendingPathComponent(ArmNtdllFix.subpath)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try earlier.write(to: url)
+            try ArmNtdllFix.apply(toCrossOverRoot: cxr)
+            XCTAssertTrue(ArmNtdllFix.isApplied(inCrossOverRoot: cxr), build.name)
+            XCTAssertEqual(ArmNtdllFix.sha256Hex(try Data(contentsOf: url)), build.fixedSHA256, build.name)
             tested += 1
         }
         if tested == 0 { throw XCTSkip("No known stock CrossOver ARM build is installed.") }
