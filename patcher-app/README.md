@@ -67,8 +67,11 @@ bottle created with `cxbottle --winearch arm64` uses the aarch64 host, with FEX 
 Windows code inside native processes. So for an ARM source the patcher:
 
 - skips the Rosetta 2 step when patching and in the Automated Setup preflight,
-- applies a 9-byte fix to CrossOver ARM's `ntdll.dll`, without which the game freezes at the logo
-  (see [17-arm-logo-freeze.md](../docs/project-information/17-arm-logo-freeze.md)),
+- applies two byte fixes to CrossOver ARM's `ntdll.dll`, without which the game freezes at the logo
+  or crashes or hangs loading into the world: bounds-clamped `EcCodeBitMap` lookups (9 bytes) and the
+  missing `!func` check in `RtlWalkFrameChain` (16 bytes). See
+  [17-arm-logo-freeze.md](../docs/project-information/17-arm-logo-freeze.md) and
+  [19-arm-wine-11.21.md](../docs/project-information/19-arm-wine-11.21.md#the-world-load-crash-rtlwalkframechain),
 - creates `arm64` bottles,
 - hides GPTK and D3DMetal, which are x86_64-only even in CrossOver ARM (DXMT is the default),
 - names the copy `CrossOver_Endfield_Patch_ARM.app`, and only reuses a copy of the same variant,
@@ -83,14 +86,22 @@ the launcher's own command, so a shortcut always opens the copy its bottle was s
 A bottle created any other way runs CrossOver's unpatched x86_64 tree, and the ARM payload never
 loads.
 
-**The ARM payload is experimental, and CI doesn't build it.** It holds only `ntoskrnl.exe` and
-`rundll32.exe`, built from `patches/ARM` on public Wine 11.17. Both are ARM64 modules, because an
-`arm64` bottle only loads `aarch64-windows`. They run inside stock CrossOver ARM, which keeps its
-own `ntdll.so` and `wineserver`:
+**The ARM payload is experimental.** CI builds it with every app build (the `moltenvk-arm` and
+`build-wine-arm` jobs in `build-wine.yml`), and the app job fails without it. It holds `ntoskrnl.exe`,
+`rundll32.exe` and `wdfldr.sys`, built from `patches/ARM` on public Wine 11.21, plus
+`fwalpha.dylib` (below) and the patched MoltenVK built for arm64, which replaces CrossOver ARM's
+stock 1.2.10. The PE modules are ARM64, because an `arm64` bottle only loads
+`aarch64-windows`. They run inside stock CrossOver ARM, which keeps its own `ntdll.so` and
+`wineserver`:
 
-- CodeWeavers has not published CrossOver ARM sources, and its protocol version (1809) is far from
-  public Wine 11.17's (961). Swapping `ntdll.so` fails with a version mismatch. Swapping
-  `wineserver` too gets past that, but CrossOver's other modules then can't start.
+- CodeWeavers has not published CrossOver ARM sources. Swapping `ntdll.so` fails with a protocol
+  version mismatch, and swapping `wineserver` too leaves CrossOver's other modules unable to start.
+- The PE modules must be built from the Wine release the CrossOver ARM build is based on (11.21
+  for preview 20261111; check with `strings …/aarch64-unix/ntdll.so | grep wine-1`). `ntoskrnl.exe`
+  sends requests to CrossOver's wineserver by number, and Wine 11.18 shifted every one it uses.
+- `fwalpha.dylib` fixes the launcher's black margin (x64 patch 0009). CrossOver ARM's `winemac.so`
+  can't be rebuilt, so the patcher adds a load command for the library to it, and the library makes
+  the launcher's Metal views and window non-opaque at runtime, in `Games.exe` only.
 - So the `ntdll.so` patches (the Rosetta fixes and `msync`) don't apply here. The `kernel32`
   dispatcher spoof is `#ifdef __x86_64__`, so it doesn't apply to an ARM64 module either.
 - Whether ACE's x86_64 driver can load in an ARM64 `winedevice.exe` is still an open question.
@@ -111,7 +122,7 @@ CodeWeavers publishes preview sources it falls back to upstream Wine (experiment
 (the x64 base) is published, and every preview version string 404s on
 `media.codeweavers.com`. CodeWeavers is **upstreaming the native-ARM64 Wine support to Wine**
 itself (FEX for i386/x86_64 emulation; Brendan Shanks, wine-devel, Aug 2026), so the correct
-long-term source for the ARM pipeline is **upstream Wine 11.17+ / master**, not a CrossOver-only
+long-term source for the ARM pipeline is **upstream Wine at the CrossOver ARM base**, not a CrossOver-only
 tree — `scripts/build-wine-arm.sh check` against the newest Wine you can as those MRs land.
 
 **FEX is not a separate layer on macOS.** CrossOver's x86/x86_64 emulation is not a standalone
@@ -125,12 +136,10 @@ top of* the FEX-embedded `xtajit64.dll` already inside your CrossOver app. Build
 separately only makes sense if we ever ship a **full ARM Wine engine** (like the Sikarugir path),
 where `xtajit64`/`wow64` would have to be built with FEX embedded.
 
-`scripts/build-wine-arm.sh check` reports how far the (CrossOver-26.3-era) `patches/` series gets
-against whatever source you point it at. Against **upstream Wine 11.17** (CrossOver ARM preview's
-base) it is a rebase project, not a drop-in: ~20 of 44 patches apply (16 clean + 4 with `-F3`
-fuzz), the rest need rebasing, and the `msync` patches cannot apply at all because
-`dlls/ntdll/unix/msync.c` is a CrossOver-only file — so the real CrossOver ARM sources are
-required for a faithful build.
+`scripts/build-wine-arm.sh check` reports how far `patches/ARM` gets against whatever source you
+point it at. All 16 apply to Wine 11.21. The `msync` patches can't apply to upstream at all,
+because `dlls/ntdll/unix/msync.c` is a CrossOver-only file, so a faithful full build still needs
+the real CrossOver ARM sources.
 
 ## Automated Setup
 
@@ -360,13 +369,15 @@ Requires the Xcode Command Line Tools only (no Xcode):
 open "patcher-app/build/FineWine Patcher.app"
 ```
 
-To also bundle the experimental ARM payload (optional), build it with the separate pipeline
-first; `build-app.sh` stages `build/wine-arm-payload` automatically when it exists:
+To also bundle the ARM payload, as CI does, build it with the separate pipeline first;
+`build-app.sh` stages `build/wine-arm-payload` automatically when it exists (`ARM_PAYLOAD_DIR`
+overrides the path):
 
 ```bash
-# aarch64 MoltenVK (optional) and the ARM Wine modules
+# the arm64 MoltenVK first: the ARM payload includes it
 MVK_ARCH=aarch64 ./scripts/build-moltenvk.sh all
-CX_ARM_VER=<crossover-arm-version> ./scripts/build-wine-arm.sh all   # or ARM_SRC_DIR/ARM_SRC_TARBALL
+# the ARM Wine modules (upstream Wine at ARM_WINE_TAG, default wine-11.21) + launcher-alpha library
+./scripts/build-wine-arm.sh all
 ./patcher-app/scripts/build-app.sh
 ```
 

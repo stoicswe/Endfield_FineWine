@@ -19,6 +19,8 @@ set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 MVK_TAG="${MVK_TAG:-v1.4.2}"
 MVK_ARCH="${MVK_ARCH:-x86_64}"
+# Xcode names the ARM architecture arm64; Wine and this repo say aarch64.
+XC_ARCH="$MVK_ARCH"; [ "$MVK_ARCH" = "aarch64" ] && XC_ARCH="arm64"
 BUILD_DIR="${BUILD_DIR:-$REPO/build}"
 MVK_SRC="$BUILD_DIR/moltenvk-src"
 SPVC_SRC="$BUILD_DIR/spirv-cross-src"      # patched, linked into MoltenVK's External/
@@ -101,7 +103,7 @@ cmd_deps() {
   # Use local roots so fetchDependencies preserves the patches.
   # CrossOver 26.x only loads x86_64; the ARM pipeline builds aarch64.
   local xcconfig="$BUILD_DIR/moltenvk-$MVK_ARCH.xcconfig"
-  echo "ARCHS = $MVK_ARCH" > "$xcconfig"
+  echo "ARCHS = $XC_ARCH" > "$xcconfig"
   _learned "$BUILD_DIR/.ui-mvk-deps-lines"
   ui_run "$BUILD_DIR/moltenvk-deps.log" "fetchDependencies --macos" \
     sh -c 'cd "$1" || exit 1; shift
@@ -123,7 +125,7 @@ cmd_build() {
            exec xcodebuild build -project MoltenVKPackaging.xcodeproj \
                 -scheme "MoltenVK Package (macOS only)" \
                 -destination generic/platform=macOS ARCHS="$1"' \
-    ui_sh "$MVK_SRC" "$MVK_ARCH" \
+    ui_sh "$MVK_SRC" "$XC_ARCH" \
     || { echo "MoltenVK build failed — see $BUILD_DIR/moltenvk-build.log"; exit 1; }
   ui_learn "$BUILD_DIR/.ui-mvk-build-lines" "$(wc -l < "$BUILD_DIR/moltenvk-build.log" | tr -d ' ')"
   local dylib="$MVK_SRC/Package/Release/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib"

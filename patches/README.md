@@ -13,18 +13,28 @@ STAGE 2  ACE init: missing ntoskrnl exports + KiUser*Dispatcher detection + timi
 
 ```
 patches/x64/   the full series for CrossOver 26.3 (x86_64 Wine under Rosetta 2)
-patches/ARM/   the series for the ARM variant, on public Wine 11.17
+patches/ARM/   the series for the ARM variant, on public Wine 11.21
 ```
 
 `patches/x64/moltenvk` serves both variants. The sections below describe `patches/x64/`.
 
-`patches/ARM/` starts from the 21 x64 patches that apply unchanged to Wine 11.17, keeping their
-folders and numbering. Only `ntoskrnl.exe`, `rundll32.exe` and `wdfldr.sys` are shipped from it, so the `kernel32`,
-`ntdll`, `wintrust` and `win32u` patches there have no effect yet. See "CrossOver variants" in
-[`patcher-app/README.md`](../patcher-app/README.md).
+`patches/ARM/` targets Wine 11.21, the base of CrossOver ARM preview 20261111 (build 27.0.0.41303).
+The PE modules must come from the same Wine release as the CrossOver ARM build, because
+`ntoskrnl.exe` talks to CrossOver's own wineserver and 11.18 renumbered the requests it uses. The
+series keeps the x64 folders and numbering. The `em-backports` and our `KeCapturePersistentThreadState`
+stub (`stage1-macos/0014`) are gone, because Wine 11.21 includes them; `stage1-macos/0010`, `0012`
+and `ace-core/0017` were rebased. Only `ntoskrnl.exe`, `rundll32.exe` and `wdfldr.sys` are shipped
+from it, so the `kernel32`, `ntdll`, `wintrust` and `win32u` patches there have no effect yet. See
+"CrossOver variants" in [`patcher-app/README.md`](../patcher-app/README.md).
 
-`stage1-macos/0010` to `0014` let ACE's ARM64 drivers start: a `wdfldr.sys` stub and `ntoskrnl` fixes.
+`stage1-macos/0010` to `0013` let ACE's ARM64 drivers start: a `wdfldr.sys` stub and `ntoskrnl` fixes.
 See [17-arm-logo-freeze.md](../docs/project-information/17-arm-logo-freeze.md).
+
+`winemac-shim/fwalpha.m` is the ARM version of `stage1-macos/0009` (the launcher's black margin).
+CrossOver ARM's `winemac.so` can't be rebuilt, so this library applies the same change at runtime,
+for both the Metal and the OpenGL drawing paths, and the patcher adds a load command for it to
+`winemac.so`. `patches/x64/moltenvk` also serves ARM: the ARM payload carries an arm64 build. See
+[16-launcher-black-margin.md](../docs/project-information/16-launcher-black-margin.md).
 
 ## `stage1-macos/` — our macOS/Rosetta-2 fixes (+ build + msync fixes)
 

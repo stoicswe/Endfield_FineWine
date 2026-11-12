@@ -160,8 +160,9 @@ enum CrossOverVariant: String, CaseIterable, Sendable {
         case .arm:
             // An arm64 bottle only loads `aarch64-windows`, so these are ARM64 PE modules. Only
             // modules that stay compatible with stock CrossOver ARM are swapped: its ntdll.so and
-            // wineserver use a much newer protocol (1809) than public Wine 11.17 (961), and a
-            // mixed ntdll won't start. Built by scripts/build-wine-arm.sh from patches/ARM.
+            // wineserver can't be replaced, and the PE modules must come from the Wine release
+            // CrossOver ARM is based on (11.21 for preview 20261111), whose wineserver request
+            // numbers they use. Built by scripts/build-wine-arm.sh from patches/ARM.
             return [
                 // ntoskrnl.exe em-backports, ACE-CORE fixes and the aarch64 shared page emulation
                 PayloadModule(payloadSubpath: "aarch64-windows/ntoskrnl.exe",
@@ -172,6 +173,13 @@ enum CrossOverVariant: String, CaseIterable, Sendable {
                 // Loader stub for ACE-CORE's ARM64 drivers, which import it. Wine doesn't ship it.
                 PayloadModule(payloadSubpath: "aarch64-windows/wdfldr.sys",
                               crossoverSubpath: "lib/wine/aarch64-windows/wdfldr.sys", isNew: true),
+                // The launcher-alpha fix, loaded into CrossOver ARM's own winemac.so (see ArmLauncherAlpha).
+                PayloadModule(payloadSubpath: "aarch64-unix/fwalpha.dylib",
+                              crossoverSubpath: "lib/wine/aarch64-unix/fwalpha.dylib", isNew: true),
+                // The same patched MoltenVK as x64, built for arm64. CrossOver ARM's stock 1.2.10 has
+                // the swapchain-recreate black window. Built by MVK_ARCH=aarch64 build-moltenvk.sh.
+                PayloadModule(payloadSubpath: "lib/aarch64/libMoltenVK.dylib",
+                              crossoverSubpath: "lib/aarch64/libMoltenVK.dylib"),
             ]
         }
     }
@@ -989,7 +997,12 @@ final class PatcherEngine: ObservableObject {
 
                 await begin(index)
                 try Self.installModules(into: app, from: payloadDir, variant: variant)
-                if variant == .arm { try ArmNtdllFix.apply(toCrossOverRoot: Self.cxRoot(app)) }
+                if variant == .arm {
+                    try ArmNtdllFix.apply(toCrossOverRoot: Self.cxRoot(app))
+                    try ArmLauncherAlpha.apply(toCrossOverRoot: Self.cxRoot(app)) {
+                        _ = try Self.run("/usr/bin/codesign", ["--force", "--sign", "-", $0.path])
+                    }
+                }
                 await finish(index); index += 1
 
                 if let gptk {
@@ -1328,6 +1341,9 @@ final class PatcherEngine: ObservableObject {
             guard let a = contentHash(src), let b = contentHash(dst), a == b else {
                 throw PatchError("\(module.crossoverSubpath) does not match the bundled payload after the swap.")
             }
+        }
+        if variant == .arm && !ArmLauncherAlpha.isApplied(inCrossOverRoot: cxr) {
+            throw PatchError("The launcher black-margin fix is missing from winemac.so after patching.")
         }
         if variant == .arm && !ArmNtdllFix.isApplied(inCrossOverRoot: cxr) {
             throw PatchError("The ntdll.dll fix is missing after patching.")
