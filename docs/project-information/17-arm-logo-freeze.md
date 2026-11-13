@@ -4,6 +4,15 @@
 > Rosetta, Endfield froze at the Gryphline logo. It now reaches its menu background, and the login
 > panel appears after about a minute in runs with light logging. Logging in and gameplay are **untested**, and ACE does
 > not start its drivers on ARM, so the ARM variant stays experimental.
+>
+> **Update (2026-11-11):** these findings are on preview 20261015 (Wine 11.17). Preview 20261111 is on
+> Wine 11.21; the ARM patches and this ntdll fix were carried over, see
+> [19-arm-wine-11.21.md](19-arm-wine-11.21.md).
+>
+> **Update (2026-11-12):** the reason the walk reaches a junk pc was found: ARM64EC
+> `RtlWalkFrameChain` keeps unwinding when no function entry exists, sliding up the stack. The
+> patcher now fixes that too; see
+> [19 — The world-load crash](19-arm-wine-11.21.md#the-world-load-crash-rtlwalkframechain).
 
 ## Symptom
 
@@ -21,7 +30,7 @@ return (map[page / 64] >> (page & 63)) & 1;
 ```
 
 1. During exception dispatch on the game's main thread, the stack walk reaches a pc that is not code
-   (`0x41006c0060xxxx`, which is UTF-16 text). Why it gets there is not known.
+   (`0x41006c0060xxxx`, which is UTF-16 text). Why it gets there was found later: see the update above.
 2. The bitmap read lands at `base + 0x8200d800c0` and faults, which is the logged fault address.
 3. That fault dispatches, reaches the same pc and faults again, about 0x1260 bytes deeper each time.
 4. After 200+ rounds the stack runs out and `virtual_setup_exception` calls `abort_thread(1)`.

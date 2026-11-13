@@ -76,7 +76,13 @@ def verify_arm(payload, modules, errors):
     missing = [m for m in modules if not os.path.isfile(os.path.join(root, m))]
     errors.extend(f"partial ARM payload, missing: {m}" for m in missing)
     for module in set(modules) - set(missing):
-        if pe_machine(os.path.join(root, module)) != PE_MACHINE_ARM64:
+        path = os.path.join(root, module)
+        if module.endswith(".dylib"):
+            # The launcher-alpha library and the arm64 MoltenVK.
+            check_mach_o(path, "arm64", None, errors)
+            if subprocess.run(["codesign", "--verify", path], capture_output=True).returncode:
+                errors.append(f"ARM module isn't signed: {module}")
+        elif pe_machine(path) != PE_MACHINE_ARM64:
             errors.append(f"ARM module isn't an ARM64 PE: {module}")
     return True
 
@@ -98,7 +104,7 @@ def main():
     if errors:
         sys.exit(1)
     print(f"x64 payload OK ({len(x64_modules)} files, launcher alpha patch present)")
-    print(f"ARM payload OK ({len(arm_modules)} files)" if has_arm
+    print(f"ARM payload OK ({len(arm_modules)} files, launcher alpha library present)" if has_arm
           else "::notice::ARM payload not bundled: this app patches x64 CrossOver only")
 
 
