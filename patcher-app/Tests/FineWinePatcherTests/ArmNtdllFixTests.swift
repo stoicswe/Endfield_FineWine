@@ -19,10 +19,10 @@ final class ArmNtdllFixTests: XCTestCase {
 
     /// A file holding the build's expected instruction at every site and zeroes elsewhere.
     private func fixture(_ build: ArmNtdllFix.Build) -> Data {
-        let end = (build.sites.map(\.offset) + build.walkEdits.map(\.offset)).max()! + 4
+        let end = (build.sites.map(\.offset) + build.walkEdits.map(\.offset) + build.machineEdits.map(\.offset)).max()! + 4
         var data = Data(count: end)
         for site in build.sites { put(&data, site.offset, site.instruction) }
-        for edit in build.walkEdits { put(&data, edit.offset, edit.from) }
+        for edit in build.walkEdits + build.machineEdits { put(&data, edit.offset, edit.from) }
         return data
     }
 
@@ -94,6 +94,16 @@ final class ArmNtdllFixTests: XCTestCase {
         XCTAssertEqual(branch(0x101dc8), 0x1_800c_e84c)
     }
 
+    /// `mov w0, #0xb5` (class 181) becomes `mov w0, #0xe6` (class 230), checked against llvm-mc.
+    func testProcessMachineEditChangesOnlyTheClass() throws {
+        let build = try XCTUnwrap(ArmNtdllFix.builds.first { !$0.machineEdits.isEmpty })
+        let fixed = try ArmNtdllFix.fix(fixture(build), build: build)
+        let word = word(fixed, build.machineEdits[0].offset)
+        XCTAssertEqual(word & 0xffe0_001f, 0x5280_0000, "movz w0, #imm")
+        XCTAssertEqual((word >> 5) & 0xffff, 230)
+        XCTAssertEqual((build.machineEdits[0].from >> 5) & 0xffff, 181)
+    }
+
     func testFrameWalkRefusesUnexpectedCode() throws {
         let build = try XCTUnwrap(ArmNtdllFix.builds.first { !$0.walkEdits.isEmpty })
         var data = fixture(build)
@@ -124,18 +134,23 @@ final class ArmNtdllFixTests: XCTestCase {
                   let build = ArmNtdllFix.builds.first(where: { $0.stockSHA256 == ArmNtdllFix.sha256Hex(stock) })
             else { continue }
             XCTAssertEqual(ArmNtdllFix.sha256Hex(try ArmNtdllFix.fix(stock, build: build)), build.fixedSHA256, build.name)
-            // An earlier FineWine release's file (lookups clamped only) is upgraded to the same file.
-            let earlier = try ArmNtdllFix.clampLookups(in: stock, build: build)
-            if !build.walkEdits.isEmpty {
+            // Files from earlier FineWine releases (lookups clamped only, then with the frame-walk
+            // fix) are upgraded to the same file.
+            let clamped = try ArmNtdllFix.clampLookups(in: stock, build: build)
+            let walked = try ArmNtdllFix.fixFrameWalk(in: clamped, build: build)
+            var earlierFiles: [Data] = []
+            if !build.walkEdits.isEmpty { earlierFiles.append(clamped) }
+            if !build.machineEdits.isEmpty { earlierFiles.append(walked) }
+            for (index, earlier) in earlierFiles.enumerated() {
                 XCTAssertTrue(build.earlierFixedSHA256.contains(ArmNtdllFix.sha256Hex(earlier)), build.name)
+                let cxr = tempDir.appendingPathComponent("cx-\(tested)-\(index)", isDirectory: true)
+                let url = cxr.appendingPathComponent(ArmNtdllFix.subpath)
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try earlier.write(to: url)
+                try ArmNtdllFix.apply(toCrossOverRoot: cxr)
+                XCTAssertTrue(ArmNtdllFix.isApplied(inCrossOverRoot: cxr), build.name)
+                XCTAssertEqual(ArmNtdllFix.sha256Hex(try Data(contentsOf: url)), build.fixedSHA256, build.name)
             }
-            let cxr = tempDir.appendingPathComponent("cx-\(tested)", isDirectory: true)
-            let url = cxr.appendingPathComponent(ArmNtdllFix.subpath)
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try earlier.write(to: url)
-            try ArmNtdllFix.apply(toCrossOverRoot: cxr)
-            XCTAssertTrue(ArmNtdllFix.isApplied(inCrossOverRoot: cxr), build.name)
-            XCTAssertEqual(ArmNtdllFix.sha256Hex(try Data(contentsOf: url)), build.fixedSHA256, build.name)
             tested += 1
         }
         if tested == 0 { throw XCTSkip("No known stock CrossOver ARM build is installed.") }

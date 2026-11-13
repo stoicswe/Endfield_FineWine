@@ -61,6 +61,9 @@ In the bottle's `cxbottle.conf`, the `[EnvironmentVariables]` section then holds
 "WINEMSYNC" = "0"
 ```
 
+Automated Setup also sets ARM bottles to report Windows 11 24H2 (build 26100) instead of the
+template's 22000.
+
 Things to expect:
 
 - **The first launch looks frozen** for several minutes while every pipeline is compiled through

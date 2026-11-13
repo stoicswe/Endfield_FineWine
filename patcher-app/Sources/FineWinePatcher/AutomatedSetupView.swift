@@ -77,6 +77,7 @@ struct AutomatedSetupView: View {
         .padding(20)
         .frame(width: 580)
         .fixedSize(horizontal: false, vertical: true)
+        .fineWineChrome()
         .interactiveDismissDisabled(isPatching || setup.isRunning)
         .onAppear {
             let variant = source?.variant
@@ -116,13 +117,7 @@ struct AutomatedSetupView: View {
     // MARK: - Header / footer
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(l10n.tr("setup.title"))
-                .font(.title2.weight(.semibold))
-            Text(l10n.tr("setup.subtitle"))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        PageHeader(title: l10n.tr("setup.title"), subtitle: l10n.tr("setup.subtitle"), symbol: "wand.and.stars") {
             if page != .progress {
                 Text("Step \(page.rawValue + 1) of 4")
                     .font(.caption)
@@ -140,13 +135,13 @@ struct AutomatedSetupView: View {
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(l10n.tr("app.next")) { page = .graphics }
-                    .buttonStyle(.borderedProminent)
+                    .prominentGlassButton()
                     .disabled(!canContinue)
             case .graphics:
                 if isPatching {
                     Spacer()
                     Button(l10n.tr("content.btn.patching")) {}
-                        .buttonStyle(.borderedProminent)
+                        .prominentGlassButton()
                         .disabled(true)
                 } else {
                     Button(l10n.tr("app.back")) { page = .crossOver }
@@ -154,7 +149,7 @@ struct AutomatedSetupView: View {
                     Button(needsPatch ? l10n.tr("content.btn.create_patch") : l10n.tr("app.next")) {
                         applyGraphicsAndContinue()
                     }
-                    .buttonStyle(.borderedProminent)
+                    .prominentGlassButton()
                     .disabled(!canContinue)
                 }
             case .installer:
@@ -162,10 +157,10 @@ struct AutomatedSetupView: View {
                 Spacer()
                 if installer == nil {
                     Button(l10n.tr("setup.installer.choose_button")) { chooseInstaller() }
-                        .buttonStyle(.borderedProminent)
+                        .prominentGlassButton()
                 } else {
                     Button(l10n.tr("app.next")) { page = .bottle }
-                        .buttonStyle(.borderedProminent)
+                        .prominentGlassButton()
                         .disabled(SetupValidation.installerError(installer) != nil)
                 }
             case .bottle:
@@ -173,7 +168,7 @@ struct AutomatedSetupView: View {
                     .disabled(setup.isRunning)
                 Spacer()
                 Button(l10n.tr("setup.btn.start")) { createBottle() }
-                    .buttonStyle(.borderedProminent)
+                    .prominentGlassButton()
                     .disabled(setup.isRunning || nameError != nil || installer == nil || patchedApp == nil)
             case .progress:
                 Spacer()
@@ -181,7 +176,7 @@ struct AutomatedSetupView: View {
                     Button("Show Logs") { revealLogs() }
                 }
                 Button(setup.isRunning ? "Working…" : l10n.tr("app.close")) { dismiss() }
-                    .buttonStyle(.borderedProminent)
+                    .prominentGlassButton()
                     .disabled(setup.isRunning)
             }
         }
@@ -355,7 +350,7 @@ struct AutomatedSetupView: View {
 
             HStack(spacing: 8) {
                 Button(l10n.tr("setup.installer.choose_button")) { chooseInstaller() }
-                    .buttonStyle(.borderedProminent)
+                    .prominentGlassButton()
                 if let installer {
                     Text(installer.lastPathComponent)
                         .font(.callout)

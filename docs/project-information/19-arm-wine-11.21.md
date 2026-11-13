@@ -106,8 +106,10 @@ hash, offsets) instead of one pinned build:
 A test runs the fix on whichever known preview is installed and checks the exact output hash.
 
 For 41303 the table also holds the frame-walk fix
-([below](#the-world-load-crash-rtlwalkframechain)), so its fixed hash is now `cb06b764…`. A file with
-only the nine lookups clamped (`d998d34c…`, from before that fix) is upgraded in place. 41073 doesn't
+([below](#the-world-load-crash-rtlwalkframechain)), and the `IsWow64Process2` change
+([below](#where-the-client-drops-the-drivers-2026-11-13)), so its fixed hash is now `22dbe4f7…`. Files
+from before those edits (`d998d34c…` with only the lookups clamped, `cb06b764…` with the frame-walk
+fix) are upgraded in place. 41073 doesn't
 get the frame-walk fix; that preview is superseded and wasn't retested.
 
 ## Practical notes
@@ -277,6 +279,121 @@ service a configuration without the driver step. The two readings that fit:
 
 Reporting x64 to ACE isn't an option: ACE would then start its x64 drivers, which can't run in an
 ARM64 `winedevice.exe`.
+
+### Where the client drops the drivers (2026-11-13)
+
+Tencent's ACE is reported as supported at kernel level on Windows on ARM, so the skipped driver step
+should be something in this environment, not ACE's design. Two more experiments:
+
+**The CPUID hypervisor bit is not the cause.** A probe program (an x64 exe run in both bottles)
+showed that FEX, CrossOver ARM's x64 emulator, sets CPUID's "hypervisor present" bit and answers
+leaf `0x40000000` with `FEXIFEXIEMU`; under Rosetta the bit is clear. `FEX_HIDEHYPERVISORBIT=1` in the
+bottle's `[EnvironmentVariables]` clears the bit (the vendor leaf still answers). With it set, ACE
+behaved exactly as before: `ACE-Service64` ran for 0.06 s and never created the `ACE-CORE` services.
+The setting was removed again.
+
+Everything else the probe compared matches what an emulated x64 process is documented to see on
+Windows on ARM: `IsWow64Process2` gives process `0`, native `0xaa64`; `GetNativeSystemInfo` gives
+AMD64; `GetMachineTypeAttributes` and `NtQuerySystemInformationEx` classes 181 and 230 list ARM64 as
+native with AMD64 and i386 as user-mode guests; `KUSER_SHARED_DATA.NativeProcessorArchitecture` is 12.
+What differs from a real machine is identity only: CPU name `Apple M3` / `Unknown ARM CPU`, vendor
+`Apple`, and the FEX vendor leaf.
+
+**The divergence is on the client's handshake thread.** With
+`endfield.exe:+file,endfield.exe:+reg,endfield.exe:+ntdll,endfield.exe:+process` on both variants
+(no relay, so the protection isn't upset), the thread in the game that talks to `ACE-Service64` over
+the pipe does this after writing its 0x208-byte header:
+
+| x64 | ARM |
+|---|---|
+| `0xb5` query | `0xb5` query |
+| `0xb5`, `0xb5`, `0xb5`, then opens and reads `AntiCheatExpert\ACE-CORE.sys` | `0xb5` |
+| `0xb5`, `0xb5`, `0xb5`, then opens and reads `AntiCheatExpert\ACE-CORE.sys2` | `0xb5` |
+| `0xb5` | `0xb5` |
+| writes the 12-byte header and a `0xa154`-byte blob | writes the 12-byte header and a `0xa064`-byte blob |
+
+`0xb5` is `NtQuerySystemInformationEx(SystemSupportedProcessorArchitectures)` with a 32-byte buffer,
+which in Wine comes from `IsWow64Process2`, `GetNativeSystemInfo` or `IsWow64GuestMachineSupported`.
+Judging by the stack addresses, the same check runs three times on both variants. On x64 it passes
+twice, and each pass is followed by a second, deeper query, the top-level one again, and the driver
+file being read into the blob. On ARM it never passes, so no driver file is read, neither `.sys` nor
+the ARM64 `.sysa`, and the blob goes out without driver entries. The service then has nothing to
+start. Earlier in startup the game's main thread reads all four files (`.sys`, `.sys2`, `.sysa`,
+`.sysa2`) on both variants, and `ACE-Setup64` installs the `.sysa` pair on ARM, so the ARM64 drivers
+are known to the client; it is this later check that leaves them out.
+
+**All of those queries are `IsWow64Process2` on the game itself.** An `endfield.exe:+server` trace
+shows each one makes a `get_process_info` request for handle `-1`, the current process, which only
+`RtlWow64GetProcessMachines` with a real handle does. (The same trace dumps the first 1,024 bytes of
+each pipe write: the 0x208 header holds `Endfield.exe` in plain text, and the configuration blob is
+high-entropy, so it is encrypted or compressed and wasn't examined further. Its size also varies
+between runs on the same variant, `0xa064` to `0xa0e4` on ARM, so the size alone says little.)
+
+**Reporting the process as AMD64 doesn't change it.** A forum report claims real hardware answers
+`IsWow64Process2` for an emulated x64 process with process `AMD64`, native `ARM64`, where Wine (and
+Wine's tests, and Parallels) give process `0`. As a test, the ARM64EC `RtlWow64GetProcessMachines` in
+`ntdll.dll` was switched from class 181 to class 230 (one instruction at file offset `0xb78a4`,
+`mov w0, #0xb5` to `mov w0, #0xe6`), which yields `process=8664 native=aa64`. The client made the
+same four queries with the new class and still read no driver file; the service stopped as before.
+The project keeps this change anyway, as part of `ArmNtdllFix` (`machineEdits`, fixed hash
+`22dbe4f7…`), in case something else needs it; note that Wine's tests expect the stock answer on
+Windows on ARM. So the client skips the drivers whenever the native machine is ARM64,
+whatever the process machine says, or it depends on something that isn't an API call.
+
+**The Windows build number doesn't change it either.** The bottle reports Windows 11 build 22000,
+and anti-cheat support on Windows on ARM came with 24H2 (26100). With no `HKCU\Software\Wine\Version`
+set, Wine takes its version from `HKLM\Software\Microsoft\Windows NT\CurrentVersion`, so setting
+`CurrentBuild` and `CurrentBuildNumber` to `26100` made `RtlGetVersion`, the PEB and
+`KUSER_SHARED_DATA` all report 26100. The client and service behaved the same. The project keeps 26100 for ARM
+bottles anyway: Automated Setup sets both values after creating an `arm64` bottle
+(`SetupEngine.armWindowsBuildCommands`). An existing bottle needs them set by hand with `reg add`.
+
+**The emulator's CPUID identity doesn't change it either.** Under Rosetta the x64 bottle
+reports hypervisor bit 0, an empty leaf `0x40000000` and the brand string `VirtualApple @ 2.50GHz`,
+and ACE loads its drivers there, so ACE isn't put off by an emulated CPU name as such. As a test the
+ARM variant was made to report the same way:
+
+| | Stock ARM | Test | How |
+|---|---|---|---|
+| Hypervisor bit (leaf 1, `ecx` bit 31) | 1 | 0 | `FEX_HIDEHYPERVISORBIT=1` in the bottle's `[EnvironmentVariables]` |
+| Leaf `0x40000000` | `eax=0x40000001`, `FEXIFEXIEMU` | all zero | the leaf's function at `xtajit64.dll` offset `0x286d8` (build 41303) becomes `mov x0, xzr; mov x1, xzr; ret` |
+| Brand string | `Unknown ARM CPU` | `Apple M3` | the 16-byte literal at offset `0x2284c0` replaced with `machdep.cpu.brand_string` |
+
+FEX names the CPU from the `CP 4000` (MIDR) registry value, which Wine doesn't provide on a Mac, and
+its table has no M3, hence the fallback literal. **Wine loads `xtajit64.dll` from the bottle's
+`system32`**, a copy made from the app when the bottle is created; editing only the app's file
+changes nothing for an existing bottle. ACE behaved the same with all three in place. The
+project keeps two of them and reverted the third (`ArmEmulatorIdentity.swift`):
+
+- **Kept: hypervisor bit 0.** Automated Setup adds `FEX_HIDEHYPERVISORBIT=1` to ARM bottles.
+- **Kept: the real CPU name.** The patcher writes the Mac's CPU name over the literal in the app's
+  `xtajit64.dll` (stock hash `94a64d85…`, build 41303 only; any other file is left alone), and
+  Automated Setup does the same to the new bottle's `system32` copy. An existing bottle needs its
+  copy replaced with the app's and the variable added by hand. The 32-bit `xtajit.dll` is unchanged.
+- **Reverted: the vendor leaf.** Leaf `0x40000000` still answers `FEXIFEXIEMU`, as CrossOver ships it.
+
+What isn't known is which answer that check wants. Wine's answers for these calls match the
+documented Windows on ARM behaviour, so either ACE's client reads something else there that these
+traces can't show, or real Windows on ARM behaves the same way and loads the drivers by another
+route. Telling those apart needs ground truth from a real Windows on ARM machine running the game
+(a Process Monitor trace of the game's start, or just whether `ACE-CORE*` drivers are loaded). Every
+local difference that could be identified has now been tested. Taking ACE's
+protected client apart is out of scope: the goal is to run ACE as shipped.
+
+### What others report (searched 2026-11-13)
+
+- **ACE has a no-driver mode by design.** PCGamingWiki's ACE page records ACE games that run under
+  Wine on some hardware (certain Steam Deck models) *without loading the kernel driver*, and fail on
+  other Linux machines with the same Proton, which it reads as a built-in hardware check; it also
+  mentions ACE variants that are user-mode only. It lists Endfield's ACE as an obfuscated custom
+  build. So a client that deliberately sends a driver-less configuration, as on ARM here, is known
+  behaviour and not necessarily a fault.
+- **Windows on ARM:** coverage of Qualcomm's late-2025 announcement disagrees on whether ACE is
+  already supported or still being worked on, and nothing found says whether ACE's kernel drivers
+  load there, for Endfield or any other title. No public mention of the `.sysa` ARM64 driver files.
+- **Other ARM efforts** target Easy Anti-Cheat's user-mode Linux client through FEX
+  (`StonkGuy/eac-arm64-emulation-poc`); Proton on ARM has no kernel anti-cheat. No one appears to
+  have published ACE kernel drivers running on ARM under Wine.
 
 ## Logged in, in the world
 

@@ -69,10 +69,13 @@ Windows code inside native processes. So for an ARM source the patcher:
 - skips the Rosetta 2 step when patching and in the Automated Setup preflight,
 - applies two byte fixes to CrossOver ARM's `ntdll.dll`, without which the game freezes at the logo
   or crashes or hangs loading into the world: bounds-clamped `EcCodeBitMap` lookups (9 bytes) and the
-  missing `!func` check in `RtlWalkFrameChain` (16 bytes). See
+  missing `!func` check in `RtlWalkFrameChain` (16 bytes). A third edit makes `IsWow64Process2`
+  report an emulated x64 process as AMD64 on ARM64. See
   [17-arm-logo-freeze.md](../docs/project-information/17-arm-logo-freeze.md) and
   [19-arm-wine-11.21.md](../docs/project-information/19-arm-wine-11.21.md#the-world-load-crash-rtlwalkframechain),
-- creates `arm64` bottles,
+- makes the x64 emulator report the Mac's CPU name instead of `Unknown ARM CPU`, and sets new
+  bottles to clear CPUID's hypervisor bit (`FEX_HIDEHYPERVISORBIT=1`; see doc 19),
+- creates `arm64` bottles, set to report Windows 11 24H2 (build 26100),
 - hides GPTK and D3DMetal, which are x86_64-only even in CrossOver ARM (DXMT is the default),
 - names the copy `CrossOver_Endfield_Patch_ARM.app`, and only reuses a copy of the same variant,
 - gives it the bundle ID `com.codeweavers.CrsEF.ARM`, so shortcuts open the right copy when both
