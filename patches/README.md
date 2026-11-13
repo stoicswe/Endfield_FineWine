@@ -28,6 +28,9 @@ from it, so the `kernel32`, `ntdll`, `wintrust` and `win32u` patches there have 
 "CrossOver variants" in [`patcher-app/README.md`](../patcher-app/README.md).
 
 `stage1-macos/0010` to `0013` let ACE's ARM64 drivers start: a `wdfldr.sys` stub and `ntoskrnl` fixes.
+`stage1-macos/0014` makes `CancelIPChangeNotify` wait for the cancelled request to finish; without it
+the late status write corrupted freed memory in the game and crashed `GetAdaptersAddresses`. It goes
+into `nsi.dll`, which is built as ARM64X from a second, `arm64ec,aarch64` build tree (doc 19).
 See [17-arm-logo-freeze.md](../docs/project-information/17-arm-logo-freeze.md).
 
 `winemac-shim/fwalpha.m` is the ARM version of `stage1-macos/0009` (the launcher's black margin).

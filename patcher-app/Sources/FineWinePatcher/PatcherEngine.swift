@@ -173,6 +173,12 @@ enum CrossOverVariant: String, CaseIterable, Sendable {
                 // Loader stub for ACE-CORE's ARM64 drivers, which import it. Wine doesn't ship it.
                 PayloadModule(payloadSubpath: "aarch64-windows/wdfldr.sys",
                               crossoverSubpath: "lib/wine/aarch64-windows/wdfldr.sys", isNew: true),
+                // Waits for a cancelled CancelIPChangeNotify request to finish before returning.
+                // Without it the late status write corrupted freed memory in the game process
+                // (Chromium's network watcher) and crashed GetAdaptersAddresses. ARM64X, because
+                // the x64 game loads it; Wine loads the app's copy, so existing bottles get it too.
+                PayloadModule(payloadSubpath: "aarch64-windows/nsi.dll",
+                              crossoverSubpath: "lib/wine/aarch64-windows/nsi.dll"),
                 // The launcher-alpha fix, loaded into CrossOver ARM's own winemac.so (see ArmLauncherAlpha).
                 PayloadModule(payloadSubpath: "aarch64-unix/fwalpha.dylib",
                               crossoverSubpath: "lib/wine/aarch64-unix/fwalpha.dylib", isNew: true),

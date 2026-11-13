@@ -365,7 +365,10 @@ its table has no M3, hence the fallback literal. **Wine loads `xtajit64.dll` fro
 changes nothing for an existing bottle. ACE behaved the same with all three in place. The
 project keeps two of them and reverted the third (`ArmEmulatorIdentity.swift`):
 
-- **Kept: hypervisor bit 0.** Automated Setup adds `FEX_HIDEHYPERVISORBIT=1` to ARM bottles.
+- **Kept: hypervisor bit 0.** Automated Setup adds `FEX_HIDEHYPERVISORBIT=1` to ARM bottles. (On
+  2026-11-13 a fresh bottle's game quit right after character login and briefly looked like this
+  setting's fault; a logged run showed a crash in Wine's `GetAdaptersAddresses` instead, which
+  doesn't depend on it. See "The adapter-list crash" below.)
 - **Kept: the real CPU name.** The patcher writes the Mac's CPU name over the literal in the app's
   `xtajit64.dll` (stock hash `94a64d85…`, build 41303 only; any other file is left alone), and
   Automated Setup does the same to the new bottle's `system32` copy. An existing bottle needs its
@@ -559,3 +562,42 @@ After the fix, the game loaded into the world on Vulkan (Auto) with everything r
   settings for ARM.
 - When a newer preview ships, check its base again. If it moves past 11.21, retarget `ARM_WINE_TAG`
   and add its `ntdll.dll` to `ArmNtdllFix.builds`.
+
+## The adapter-list crash: `GetAdaptersAddresses` (2026-11-13, fixed)
+
+Intermittent: the game logs in, picks a server and then dies at a random point, with no CrashSight
+report (the process hangs on the loader lock for about 85 s before winedbg runs). A logged run
+(`--debugmsg 'endfield.exe:+seh,+process'`) caught it:
+
+- `EXCEPTION_ACCESS_VIOLATION` reading `0xb780` at `iphlpapi.dll+0x21e88` (CrossOver ARM build 41303),
+  inside `adapters_addresses_alloc`, called from `Qt5Network` (the `qgenericbearer` plugin polls the
+  interface list in the background). Nothing handles it.
+- The faulting load is `rw[i].alias` for entry 43 (`x20 = 43 * sizeof(nsi_ndis_ifinfo_rw)`, `0x444`),
+  and the `rw` table pointer (stack slot `[sp+0xc8]`, filled by `NsiAllocateAndGetTable`) reads as
+  0. Nothing in the function writes that slot again; `GetAdaptersAddresses` itself is fine (a probe
+  looping it in the bottle, with several threads and constant suspend/context round trips, never
+  failed).
+
+**Cause: a cancelled `NotifyAddrChange` request completes after `CancelIPChangeNotify` returns.**
+Chromium's network change notifier (in `Qt5WebEngineCore.dll` and CEF's `libcef.dll`, both in the
+game's process) arms `NotifyAddrChange` with an `OVERLAPPED` in its own object, and when the object
+goes away it calls `CancelIPChangeNotify` and frees the memory at once. Wine's
+`NsiCancelChangeNotification` only called `CancelIoEx`: the cancel then travels to nsiproxy in
+winedevice, and the request's final status (`STATUS_CANCELLED`, 0 bytes) is written into the
+`OVERLAPPED` on a later syscall. The 8-byte 0 lands 8 bytes after the status, which in the crash was
+the `rw` pointer. A probe that arms, cancels, returns and refills the stack with a canary shows it
+every time on stock CrossOver ARM: `0x…c0000120` at the old `OVERLAPPED`, then `0`. On Windows the
+cancelled request has completed by the time `CancelIPChangeNotify` returns. Upstream Wine 11.21 has
+the same code.
+
+**Fix: `patches/ARM/stage1-macos/0014`.** `NsiCancelChangeNotification` waits (up to 5 s) with
+`GetOverlappedResultEx` until the request has completed. With it the probe's `OVERLAPPED` reads
+`0xc0000120` when the cancel returns and nothing is overwritten afterwards; a cancel from another
+thread than the one that armed the request takes about 4 ms. `nsi.dll` is loaded into the x64 game,
+so it has to be ARM64X like CrossOver's: `scripts/build-wine-arm.sh` builds it from a second tree
+configured with `--enable-archs=arm64ec,aarch64` (Homebrew llvm + lld), strips it and adds it to the
+ARM payload; the patcher installs it over `lib/wine/aarch64-windows/nsi.dll`. Wine loads that copy,
+not the bottle's `system32` one, so existing bottles get the fix too. The built `nsi.dll` and
+`iphlpapi.dll` match CrossOver's (same exports; the same CHPE layout for `iphlpapi`), and CrossOver's
+`iphlpapi`, `nsi` and `nsiproxy` sources (26.3) carry no changes of their own, so swapping in
+upstream-built modules is safe here.

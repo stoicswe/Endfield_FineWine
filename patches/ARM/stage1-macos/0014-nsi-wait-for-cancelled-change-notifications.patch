@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: FineWine
+Subject: [PATCH] nsi: Wait for cancelled change notifications to complete.
+
+NsiCancelChangeNotification (CancelIPChangeNotify) returned while the cancel
+was still on its way through nsiproxy, so the request's final status was
+written to the caller's OVERLAPPED afterwards. Chromium's network change
+notifier (Qt5WebEngineCore and CEF in Endfield's process) frees the OVERLAPPED
+right after cancelling, so the late STATUS_CANCELLED / 0 write corrupted
+whatever reused that memory; in Endfield it zeroed a table pointer in a
+GetAdaptersAddresses frame and the game crashed. On Windows the cancelled
+request has completed by the time CancelIPChangeNotify returns.
+---
+--- a/dlls/nsi/nsi.c
++++ b/dlls/nsi/nsi.c
+@@ -118,13 +118,22 @@ err:
+ 
+ DWORD WINAPI NsiCancelChangeNotification( OVERLAPPED *ovr )
+ {
+-    DWORD err = ERROR_SUCCESS;
++    HANDLE device = get_nsi_device( TRUE );
++    DWORD err = ERROR_SUCCESS, len;
+ 
+     TRACE( "%p.\n", ovr );
+ 
+     if (!ovr) return ERROR_NOT_FOUND;
+-    if (!CancelIoEx(  get_nsi_device( TRUE ), ovr ))
+-        err = GetLastError();
++    if (!CancelIoEx( device, ovr ))
++        return GetLastError();
++
++    /* The cancel reaches nsiproxy asynchronously, so the request's final status is written to
++     * the OVERLAPPED some time after CancelIoEx returns. Callers such as Chromium free the
++     * OVERLAPPED as soon as CancelIPChangeNotify returns, and the late write then lands in
++     * whatever reuses that memory. Wait for it, as the request has finished by then on Windows. */
++    if (ovr->Internal == STATUS_PENDING && !GetOverlappedResultEx( device, ovr, &len, 5000, FALSE )
++        && GetLastError() == WAIT_TIMEOUT)
++        WARN( "cancelled request %p did not complete.\n", ovr );
+ 
+     return err;
+ }

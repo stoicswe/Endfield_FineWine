@@ -50,6 +50,7 @@ final class VariantTests: XCTestCase {
         "lib/aarch64/libMoltenVK.dylib",
         "lib/wine/aarch64-windows/ntoskrnl.exe",
         "lib/wine/aarch64-windows/rundll32.exe",
+        "lib/wine/aarch64-windows/nsi.dll",
     ]
 
     func testOnlyX64NeedsRosetta() {
@@ -218,6 +219,7 @@ final class VariantTests: XCTestCase {
         XCTAssertEqual(arm.sorted(), [
             "lib/aarch64/libMoltenVK.dylib",
             "lib/wine/aarch64-unix/fwalpha.dylib",
+            "lib/wine/aarch64-windows/nsi.dll",
             "lib/wine/aarch64-windows/ntoskrnl.exe",
             "lib/wine/aarch64-windows/rundll32.exe",
             "lib/wine/aarch64-windows/wdfldr.sys",

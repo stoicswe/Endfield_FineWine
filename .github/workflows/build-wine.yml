@@ -7,7 +7,7 @@
 #   2. `moltenvk-out` — the patched libMoltenVK.dylib (x86_64), built by build-moltenvk.sh.
 #      Used by apply-modules.sh and bundled into the Patcher app.
 #   3. `moltenvk-out-aarch64` — the same patched MoltenVK built for arm64 (CrossOver ARM).
-#   4. `wine-arm-payload` — the ARM payload: ntoskrnl.exe, rundll32.exe and wdfldr.sys built from
+#   4. `wine-arm-payload` — the ARM payload: ntoskrnl.exe, rundll32.exe, wdfldr.sys and nsi.dll built from
 #      patches/ARM on upstream Wine (the release CrossOver ARM is based on), the launcher-alpha
 #      library (patches/ARM/winemac-shim) and the arm64 MoltenVK. See scripts/build-wine-arm.sh.
 #   5. `patcher-app` (optional) — FineWine Patcher.app assembled around both payloads, then
@@ -347,7 +347,7 @@ jobs:
             build/moltenvk-build.log
           if-no-files-found: ignore
 
-  # The ARM payload: ntoskrnl.exe, rundll32.exe and wdfldr.sys built from patches/ARM on the upstream
+  # The ARM payload: ntoskrnl.exe, rundll32.exe, wdfldr.sys and nsi.dll built from patches/ARM on the upstream
   # Wine release CrossOver ARM is based on (ARM_WINE_TAG in build-wine-arm.sh), plus the
   # launcher-alpha library and the arm64 MoltenVK. See patches/README.md and docs 19.
   build-wine-arm:
@@ -374,8 +374,9 @@ jobs:
           name: moltenvk-out-aarch64
           path: build/moltenvk-out-aarch64
 
-      # Only the three Wine modules are cached; 'payload' adds the rest on every run, so changes
-      # to winemac-shim or MoltenVK never need a Wine rebuild.
+      # Only the Wine modules (ntoskrnl, rundll32, wdfldr and the ARM64X nsi.dll) are cached;
+      # 'payload' checks they're all there and adds the rest on every run, so changes to
+      # winemac-shim or MoltenVK never need a Wine rebuild.
       - name: Cache ARM Wine modules
         id: cache
         uses: actions/cache@v6
@@ -434,6 +435,8 @@ jobs:
           path: |
             build/configure-arm.log
             build/build-arm.log
+            build/configure-arm-ec.log
+            build/build-arm-ec.log
           if-no-files-found: ignore
 
   package:

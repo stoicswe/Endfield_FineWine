@@ -381,9 +381,18 @@ Requires the Xcode Command Line Tools only (no Xcode):
 open "patcher-app/build/FineWine Patcher.app"
 ```
 
-To also bundle the ARM payload, as CI does, build it with the separate pipeline first;
-`build-app.sh` stages `build/wine-arm-payload` automatically when it exists (`ARM_PAYLOAD_DIR`
-overrides the path):
+For a complete local build of either variant in one step, use `scripts/build-local.sh`:
+
+```bash
+./scripts/build-local.sh        # both variants (default)
+./scripts/build-local.sh x64    # x64 only
+./scripts/build-local.sh arm    # ARM only, reusing the x64 payload already in build/
+```
+
+It runs the commands below as needed, skips any stage whose output is up to date (`FORCE=1`
+rebuilds), and verifies the finished app. By hand: to also bundle the ARM payload, as CI does,
+build it with the separate pipeline first; `build-app.sh` stages `build/wine-arm-payload`
+automatically when it exists (`ARM_PAYLOAD_DIR` overrides the path):
 
 ```bash
 # the arm64 MoltenVK first: the ARM payload includes it
