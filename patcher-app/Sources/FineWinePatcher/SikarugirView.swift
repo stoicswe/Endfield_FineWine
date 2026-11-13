@@ -29,6 +29,7 @@ struct SikarugirView: View {
         .padding(20)
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
+        .fineWineChrome()
         .onAppear { refresh() }
         .onChange(of: engine.sikarugirIsRunning) { running in
             if !running { refresh() }
@@ -38,14 +39,7 @@ struct SikarugirView: View {
     // MARK: - Sections
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(l10n.tr("sikarugir.title"))
-                .font(.title2.weight(.semibold))
-            Text(l10n.tr("sikarugir.desc"))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        PageHeader(title: l10n.tr("sikarugir.title"), subtitle: l10n.tr("sikarugir.desc"), symbol: "shippingbox")
     }
 
     private var statusBox: some View {
@@ -133,7 +127,7 @@ struct SikarugirView: View {
                     Text(engine.sikarugirIsRunning ? "Reinstalling…" : "Reinstall Engine")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .prominentGlassButton()
                 .controlSize(.large)
                 .disabled(engine.sikarugirIsRunning || activeTarball == nil)
             } else {
@@ -141,7 +135,7 @@ struct SikarugirView: View {
                     Text(engine.sikarugirIsRunning ? "Installing…" : "Install Engine")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .prominentGlassButton()
                 .controlSize(.large)
                 .disabled(engine.sikarugirIsRunning || activeTarball == nil)
 

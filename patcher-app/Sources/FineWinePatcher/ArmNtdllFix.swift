@@ -19,6 +19,9 @@ import CryptoKit
 /// `lsr xd, xn, #18` becomes `ubfx xd, xn, #18, #29`, which keeps the 47 user address bits the map
 /// covers. Upstream Wine 11.21's `RtlIsEcCode` still has no bounds check.
 ///
+/// A third edit is a compatibility setting, not a crash fix: `IsWow64Process2` reports an emulated
+/// x64 process as `AMD64` on `ARM64` instead of "not WOW64" on `ARM64` (see `machineEdits`).
+///
 /// CrossOver ARM's source isn't published, so ntdll can't be rebuilt and both fixes are byte edits.
 enum ArmNtdllFix {
     static let subpath = "lib/wine/aarch64-windows/ntdll.dll"
@@ -28,14 +31,16 @@ enum ArmNtdllFix {
     /// either file, in the same order and with the same registers; only their offsets move.
     ///
     /// `walkEdits` are the frame-walk fix's words: file offset, expected word and replacement.
-    /// `earlierFixedSHA256` lists files from earlier FineWine releases (lookups clamped, no walk
-    /// fix), which are upgraded by applying only `walkEdits`.
+    /// `machineEdits` change what `IsWow64Process2` reports, in the same form.
+    /// `earlierFixedSHA256` lists files from earlier FineWine releases (lookups clamped, with or
+    /// without the later edits), which are upgraded by applying whichever edits are missing.
     struct Build {
         let name: String
         let stockSHA256: String
         let fixedSHA256: String
         let sites: [(offset: Int, instruction: UInt32)]
         var walkEdits: [(offset: Int, from: UInt32, to: UInt32)] = []
+        var machineEdits: [(offset: Int, from: UInt32, to: UInt32)] = []
         var earlierFixedSHA256: [String] = []
     }
 
@@ -50,7 +55,7 @@ enum ArmNtdllFix {
               ]),
         Build(name: "27.0.0.41303 (preview 20261111, Wine 11.21)",
               stockSHA256: "3c2d6459113d4418a1135d7d5afe3a47c4a8c017aec389a987efa991bfeceda8",
-              fixedSHA256: "cb06b76445b106f5ddb8ae2df437c12b8982264b3ce529e4a21fa6fec2cab4b2",
+              fixedSHA256: "22dbe4f708540b4fd41076e4617eafd532c616bf18e9fb4638e44f96c536b703",
               sites: [
                 (0xc8380, 0xd352fd71), (0xcd21c, 0xd352fe69), (0xcd7b4, 0xd352fc09),
                 (0xcd83c, 0xd352fd0a), (0xcd9c8, 0xd352fd0a), (0xcdc24, 0xd352fd0a),
@@ -68,7 +73,21 @@ enum ArmNtdllFix {
                 (0x101dc4, 0xcccccccc, 0xf9428be1),
                 (0x101dc8, 0xcccccccc, 0x17ff32a1),
               ],
-              earlierFixedSHA256: ["d998d34c9a806d27d7440e7ce86af3117e58404c44d200e7de467480b5798f63"]),
+              // ARM64EC RtlWow64GetProcessMachines, behind IsWow64Process2, asks ntdll.so for
+              // SystemSupportedProcessorArchitectures (181), which hides the AMD64 entry on ARM64,
+              // so an x64 process comes back as process 0 (not WOW64), native ARM64. Asking for
+              // SystemSupportedProcessorArchitectures2 (230) keeps the entry, giving process AMD64,
+              // native ARM64; a native ARM64 process still reports 0.
+              //   0x1800b78a4  mov w0, #0xb5  ->  mov w0, #0xe6
+              // Wine's tests expect 0 on Windows on ARM; a user report says hardware gives AMD64.
+              // It doesn't change ACE (tested 2026-11-13) and is kept at the project's choice.
+              machineEdits: [
+                (0xb78a4, 0x528016a0, 0x52801cc0),
+              ],
+              earlierFixedSHA256: [
+                "d998d34c9a806d27d7440e7ce86af3117e58404c44d200e7de467480b5798f63",
+                "cb06b76445b106f5ddb8ae2df437c12b8982264b3ce529e4a21fa6fec2cab4b2",
+              ]),
     ]
 
     private static let immsMask: UInt32 = 0x3f << 10
@@ -97,12 +116,25 @@ enum ArmNtdllFix {
 
     /// Applies `build`'s frame-walk fix to `data`. Throws if any word isn't the expected one.
     static func fixFrameWalk(in data: Data, build: Build) throws -> Data {
+        try applyEdits(build.walkEdits, to: data, acceptApplied: false)
+    }
+
+    /// Applies `build`'s `IsWow64Process2` change to `data`.
+    static func reportProcessMachine(in data: Data, build: Build) throws -> Data {
+        try applyEdits(build.machineEdits, to: data, acceptApplied: false)
+    }
+
+    /// Replaces each edit's word. With `acceptApplied`, a word that already holds the replacement
+    /// is left alone, which is what upgrading an earlier fixed file needs.
+    private static func applyEdits(_ edits: [(offset: Int, from: UInt32, to: UInt32)], to data: Data,
+                                   acceptApplied: Bool) throws -> Data {
         var bytes = [UInt8](data)
-        for edit in build.walkEdits {
+        for edit in edits {
             guard edit.offset + 4 <= bytes.count else {
                 throw PatchError("CrossOver ARM's ntdll.dll is smaller than expected.")
             }
             let found = bytes[edit.offset..<edit.offset + 4].reversed().reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
+            if acceptApplied && found == edit.to { continue }
             guard found == edit.from else {
                 throw PatchError("CrossOver ARM's ntdll.dll has unexpected code at offset \(edit.offset).")
             }
@@ -111,9 +143,10 @@ enum ArmNtdllFix {
         return Data(bytes)
     }
 
-    /// Both fixes, from the stock file.
+    /// Every edit, from the stock file.
     static func fix(_ data: Data, build: Build) throws -> Data {
-        try fixFrameWalk(in: clampLookups(in: data, build: build), build: build)
+        let walked = try fixFrameWalk(in: clampLookups(in: data, build: build), build: build)
+        return try reportProcessMachine(in: walked, build: build)
     }
 
     /// Applies the fix to a CrossOver root, accepting only the exact files it was written for: the
@@ -130,7 +163,7 @@ enum ArmNtdllFix {
             fixed = try fix(data, build: build)
         } else if let earlier = builds.first(where: { $0.earlierFixedSHA256.contains(hash) }) {
             build = earlier
-            fixed = try fixFrameWalk(in: data, build: build)
+            fixed = try applyEdits(build.walkEdits + build.machineEdits, to: data, acceptApplied: true)
         } else {
             throw PatchError("This CrossOver ARM build's ntdll.dll isn't one FineWine knows how to fix, so the game would freeze at the Gryphline logo or when loading into the world.")
         }

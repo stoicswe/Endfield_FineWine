@@ -32,6 +32,7 @@ struct ModChainView: View {
         .padding(20)
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
+        .fineWineChrome()
         .onAppear { refreshChain() }
         .onChange(of: engine.patchedApp) { _ in refreshChain() }
     }
@@ -39,14 +40,7 @@ struct ModChainView: View {
     // MARK: - Sections
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(l10n.tr("mod.title"))
-                .font(.title2.weight(.semibold))
-            Text(l10n.tr("mod.desc"))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        PageHeader(title: l10n.tr("mod.title"), subtitle: l10n.tr("mod.desc"), symbol: "puzzlepiece.extension")
     }
 
     private var modChainBox: some View {
@@ -137,7 +131,7 @@ struct ModChainView: View {
                     Button(engine.modIsRunning ? "Applying…" : "Apply") {
                         if let plan = chainPlan { engine.applyModChain(plan: plan) }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .prominentGlassButton()
                     .disabled(chainPlan == nil || engine.modIsRunning || engine.isRunning)
 
                     Button("Revert") {

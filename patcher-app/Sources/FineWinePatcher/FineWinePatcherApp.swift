@@ -18,6 +18,7 @@ struct FineWinePatcherApp: App {
                 .environmentObject(l10n)
         }
         .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
         .commands { PatcherCommands() }
 
         // The mod framework management lives in its own window, opened from the Tools
@@ -28,6 +29,7 @@ struct FineWinePatcherApp: App {
                 .environmentObject(l10n)
         }
         .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
 
         Window("Steam / NotProton", id: "notproton") {
             NotProtonView()
@@ -35,6 +37,7 @@ struct FineWinePatcherApp: App {
                 .environmentObject(l10n)
         }
         .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
 
         Window("Sikarugir Engine", id: "sikarugir") {
             SikarugirView()
@@ -42,6 +45,7 @@ struct FineWinePatcherApp: App {
                 .environmentObject(l10n)
         }
         .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
 
         Window("Metal HUD", id: "metal-hud") {
             MetalHUDView()
@@ -49,6 +53,7 @@ struct FineWinePatcherApp: App {
                 .environmentObject(l10n)
         }
         .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
 
         Window("Bottle Settings", id: "bottle-settings") {
             BottleSettingsView()
@@ -56,6 +61,7 @@ struct FineWinePatcherApp: App {
                 .environmentObject(l10n)
         }
         .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
     }
 }
 

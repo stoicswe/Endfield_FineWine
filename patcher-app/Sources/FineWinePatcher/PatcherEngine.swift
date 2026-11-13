@@ -1085,6 +1085,8 @@ final class PatcherEngine: ObservableObject {
                     try ArmLauncherAlpha.apply(toCrossOverRoot: Self.cxRoot(app)) {
                         _ = try Self.run("/usr/bin/codesign", ["--force", "--sign", "-", $0.path])
                     }
+                    // A compatibility setting; an unknown emulator build is left as it is.
+                    _ = try? ArmEmulatorIdentity.apply(toCrossOverRoot: Self.cxRoot(app))
                 }
                 await finish(index); index += 1
 

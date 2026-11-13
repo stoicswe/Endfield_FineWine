@@ -20,6 +20,7 @@ struct PatchProgressView: View {
         .padding(20)
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
+        .fineWineChrome()
         // A patch run cannot be cancelled safely: keep the dialog (and its status) open until it ends.
         .interactiveDismissDisabled(engine.isRunning)
     }
@@ -27,14 +28,9 @@ struct PatchProgressView: View {
     // MARK: - Sections
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Creating the patched CrossOver")
-                .font(.title2.weight(.semibold))
-            Text("Copies CrossOver, swaps in the patched Wine modules and MoltenVK, re-seals the copy and verifies it. Your original CrossOver is never touched.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        PageHeader(title: "Creating the patched CrossOver",
+                   subtitle: "Copies CrossOver, swaps in the patched Wine modules and MoltenVK, re-seals the copy and verifies it. Your original CrossOver is never touched.",
+                   symbol: "hammer")
     }
 
     /// Only shown here: this is the moment a first-time installer needs to understand that the
@@ -80,7 +76,7 @@ struct PatchProgressView: View {
             }
             Spacer()
             Button(engine.isRunning ? "Patching…" : "Done") { dismiss() }
-                .buttonStyle(.borderedProminent)
+                .prominentGlassButton()
                 .keyboardShortcut(.defaultAction)
                 .disabled(engine.isRunning)
         }

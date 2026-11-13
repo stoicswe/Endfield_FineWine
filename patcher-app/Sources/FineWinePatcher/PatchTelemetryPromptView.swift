@@ -33,6 +33,7 @@ struct PatchTelemetryPromptView: View {
             }
         }
         .frame(width: 620, height: prompt.isSetup ? 600 : 500)
+        .fineWineChrome()
     }
 
     private var promptContent: some View {
@@ -88,7 +89,7 @@ struct PatchTelemetryPromptView: View {
                     onSend()
                     withAnimation(.easeInOut(duration: 0.2)) { sent = true }
                 }
-                .buttonStyle(.borderedProminent)
+                .prominentGlassButton()
             }
         }
         .padding(20)
