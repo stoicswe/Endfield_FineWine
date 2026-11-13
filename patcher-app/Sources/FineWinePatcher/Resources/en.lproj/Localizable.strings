@@ -133,6 +133,12 @@
 "notproton.btn.register" = "Register with Steam";
 "notproton.registered" = "Registered with Steam";
 
+/* Sikarugir */
+"sikarugir.title" = "Sikarugir Engine";
+"sikarugir.desc" = "Installs the FineWine engine into Sikarugir (a free Wineskin successor) so Arknights: Endfield runs without a CrossOver licence.";
+"sikarugir.btn.install" = "Install Engine";
+"sikarugir.installed" = "Engine Installed";
+
 /* Mod Framework */
 "mod.title" = "Mod Framework (EFMI)";
 "mod.desc" = "Manages Endfield Modding Importer (EFMI / XXMI) chained mod loading in your bottle.";
@@ -143,5 +149,6 @@
 "menu.bottle_settings" = "Bottle Settings…";
 "menu.mod_framework" = "Mod Framework (EFMI)…";
 "menu.steam_notproton" = "Steam / NotProton…";
+"menu.sikarugir" = "Sikarugir Engine…";
 "menu.metal_hud" = "Metal HUD…";
 

@@ -31,10 +31,18 @@ struct FineWinePatcherApp: App {
 
         Window("Steam / NotProton", id: "notproton") {
             NotProtonView()
+                .environmentObject(engine)
                 .environmentObject(l10n)
         }
         .windowResizability(.contentSize)
-        
+
+        Window("Sikarugir Engine", id: "sikarugir") {
+            SikarugirView()
+                .environmentObject(engine)
+                .environmentObject(l10n)
+        }
+        .windowResizability(.contentSize)
+
         Window("Metal HUD", id: "metal-hud") {
             MetalHUDView()
                 .environmentObject(engine)
@@ -67,6 +75,9 @@ struct PatcherCommands: Commands {
             }
             Button(l10n.tr("menu.steam_notproton")) {
                 openWindow(id: "notproton")
+            }
+            Button(l10n.tr("menu.sikarugir")) {
+                openWindow(id: "sikarugir")
             }
             Button(l10n.tr("menu.metal_hud")) {
                 openWindow(id: "metal-hud")
