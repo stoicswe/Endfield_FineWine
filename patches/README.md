@@ -72,6 +72,11 @@ Original to this project. The two Rosetta fixes live in `dlls/ntdll/unix/signal_
   and stops the window surface drawing behind the Metal view. No paths or executable names are
   checked, so the game stays opaque wherever it is installed (issue #87). See
   [docs/project-information/16-launcher-black-margin.md](../docs/project-information/16-launcher-black-margin.md).
+
+- **`0011-win32u-reuse-client-surfaces-on-swapchain-recreation.patch`** — backports Wine 11.16's
+  client-surface lifetime fix to CrossOver 26.3's Wine 11.0 API. Reuses the macOS surface after
+  Endfield recreates its swapchain, preventing DXMT's white/blank output after resolution,
+  display-mode, V-Sync, or focus changes (issue #82).
   This is why `winemac.so` and `dwmapi.dll` are part of the shipped module set; `winemac.so`
   needs the same `lib64` rpath as `ntdll.so`.
 
