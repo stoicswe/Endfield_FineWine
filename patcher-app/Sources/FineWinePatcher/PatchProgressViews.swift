@@ -19,7 +19,9 @@ struct StepsListView: View {
                 }
             }
         }
-        .padding(.leading, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(FineWineLook.cardPadding)
+        .fineWineGlass(in: RoundedRectangle(cornerRadius: FineWineLook.cardRadius, style: .continuous))
     }
 }
 
@@ -51,5 +53,7 @@ struct ErrorBox: View {
             .foregroundStyle(.red)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(Color.red.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }

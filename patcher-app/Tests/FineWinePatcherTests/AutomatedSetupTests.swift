@@ -361,4 +361,15 @@ final class AutomatedSetupTests: XCTestCase {
     }
 
     private func debugName(_ name: String) -> String { name.isEmpty ? "<empty>" : "\"\(name)\"" }
+
+    func testArmBottlesAreSetToWindows11_24H2() {
+        let commands = SetupEngine.armWindowsBuildCommands(bottle: "My Bottle")
+        XCTAssertEqual(commands.count, 2)
+        XCTAssertEqual(commands.map { $0[7] }, ["CurrentBuild", "CurrentBuildNumber"])
+        for args in commands {
+            XCTAssertEqual(Array(args.prefix(5)), ["--bottle", "My Bottle", "--wait-children", "reg", "add"])
+            XCTAssertEqual(args[5], "HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion")
+            XCTAssertEqual(Array(args.suffix(5)), ["/t", "REG_SZ", "/d", "26100", "/f"])
+        }
+    }
 }

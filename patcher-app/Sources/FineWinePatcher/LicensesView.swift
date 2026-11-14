@@ -102,6 +102,7 @@ struct LicensesView: View {
             .padding(12)
         }
         .frame(width: 700, height: 480)
+        .fineWineChrome()
         .onAppear {
             if selection == nil { selection = LicenseComponent.all.first?.id }
         }

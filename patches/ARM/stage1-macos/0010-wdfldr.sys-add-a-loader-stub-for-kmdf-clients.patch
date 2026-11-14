@@ -7,18 +7,17 @@ clients to a table of stubs, written through FuncTable as a single pointer,
 so their DriverEntry runs. WDF calls still fail.
 ---
 diff --git a/configure b/configure
-index 50b8006..ad7d138 100755
 --- a/configure
 +++ b/configure
-@@ -1520,6 +1520,7 @@ enable_vulkan_1
- enable_w32skrnl
+@@ -1567,6 +1567,7 @@ enable_w32skrnl
+ enable_w32sys
  enable_wbemdisp
  enable_wbemprox
 +enable_wdfldr_sys
  enable_wdscore
  enable_webservices
  enable_websocket
-@@ -22859,6 +22860,7 @@ wine_fn_config_makefile dlls/wbemdisp enable_wbemdisp
+@@ -22743,6 +22744,7 @@ wine_fn_config_makefile dlls/wbemdisp enable_wbemdisp
  wine_fn_config_makefile dlls/wbemdisp/tests enable_tests
  wine_fn_config_makefile dlls/wbemprox enable_wbemprox
  wine_fn_config_makefile dlls/wbemprox/tests enable_tests
@@ -27,10 +26,9 @@ index 50b8006..ad7d138 100755
  wine_fn_config_makefile dlls/webservices enable_webservices
  wine_fn_config_makefile dlls/webservices/tests enable_tests
 diff --git a/configure.ac b/configure.ac
-index eae581f..1686d5c 100644
 --- a/configure.ac
 +++ b/configure.ac
-@@ -3304,6 +3304,7 @@ WINE_CONFIG_MAKEFILE(dlls/wbemdisp)
+@@ -3241,6 +3241,7 @@ WINE_CONFIG_MAKEFILE(dlls/wbemdisp)
  WINE_CONFIG_MAKEFILE(dlls/wbemdisp/tests)
  WINE_CONFIG_MAKEFILE(dlls/wbemprox)
  WINE_CONFIG_MAKEFILE(dlls/wbemprox/tests)
@@ -40,7 +38,6 @@ index eae581f..1686d5c 100644
  WINE_CONFIG_MAKEFILE(dlls/webservices/tests)
 diff --git a/dlls/wdfldr.sys/Makefile.in b/dlls/wdfldr.sys/Makefile.in
 new file mode 100644
-index 0000000..378d95f
 --- /dev/null
 +++ b/dlls/wdfldr.sys/Makefile.in
 @@ -0,0 +1,7 @@
@@ -53,7 +50,6 @@ index 0000000..378d95f
 +	wdfldr.sys.spec
 diff --git a/dlls/wdfldr.sys/main.c b/dlls/wdfldr.sys/main.c
 new file mode 100644
-index 0000000..42cc123
 --- /dev/null
 +++ b/dlls/wdfldr.sys/main.c
 @@ -0,0 +1,97 @@
@@ -156,7 +152,6 @@ index 0000000..42cc123
 +}
 diff --git a/dlls/wdfldr.sys/wdfldr.sys.spec b/dlls/wdfldr.sys/wdfldr.sys.spec
 new file mode 100644
-index 0000000..0210a70
 --- /dev/null
 +++ b/dlls/wdfldr.sys/wdfldr.sys.spec
 @@ -0,0 +1,4 @@

@@ -39,9 +39,7 @@ struct BottleSettingsView: View {
             bottlePicker
             if selected != nil {
                 settingsBox
-                Divider()
                 aliasBox
-                Divider()
                 gptkUpgradeBox
             }
             if let error = errorMessage {
@@ -51,6 +49,7 @@ struct BottleSettingsView: View {
         .padding(20)
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
+        .fineWineChrome()
         .onAppear {
             refreshBottles()
             refreshGPTK()
@@ -61,14 +60,7 @@ struct BottleSettingsView: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(l10n.tr("bottle.title"))
-                .font(.title2.weight(.semibold))
-            Text(l10n.tr("setup.bottle.desc"))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        PageHeader(title: l10n.tr("bottle.title"), subtitle: l10n.tr("setup.bottle.desc"), symbol: "slider.horizontal.3")
     }
 
     // MARK: - Bottle Picker
@@ -142,7 +134,7 @@ struct BottleSettingsView: View {
                 // Actions
                 HStack {
                     Button(l10n.tr("app.apply")) { saveSettings() }
-                        .buttonStyle(.borderedProminent)
+                        .prominentGlassButton()
 
                     if saved {
                         Label(l10n.tr("app.saved"), systemImage: "checkmark.circle.fill")

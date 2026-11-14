@@ -42,6 +42,43 @@ CrossOver → select the **Arknights Endfield** bottle → **Advanced Settings �
 
 Enable **MSync**. For DLSS upscaling, enable **DLSS (MetalFX)** with D3DMetal or a DXMT build containing the [NGX resource-parameter fix](technical.md#dlss-under-dxmt-stock-and-patched-builds). With CrossOver 26.3's stock DXMT 0.80, use **TAAU** or **AMD FSR3** until that fix is included; FineWine 1.2.3 preserves the source app's DXMT modules. [`scripts/create-bottle.sh`](../scripts/create-bottle.sh) can set the backend and backend-specific toggle (the `cxbottle.conf` keys are listed in [06-graphics-and-gptk.md → Selecting a backend](06-graphics-and-gptk.md#selecting-a-backend-in-crossover-26)). AVX2 (from Rosetta 2 on macOS 15+, not from GPTK) needs no setting: CrossOver's `wine` wrapper already exports `ROSETTA_ADVERTISE_AVX=1`.
 
+## CrossOver ARM (experimental): recommended settings
+
+These are for an `arm64` bottle made by the FineWine Patcher from **CrossOver Preview ARM**
+(preview 20261111, build 27.0.0.41303), which runs Endfield with no Rosetta. They come from testing
+on one machine on 2026-11-11, and they differ from x64:
+
+| Setting | ARM | Why |
+|---|---|---|
+| Graphics backend | **Auto** (no `CX_GRAPHICS_BACKEND`) | The game's Vulkan renderer runs through MoltenVK. **DXMT** renders, but the game stalls every few seconds: in testing, 59 waits of 5 s or more in a 10-minute session, enough to cause hitching and `Server connection timed out`. **D3DMetal** isn't available on ARM: Apple ships it for x86_64 only. |
+| MSync | **Off** (`WINEMSYNC = "0"`) | With DXMT, turning it off cut the stalls about threefold. |
+| Renderer | The launcher's plain **Start** (Vulkan) | Don't use **Launch with DirectX 11** here; on ARM the DirectX 11 paths are the ones that stall. |
+| Upscaling | **TAAU** or **AMD FSR3** | There's no DLSS under Vulkan, so `DXMT_ENABLE_NVEXT` and `D3DM_ENABLE_METALFX` aren't needed. With them on, CrossOver tries to redirect `nvngx.dll` to D3DMetal's x86_64-only copy. |
+
+In the bottle's `cxbottle.conf`, the `[EnvironmentVariables]` section then holds just:
+
+```
+"WINEMSYNC" = "0"
+```
+
+Automated Setup also sets ARM bottles to report Windows 11 24H2 (build 26100) instead of the
+template's 22000.
+
+Things to expect:
+
+- **The first launch looks frozen** for several minutes while every pipeline is compiled through
+  MoltenVK (`vulkan_pso_cache.bin` doesn't exist yet). Later launches are faster.
+- **The patcher replaces CrossOver ARM's stock MoltenVK 1.2.10** with this repo's patched 1.4.2,
+  built for arm64. Copies patched before that still have 1.2.10, where changing FPS or V-Sync can
+  leave the window black, and some UI elements drew as **white blocks**; re-patch to get the fixes.
+  With the patched build the world rendered correctly in testing (2026-11-12).
+- **ACE's kernel drivers don't load on ARM.** The game still logged in and played in testing, with
+  no ACE message, but longer sessions are untested.
+- **Entering the world could crash or hang** in copies patched before 2026-11-12, from a stack-walk
+  bug in CrossOver ARM's `ntdll.dll`. The patcher now fixes it; re-patch if you still see it.
+
+Details and measurements: [19-arm-wine-11.21.md](project-information/19-arm-wine-11.21.md).
+
 ## Installing GPTK4 (optional)
 
 > **Apple's GPTK is evaluation-only software — download it yourself; you may not redistribute it**, so this repo cannot bundle it. These steps target **macOS 27 (beta)** for GPTK4. On **macOS 26**, CrossOver's bundled **D3DMetal 3.0** is the matched version — no action needed.
