@@ -1,0 +1,112 @@
+From 2293b0e8ca1dc36f0c89a396309997f65e5759fa Mon Sep 17 00:00:00 2001
+From: Remi Bernon <rbernon@codeweavers.com>
+Date: Wed, 8 Jul 2026 09:51:50 +0200
+Subject: [PATCH] win32u: reuse macOS client surfaces after Vulkan surface destruction.
+
+This CrossOver 26.3/Wine 11.0 adaptation of Wine 11.16 commit
+2293b0e8 keeps an unused client surface alive and reuses it for the same
+window. DXMT/macOS otherwise leaves an older swapchain invisible after
+Endfield recreates its surface.
+
+---
+diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
+index 55daac4..7e2766b 100644
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -273,6 +273,7 @@ void *free_user_handle( HANDLE handle, unsigned short type )
+ 
+ static pthread_mutex_t surfaces_lock = PTHREAD_MUTEX_INITIALIZER;
+ static struct list client_surfaces = LIST_INIT( client_surfaces );
++static struct list unused_surfaces = LIST_INIT( unused_surfaces );
+ 
+ void detach_client_surfaces( HWND hwnd )
+ {
+@@ -293,6 +294,16 @@ void detach_client_surfaces( HWND hwnd )
+         surface->hwnd = NULL;
+     }
+ 
++    LIST_FOR_EACH_ENTRY_SAFE( surface, next, &unused_surfaces, struct client_surface, entry )
++    {
++        if (surface->hwnd != hwnd) continue;
++        list_remove( &surface->entry );
++        list_add_tail( &detached, &surface->entry );
++        client_surface_add_ref( surface );
++        surface->funcs->detach( surface );
++        surface->hwnd = NULL;
++    }
++
+     pthread_mutex_unlock( &surfaces_lock );
+ 
+     LIST_FOR_EACH_ENTRY_SAFE( surface, next, &detached, struct client_surface, entry )
+@@ -322,6 +333,18 @@ void *client_surface_create( UINT size, const struct client_surface_funcs *funcs
+ {
+     struct client_surface *surface;
+ 
++    pthread_mutex_lock( &surfaces_lock );
++    LIST_FOR_EACH_ENTRY( surface, &unused_surfaces, struct client_surface, entry )
++    {
++        if (surface->hwnd != hwnd || surface->funcs != funcs) continue;
++        list_remove( &surface->entry );
++        list_add_tail( &client_surfaces, &surface->entry );
++        pthread_mutex_unlock( &surfaces_lock );
++        TRACE( "reusing %s\n", debugstr_client_surface( surface ) );
++        return surface;
++    }
++    pthread_mutex_unlock( &surfaces_lock );
++
+     if (!(surface = calloc( 1, size ))) return NULL;
+     surface->funcs = funcs;
+     surface->ref = 1;
+@@ -351,8 +374,13 @@ void client_surface_release( struct client_surface *surface )
+         pthread_mutex_lock( &surfaces_lock );
+         if (surface->hwnd)
+         {
+-            surface->funcs->detach( surface );
+             list_remove( &surface->entry );
++            list_add_head( &unused_surfaces, &surface->entry );
++            InterlockedExchange( &surface->ref, 1 );
++            pthread_mutex_unlock( &surfaces_lock );
++            surface->funcs->destroy( surface );
++            TRACE( "keeping unused %s\n", debugstr_client_surface( surface ) );
++            return;
+         }
+         pthread_mutex_unlock( &surfaces_lock );
+ 
+diff --git a/dlls/winemac.drv/window.c b/dlls/winemac.drv/window.c
+index 741f7fd..01d5601 100644
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -1146,8 +1146,16 @@ static void macdrv_client_surface_destroy(struct client_surface *client)
+ 
+     TRACE("%s\n", debugstr_client_surface(client));
+ 
+-    if (surface->metal_view) macdrv_view_release_metal_view(surface->metal_view);
+-    if (surface->metal_device) macdrv_release_metal_device(surface->metal_device);
++    if (surface->metal_view)
++    {
++        macdrv_view_release_metal_view(surface->metal_view);
++        surface->metal_view = NULL;
++    }
++    if (surface->metal_device)
++    {
++        macdrv_release_metal_device(surface->metal_device);
++        surface->metal_device = NULL;
++    }
+ }
+ 
+ static void macdrv_client_surface_detach(struct client_surface *client)
+@@ -1225,8 +1233,11 @@ struct macdrv_client_surface *macdrv_client_surface_create(HWND hwnd)
+     NtUserMapWindowPoints(hwnd, toplevel, (POINT *)&rect, 2, NtUserGetWinMonitorDpi(toplevel, MDT_RAW_DPI));
+ 
+     surface = client_surface_create(sizeof(*surface), &macdrv_client_surface_funcs, hwnd);
+-    surface->cocoa_view = macdrv_create_view(cgrect_from_rect(rect));
+-    macdrv_set_view_hidden(surface->cocoa_view, TRUE);
++    if (!surface->cocoa_view)
++    {
++        surface->cocoa_view = macdrv_create_view(cgrect_from_rect(rect));
++        macdrv_set_view_hidden(surface->cocoa_view, TRUE);
++    }
+ 
+     if (surface)
+     {
+
