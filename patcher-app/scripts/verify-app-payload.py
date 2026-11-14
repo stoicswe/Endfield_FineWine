@@ -5,7 +5,8 @@ The module lists come from PatcherEngine.swift, so this checks what the app will
 
   x64: every module must be present, with the right architecture and rpath, and winemac.so must
        contain the launcher alpha patch (a stock winemac.so builds and ships without complaint).
-  ARM: optional, but all or nothing. A partial payload is an error.
+  ARM: optional, but all or nothing. A partial payload is an error. Modules the x64 game process
+       loads must be ARM64X, not plain ARM64, and nsi.dll must contain patches/ARM 0014.
 
 Usage: verify-app-payload.py "path/to/FineWine Patcher.app" [path/to/PatcherEngine.swift]
 """
@@ -19,6 +20,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 LAUNCHER_PATCH_MARKER = "__wine_dwm_blur_behind".encode("utf-16-le")
 X64_RPATH = "@loader_path/../../../lib64"
 PE_MACHINE_ARM64 = 0xaa64
+# ARM modules loaded into x64 processes (Endfield): they need ARM64EC code, i.e. an ARM64X build.
+ARM64X_MODULES = {"aarch64-windows/nsi.dll"}
+# Marker strings for patches/ARM fixes that a stock-source build would ship without complaint.
+ARM_PATCH_MARKERS = {
+    "aarch64-windows/nsi.dll": (b"did not complete", "stage1-macos/0014"),
+}
 
 
 def module_lists(engine_source):
@@ -41,6 +48,32 @@ def pe_machine(path):
         header = handle.read(4096)
     pe_offset = struct.unpack_from("<I", header, 60)[0]
     return struct.unpack_from("<H", header, pe_offset + 4)[0]
+
+
+def pe_chpe_metadata(path):
+    """The load config's CHPEMetadataPointer: nonzero only for ARM64X / ARM64EC images."""
+    with open(path, "rb") as handle:
+        data = handle.read()
+    pe = struct.unpack_from("<I", data, 60)[0]
+    sections, opt_size = struct.unpack_from("<H", data, pe + 6)[0], struct.unpack_from("<H", data, pe + 20)[0]
+    opt = pe + 24
+    if struct.unpack_from("<H", data, opt)[0] != 0x20B:  # PE32+
+        return 0
+    rva = struct.unpack_from("<I", data, opt + 112 + 10 * 8)[0]  # data directory 10: load config
+    if not rva:
+        return 0
+    table = opt + opt_size
+    for i in range(sections):
+        size, va = struct.unpack_from("<II", data, table + i * 40 + 8)
+        raw = struct.unpack_from("<I", data, table + i * 40 + 20)[0]
+        if va <= rva < va + max(size, 1):
+            offset = rva - va + raw
+            break
+    else:
+        return 0
+    if struct.unpack_from("<I", data, offset)[0] < 0xD0:
+        return 0
+    return struct.unpack_from("<Q", data, offset + 0xC8)[0]
 
 
 def check_mach_o(path, arch, rpath, errors):
@@ -76,8 +109,22 @@ def verify_arm(payload, modules, errors):
     missing = [m for m in modules if not os.path.isfile(os.path.join(root, m))]
     errors.extend(f"partial ARM payload, missing: {m}" for m in missing)
     for module in set(modules) - set(missing):
-        if pe_machine(os.path.join(root, module)) != PE_MACHINE_ARM64:
+        path = os.path.join(root, module)
+        if module.endswith(".dylib"):
+            # The launcher-alpha library and the arm64 MoltenVK.
+            check_mach_o(path, "arm64", None, errors)
+            if subprocess.run(["codesign", "--verify", path], capture_output=True).returncode:
+                errors.append(f"ARM module isn't signed: {module}")
+        elif pe_machine(path) != PE_MACHINE_ARM64:
             errors.append(f"ARM module isn't an ARM64 PE: {module}")
+        elif module in ARM64X_MODULES and not pe_chpe_metadata(path):
+            errors.append(f"ARM module isn't ARM64X (x64 processes can't load it): {module} — "
+                          "build it in the arm64ec,aarch64 tree (scripts/build-wine-arm.sh)")
+        if module in ARM_PATCH_MARKERS:
+            marker, patch = ARM_PATCH_MARKERS[module]
+            with open(path, "rb") as handle:
+                if marker not in handle.read():
+                    errors.append(f"{os.path.basename(module)} doesn't contain patches/ARM/{patch}")
     return True
 
 
@@ -98,7 +145,8 @@ def main():
     if errors:
         sys.exit(1)
     print(f"x64 payload OK ({len(x64_modules)} files, launcher alpha patch present)")
-    print(f"ARM payload OK ({len(arm_modules)} files)" if has_arm
+    print(f"ARM payload OK ({len(arm_modules)} files, launcher alpha library present, nsi.dll ARM64X "
+          "with patch 0014)" if has_arm
           else "::notice::ARM payload not bundled: this app patches x64 CrossOver only")
 
 

@@ -40,6 +40,7 @@ struct ContentView: View {
         .padding(20)
         .frame(width: 460)
         .fixedSize(horizontal: false, vertical: true)
+        .fineWineChrome()
         .sheet(isPresented: $showPatchProgress, onDismiss: {
             // Offer the run report once the result window has closed, so the two sheets never
             // overlap. Nothing is sent unless the user chooses it in this dialog.
@@ -138,13 +139,8 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(l10n.tr("app.title"))
-                .font(.title2.weight(.semibold))
-            Text(l10n.tr("app.subtitle", selectedVariant?.expectedVersion ?? CrossOverVariant.x64.expectedVersion))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        }
+        PageHeader(title: l10n.tr("app.title"),
+                   subtitle: l10n.tr("app.subtitle", selectedVariant?.expectedVersion ?? CrossOverVariant.x64.expectedVersion))
     }
 
     private var crossoverBox: some View {
@@ -154,8 +150,8 @@ struct ContentView: View {
                     HStack(spacing: 10) {
                         Image(nsImage: NSWorkspace.shared.icon(forFile: cx.url.path))
                             .resizable()
-                            .frame(width: 36, height: 36)
-                        VStack(alignment: .leading, spacing: 2) {
+                            .frame(width: 40, height: 40)
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(cx.displayName).font(.body.weight(.medium))
                             statusLine(for: cx)
                         }
@@ -244,18 +240,14 @@ struct ContentView: View {
     @ViewBuilder
     private func statusLine(for cx: CrossOverInfo) -> some View {
         if cx.variant == nil || !cx.hasWineModules {
-            Label(l10n.tr("content.status.no_modules"), systemImage: "xmark.circle.fill")
-                .font(.caption).foregroundStyle(.red)
+            StatusPill(text: l10n.tr("content.status.no_modules"), symbol: "xmark.circle.fill", tint: .red)
         } else if cx.variant == .arm {
-            Label("ARM (aarch64) · version \(cx.version ?? "?") · experimental", systemImage: "cpu")
-                .font(.caption).foregroundStyle(.orange)
+            StatusPill(text: "ARM (aarch64) · version \(cx.version ?? "?") · experimental", symbol: "cpu", tint: .orange)
         } else if cx.isExpectedVersion {
-            Label("x64 · " + l10n.tr("content.status.valid", cx.displayVersion), systemImage: "checkmark.seal.fill")
-                .font(.caption).foregroundStyle(.green)
+            StatusPill(text: "x64 · " + l10n.tr("content.status.valid", cx.displayVersion), symbol: "checkmark.seal.fill", tint: .green)
         } else {
-            Label("x64 · " + l10n.tr("content.status.mismatch", cx.displayVersion, CrossOverVariant.x64.expectedVersion),
-                  systemImage: "exclamationmark.triangle.fill")
-                .font(.caption).foregroundStyle(.orange)
+            StatusPill(text: "x64 · " + l10n.tr("content.status.mismatch", cx.displayVersion, CrossOverVariant.x64.expectedVersion),
+                       symbol: "exclamationmark.triangle.fill", tint: .orange)
         }
     }
 
@@ -265,6 +257,8 @@ struct ContentView: View {
             .font(.caption)
             .foregroundStyle(.orange)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var payloadMissingMessage: String {
@@ -283,7 +277,7 @@ struct ContentView: View {
                     Text(engine.isRunning ? l10n.tr("content.btn.patching") : l10n.tr("content.btn.create_patch"))
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .prominentGlassButton()
                 .controlSize(.large)
                 .disabled(!payloadReady || engine.isRunning || crossover?.hasWineModules != true)
 
@@ -293,6 +287,7 @@ struct ContentView: View {
                     Label(l10n.tr("content.btn.automated_setup"), systemImage: "wand.and.stars")
                         .frame(maxWidth: .infinity)
                 }
+                .glassButton()
                 .controlSize(.large)
                 .disabled(engine.isRunning || crossover?.hasWineModules != true)
             }

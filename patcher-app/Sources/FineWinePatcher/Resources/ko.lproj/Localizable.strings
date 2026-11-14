@@ -133,6 +133,12 @@
 "notproton.btn.register" = "Steam에 등록";
 "notproton.registered" = "Steam 등록 완료";
 
+/* Sikarugir */
+"sikarugir.title" = "Sikarugir 엔진";
+"sikarugir.desc" = "FineWine 엔진을 Sikarugir(무료 Wineskin 후계 앱)에 설치하여 CrossOver 라이선스 없이 《명일방주: 엔드필드》를 실행합니다.";
+"sikarugir.btn.install" = "엔진 설치";
+"sikarugir.installed" = "엔진이 설치되었습니다";
+
 /* 모드 프레임워크 */
 "mod.title" = "모드 프레임워크 (EFMI / XXMI)";
 "mod.desc" = "바틀 내에서 《명일방주: 엔드필드》 모드 로더 (EFMI / XXMI) 체인 로딩을 관리합니다.";
@@ -143,5 +149,6 @@
 "menu.bottle_settings" = "바틀 설정 (Bottle Settings)…";
 "menu.mod_framework" = "모드 프레임워크 (EFMI)…";
 "menu.steam_notproton" = "Steam / NotProton…";
+"menu.sikarugir" = "Sikarugir 엔진…";
 "menu.metal_hud" = "Metal 성능 HUD…";
 

@@ -28,6 +28,7 @@ struct MetalHUDView: View {
         .padding(20)
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
+        .fineWineChrome()
         .onAppear { refresh() }
         .onChange(of: engine.hudIsRunning) { running in
             if !running { refresh() }
@@ -35,14 +36,7 @@ struct MetalHUDView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(l10n.tr("hud.title"))
-                .font(.title2.weight(.semibold))
-            Text(l10n.tr("hud.desc"))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        PageHeader(title: l10n.tr("hud.title"), subtitle: l10n.tr("hud.desc"), symbol: "speedometer")
     }
 
     private var hudBox: some View {
@@ -125,7 +119,7 @@ struct MetalHUDView: View {
                     Button(engine.hudIsRunning ? "Working…" : "Enable HUD") {
                         if let plan { engine.applyMetalHUD(plan: plan) }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .prominentGlassButton()
                     .disabled(plan == nil || engine.hudIsRunning || engine.isRunning || plan?.currentlyEnabled == true)
 
                     Button("Disable HUD") {

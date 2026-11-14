@@ -33,14 +33,14 @@ struct TelemetryThankYouView: View {
                     .multilineTextAlignment(.center)
 
                 Button("Close") { onClose() }
-                    .buttonStyle(.borderedProminent)
+                    .prominentGlassButton()
                     .keyboardShortcut(.defaultAction)
                     .padding(.top, 4)
             }
             .padding(30)
             .frame(maxWidth: 480)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
-            .shadow(color: .black.opacity(0.2), radius: 24, y: 8)
+            .fineWineGlass(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .shadow(color: .black.opacity(0.15), radius: 24, y: 8)
             .scaleEffect(appeared ? 1 : 0.92)
             .opacity(appeared ? 1 : 0)
         }

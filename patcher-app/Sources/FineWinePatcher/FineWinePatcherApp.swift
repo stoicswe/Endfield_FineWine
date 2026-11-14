@@ -18,6 +18,7 @@ struct FineWinePatcherApp: App {
                 .environmentObject(l10n)
         }
         .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
         .commands { PatcherCommands() }
 
         // The mod framework management lives in its own window, opened from the Tools
@@ -28,19 +29,31 @@ struct FineWinePatcherApp: App {
                 .environmentObject(l10n)
         }
         .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
 
         Window("Steam / NotProton", id: "notproton") {
             NotProtonView()
+                .environmentObject(engine)
                 .environmentObject(l10n)
         }
         .windowResizability(.contentSize)
-        
+        .windowStyle(.hiddenTitleBar)
+
+        Window("Sikarugir Engine", id: "sikarugir") {
+            SikarugirView()
+                .environmentObject(engine)
+                .environmentObject(l10n)
+        }
+        .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
+
         Window("Metal HUD", id: "metal-hud") {
             MetalHUDView()
                 .environmentObject(engine)
                 .environmentObject(l10n)
         }
         .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
 
         Window("Bottle Settings", id: "bottle-settings") {
             BottleSettingsView()
@@ -48,6 +61,7 @@ struct FineWinePatcherApp: App {
                 .environmentObject(l10n)
         }
         .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
     }
 }
 
@@ -67,6 +81,9 @@ struct PatcherCommands: Commands {
             }
             Button(l10n.tr("menu.steam_notproton")) {
                 openWindow(id: "notproton")
+            }
+            Button(l10n.tr("menu.sikarugir")) {
+                openWindow(id: "sikarugir")
             }
             Button(l10n.tr("menu.metal_hud")) {
                 openWindow(id: "metal-hud")

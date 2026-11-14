@@ -25,6 +25,7 @@ struct NotProtonView: View {
         .padding(20)
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
+        .fineWineChrome()
         .onAppear { refresh() }
         .onChange(of: engine.notProtonIsRunning) { running in
             if !running { refresh() }
@@ -34,14 +35,7 @@ struct NotProtonView: View {
     // MARK: - Sections
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(l10n.tr("notproton.title"))
-                .font(.title2.weight(.semibold))
-            Text(l10n.tr("notproton.desc"))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        PageHeader(title: l10n.tr("notproton.title"), subtitle: l10n.tr("notproton.desc"), symbol: "gamecontroller")
     }
 
     private var statusBox: some View {
@@ -127,7 +121,7 @@ struct NotProtonView: View {
                     Text(engine.notProtonIsRunning ? "Updating…" : "Re-register / Update")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .prominentGlassButton()
                 .controlSize(.large)
                 .disabled(engine.notProtonIsRunning || activeApp == nil)
             } else {
@@ -135,7 +129,7 @@ struct NotProtonView: View {
                     Text(engine.notProtonIsRunning ? "Registering…" : "Register in Steam Play")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .prominentGlassButton()
                 .controlSize(.large)
                 .disabled(engine.notProtonIsRunning || activeApp == nil)
 

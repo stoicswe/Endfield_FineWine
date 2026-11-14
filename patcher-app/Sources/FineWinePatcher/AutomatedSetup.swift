@@ -297,12 +297,13 @@ final class SetupEngine: ObservableObject {
                 try Self.runPreflight(cxr: cxr, log: preflightLog,
                                       requiresRosetta: variant?.requiresRosetta ?? true)
 
+                let armEnvironment = variant == .arm ? ArmEmulatorIdentity.environment : []
                 do {
                     try Self.runToCompletion(
                         executable: cxr.appendingPathComponent("bin/cxbottle"),
                         Self.cxbottleArguments(bottle: bottle, template: settings.template,
                                                wineArch: variant?.bottleWineArch,
-                                               environment: settings.environment),
+                                               environment: settings.environment + armEnvironment),
                         log: bottleLog)
                 } catch let firstError {
                     // WineHQ bug 59595's macOS 26 class can kill bottle creation with MSync on
@@ -322,8 +323,19 @@ final class SetupEngine: ObservableObject {
                         executable: cxr.appendingPathComponent("bin/cxbottle"),
                         Self.cxbottleArguments(bottle: bottle, template: settings.template,
                                                wineArch: variant?.bottleWineArch,
-                                               environment: settings.environment(msyncOverride: false)),
+                                               environment: settings.environment(msyncOverride: false) + armEnvironment),
                         log: bottleLog)
+                }
+                // ARM bottles report Windows 11 24H2, and their copy of the x64 emulator gets the
+                // Mac's CPU name like the app's. A failure here doesn't fail the setup.
+                if variant == .arm {
+                    for root in BottleInfo.allBottlesRoots() {
+                        _ = try? ArmEmulatorIdentity.apply(toBottle: root.appendingPathComponent(bottle, isDirectory: true))
+                    }
+                    for (index, args) in Self.armWindowsBuildCommands(bottle: bottle).enumerated() {
+                        let log = Self.logURL("winbuild\(index)-\(Self.slug(bottle))")
+                        _ = try? Self.runToCompletion(executable: cxr.appendingPathComponent("bin/wine"), args, log: log)
+                    }
                 }
                 await finish(0)
 
@@ -421,6 +433,22 @@ final class SetupEngine: ObservableObject {
         var slug = name.unicodeScalars.map { allowed.contains($0) ? String($0) : "-" }.joined()
         while slug.contains("--") { slug = slug.replacingOccurrences(of: "--", with: "-") }
         return slug
+    }
+
+    /// The Windows build an ARM bottle reports. CrossOver's Windows 11 template is build 22000
+    /// (21H2); 26100 is 24H2, the release Windows on ARM's x64 emulation and anti-cheat support
+    /// are built around. It didn't change ACE in testing (docs/project-information/19) and is kept
+    /// at the project's choice.
+    nonisolated static let armWindowsBuild = "26100"
+
+    /// `wine` argument vectors that set that build. With no explicit Wine version configured,
+    /// Wine reads the version it reports from these two registry values.
+    nonisolated static func armWindowsBuildCommands(bottle: String) -> [[String]] {
+        ["CurrentBuild", "CurrentBuildNumber"].map { value in
+            ["--bottle", bottle, "--wait-children", "reg", "add",
+             "HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion",
+             "/v", value, "/t", "REG_SZ", "/d", armWindowsBuild, "/f"]
+        }
     }
 
     /// The cxbottle argument vector, in one place so the first attempt, the MSync-off fallback

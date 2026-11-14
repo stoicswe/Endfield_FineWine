@@ -160,8 +160,9 @@ enum CrossOverVariant: String, CaseIterable, Sendable {
         case .arm:
             // An arm64 bottle only loads `aarch64-windows`, so these are ARM64 PE modules. Only
             // modules that stay compatible with stock CrossOver ARM are swapped: its ntdll.so and
-            // wineserver use a much newer protocol (1809) than public Wine 11.17 (961), and a
-            // mixed ntdll won't start. Built by scripts/build-wine-arm.sh from patches/ARM.
+            // wineserver can't be replaced, and the PE modules must come from the Wine release
+            // CrossOver ARM is based on (11.21 for preview 20261111), whose wineserver request
+            // numbers they use. Built by scripts/build-wine-arm.sh from patches/ARM.
             return [
                 // ntoskrnl.exe em-backports, ACE-CORE fixes and the aarch64 shared page emulation
                 PayloadModule(payloadSubpath: "aarch64-windows/ntoskrnl.exe",
@@ -172,6 +173,19 @@ enum CrossOverVariant: String, CaseIterable, Sendable {
                 // Loader stub for ACE-CORE's ARM64 drivers, which import it. Wine doesn't ship it.
                 PayloadModule(payloadSubpath: "aarch64-windows/wdfldr.sys",
                               crossoverSubpath: "lib/wine/aarch64-windows/wdfldr.sys", isNew: true),
+                // Waits for a cancelled CancelIPChangeNotify request to finish before returning.
+                // Without it the late status write corrupted freed memory in the game process
+                // (Chromium's network watcher) and crashed GetAdaptersAddresses. ARM64X, because
+                // the x64 game loads it; Wine loads the app's copy, so existing bottles get it too.
+                PayloadModule(payloadSubpath: "aarch64-windows/nsi.dll",
+                              crossoverSubpath: "lib/wine/aarch64-windows/nsi.dll"),
+                // The launcher-alpha fix, loaded into CrossOver ARM's own winemac.so (see ArmLauncherAlpha).
+                PayloadModule(payloadSubpath: "aarch64-unix/fwalpha.dylib",
+                              crossoverSubpath: "lib/wine/aarch64-unix/fwalpha.dylib", isNew: true),
+                // The same patched MoltenVK as x64, built for arm64. CrossOver ARM's stock 1.2.10 has
+                // the swapchain-recreate black window. Built by MVK_ARCH=aarch64 build-moltenvk.sh.
+                PayloadModule(payloadSubpath: "lib/aarch64/libMoltenVK.dylib",
+                              crossoverSubpath: "lib/aarch64/libMoltenVK.dylib"),
             ]
         }
     }
@@ -796,6 +810,89 @@ final class PatcherEngine: ObservableObject {
         }
     }
 
+    // MARK: - Sikarugir Engine (optional Tools phase)
+
+    @Published private(set) var sikarugirSteps: [Step] = []
+    @Published private(set) var sikarugirIsRunning = false
+    @Published var sikarugirError: String?
+
+    private static let sikarugirInstallLabels = [
+        "Preparing Sikarugir engines directory",
+        "Extracting engine tarball",
+        "Verifying engine",
+    ]
+
+    private static let sikarugirRemoveLabels = [
+        "Removing FineWine engine from Sikarugir",
+    ]
+
+    func installSikarugirEngine(tarball: URL) {
+        guard !isRunning, !sikarugirIsRunning else { return }
+        sikarugirSteps = []
+        sikarugirError = nil
+        sikarugirIsRunning = true
+        sikarugirSteps = Self.sikarugirInstallLabels.enumerated().map { Step(id: $0.offset, label: $0.element) }
+
+        Task.detached(priority: .userInitiated) {
+            func begin(_ index: Int) async {
+                await MainActor.run { self.sikarugirSteps[index].status = .running }
+            }
+            func finish(_ index: Int) async {
+                await MainActor.run { self.sikarugirSteps[index].status = .done }
+            }
+            do {
+                await begin(0)
+                try await Task.sleep(nanoseconds: 50_000_000)
+                await finish(0)
+
+                await begin(1)
+                try Sikarugir.installEngine(tarball: tarball)
+                await finish(1)
+
+                await begin(2)
+                await finish(2)
+
+                await MainActor.run {
+                    self.sikarugirIsRunning = false
+                }
+            } catch {
+                let msg = error.localizedDescription
+                await MainActor.run {
+                    if self.sikarugirSteps.indices.contains(1) {
+                        self.sikarugirSteps[1].status = .failed
+                    }
+                    self.sikarugirError = msg
+                    self.sikarugirIsRunning = false
+                }
+            }
+        }
+    }
+
+    func removeSikarugirEngine() {
+        guard !isRunning, !sikarugirIsRunning else { return }
+        sikarugirSteps = []
+        sikarugirError = nil
+        sikarugirIsRunning = true
+        sikarugirSteps = Self.sikarugirRemoveLabels.enumerated().map { Step(id: $0.offset, label: $0.element) }
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                await MainActor.run { self.sikarugirSteps[0].status = .running }
+                try Sikarugir.removeEngine()
+                await MainActor.run {
+                    self.sikarugirSteps[0].status = .done
+                    self.sikarugirIsRunning = false
+                }
+            } catch {
+                let msg = error.localizedDescription
+                await MainActor.run {
+                    self.sikarugirSteps[0].status = .failed
+                    self.sikarugirError = msg
+                    self.sikarugirIsRunning = false
+                }
+            }
+        }
+    }
 
     // MARK: - GPTK Upgrade In Place
 
@@ -989,7 +1086,14 @@ final class PatcherEngine: ObservableObject {
 
                 await begin(index)
                 try Self.installModules(into: app, from: payloadDir, variant: variant)
-                if variant == .arm { try ArmNtdllFix.apply(toCrossOverRoot: Self.cxRoot(app)) }
+                if variant == .arm {
+                    try ArmNtdllFix.apply(toCrossOverRoot: Self.cxRoot(app))
+                    try ArmLauncherAlpha.apply(toCrossOverRoot: Self.cxRoot(app)) {
+                        _ = try Self.run("/usr/bin/codesign", ["--force", "--sign", "-", $0.path])
+                    }
+                    // A compatibility setting; an unknown emulator build is left as it is.
+                    _ = try? ArmEmulatorIdentity.apply(toCrossOverRoot: Self.cxRoot(app))
+                }
                 await finish(index); index += 1
 
                 if let gptk {
@@ -1328,6 +1432,9 @@ final class PatcherEngine: ObservableObject {
             guard let a = contentHash(src), let b = contentHash(dst), a == b else {
                 throw PatchError("\(module.crossoverSubpath) does not match the bundled payload after the swap.")
             }
+        }
+        if variant == .arm && !ArmLauncherAlpha.isApplied(inCrossOverRoot: cxr) {
+            throw PatchError("The launcher black-margin fix is missing from winemac.so after patching.")
         }
         if variant == .arm && !ArmNtdllFix.isApplied(inCrossOverRoot: cxr) {
             throw PatchError("The ntdll.dll fix is missing after patching.")

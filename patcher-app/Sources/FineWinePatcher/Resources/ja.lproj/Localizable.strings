@@ -133,6 +133,12 @@
 "notproton.btn.register" = "Steam に登録";
 "notproton.registered" = "Steam への登録が完了しました";
 
+/* Sikarugir */
+"sikarugir.title" = "Sikarugir エンジン";
+"sikarugir.desc" = "FineWine エンジンを Sikarugir（無料の Wineskin 後継アプリ）にインストールし、CrossOver ライセンス不要で『アークナイツ：エンドフィールド』をプレイできるようにします。";
+"sikarugir.btn.install" = "エンジンをインストール";
+"sikarugir.installed" = "エンジンがインストールされました";
+
 /* Mod フレームワーク */
 "mod.title" = "Mod フレームワーク (EFMI / XXMI)";
 "mod.desc" = "ボトル内で『アークナイツ：エンドフィールド』Mod Importer (EFMI / XXMI) のチェーン読み込みを管理します。";
@@ -143,5 +149,6 @@
 "menu.bottle_settings" = "ボトル設定 (Bottle Settings)…";
 "menu.mod_framework" = "Mod フレームワーク (EFMI)…";
 "menu.steam_notproton" = "Steam / NotProton…";
+"menu.sikarugir" = "Sikarugir エンジン…";
 "menu.metal_hud" = "Metal パフォーマンス HUD…";
 

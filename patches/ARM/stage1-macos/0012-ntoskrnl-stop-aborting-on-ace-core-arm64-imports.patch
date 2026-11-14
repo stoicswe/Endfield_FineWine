@@ -2,18 +2,17 @@ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: FineWine
 Subject: [PATCH] ntoskrnl: Stop aborting on imports used by ACE-CORE's ARM64 drivers.
 
-A spec stub aborts the driver host when called. Fail these cleanly instead,
-and implement PsGetProcessPeb.
+A spec stub aborts the driver host when called. Fail these cleanly instead.
+PsGetProcessPeb, which this patch used to implement, is upstream since
+Wine 11.21.
 ---
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.c b/dlls/ntoskrnl.exe/ntoskrnl.c
 --- a/dlls/ntoskrnl.exe/ntoskrnl.c
 +++ b/dlls/ntoskrnl.exe/ntoskrnl.c
-@@ -2018,9 +2018,53 @@
- PDEVICE_OBJECT WINAPI IoGetRelatedDeviceObject( PFILE_OBJECT obj )
- {
-     FIXME( "stub: %p\n", obj );
-+    return NULL;
-+}
-+
+@@ -2021,6 +2021,50 @@ PDEVICE_OBJECT WINAPI IoGetRelatedDeviceObject( PFILE_OBJECT obj )
+     return NULL;
+ }
+ 
 +/* Called by ACE-CORE's ARM64 drivers. These fail cleanly, because a spec stub aborts the driver host. */
 +PDEVICE_OBJECT WINAPI IoGetBaseFileSystemDeviceObject( FILE_OBJECT *file )
 +{
@@ -24,9 +23,9 @@ and implement PsGetProcessPeb.
 +PDEVICE_OBJECT WINAPI IoGetLowerDeviceObject( DEVICE_OBJECT *device )
 +{
 +    FIXME( "%p: stub\n", device );
-     return NULL;
- }
- 
++    return NULL;
++}
++
 +NTSTATUS WINAPI IoQueryFileInformation( FILE_OBJECT *file, FILE_INFORMATION_CLASS class, ULONG length,
 +                                        void *info, ULONG *result_length )
 +{
@@ -61,22 +60,7 @@ and implement PsGetProcessPeb.
  static CONFIGURATION_INFORMATION configuration_information;
  
  /***********************************************************************
-@@ -4992,6 +5036,15 @@
- {
-     FIXME("stub: %ld %ld\n", component, level);
-     return STATUS_NOT_IMPLEMENTED;
-+}
-+
-+/*********************************************************************
-+ *           PsGetProcessPeb    (NTOSKRNL.@)
-+ */
-+PEB *WINAPI PsGetProcessPeb( PEPROCESS process )
-+{
-+    TRACE( "%p -> %p\n", process, process->info.PebBaseAddress );
-+    return process->info.PebBaseAddress;
- }
- 
- /*********************************************************************
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
 --- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
 +++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
 @@ -366,7 +366,7 @@
@@ -115,15 +99,6 @@ and implement PsGetProcessPeb.
  @ stub IoQueryVolumeInformation
  @ stub IoQueueThreadIrp
  @ stdcall IoQueueWorkItem(ptr ptr long ptr)
-@@ -933,7 +933,7 @@
- @ stdcall PsGetProcessImageFileName(ptr)
- @ stdcall PsGetProcessInheritedFromUniqueProcessId(ptr)
- @ stub PsGetProcessJob
--@ stub PsGetProcessPeb
-+@ stdcall PsGetProcessPeb(ptr)
- @ stub PsGetProcessPriorityClass
- @ stdcall PsGetProcessSectionBaseAddress(ptr)
- @ stub PsGetProcessSecurityPort
 @@ -1163,7 +1163,7 @@
  @ stdcall RtlInsertElementGenericTable(ptr ptr long ptr)
  @ stdcall RtlInsertElementGenericTableAvl(ptr ptr long ptr)

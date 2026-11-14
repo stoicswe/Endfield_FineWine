@@ -133,6 +133,12 @@
 "notproton.btn.register" = "注册到 Steam";
 "notproton.registered" = "已成功注册到 Steam";
 
+/* Sikarugir */
+"sikarugir.title" = "Sikarugir 引擎";
+"sikarugir.desc" = "将 FineWine 引擎安装到 Sikarugir（免费 Wineskin 继任者），无需 CrossOver 授权即可运行《明日方舟：终末地》。";
+"sikarugir.btn.install" = "安装引擎";
+"sikarugir.installed" = "引擎已安装";
+
 /* 模组框架 */
 "mod.title" = "模组框架 (EFMI / XXMI)";
 "mod.desc" = "在您的容器中配置并管理《明日方舟：终末地》模组导入器 (EFMI / XXMI) 链式加载。";
@@ -143,5 +149,6 @@
 "menu.bottle_settings" = "容器设置 (Bottle Settings)…";
 "menu.mod_framework" = "模组框架 (EFMI)…";
 "menu.steam_notproton" = "Steam / NotProton…";
+"menu.sikarugir" = "Sikarugir 引擎…";
 "menu.metal_hud" = "Metal 性能指示器 (HUD)…";
 

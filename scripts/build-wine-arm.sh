@@ -9,6 +9,12 @@
 #   aarch64-windows/ntoskrnl.exe
 #   aarch64-windows/rundll32.exe
 #   aarch64-windows/wdfldr.sys
+#   aarch64-windows/nsi.dll      (ARM64X: loaded into the x64 game process, so built from a second
+#                                 tree configured for arm64ec,aarch64 — see cmd_configure)
+#   aarch64-unix/fwalpha.dylib   (patches/ARM/winemac-shim: the launcher-alpha fix, loaded into
+#                                 CrossOver ARM's own winemac.so, which can't be rebuilt)
+#   lib/aarch64/libMoltenVK.dylib (the patched MoltenVK, built first with
+#                                 MVK_ARCH=aarch64 scripts/build-moltenvk.sh; MVK_ARM_DIR overrides)
 #
 # The ARM variant is EXPERIMENTAL: the load-bearing `#ifdef __x86_64__` dispatcher spoof is
 # absent on the aarch64 unix side, so this payload is the platform for that experiment — it is
@@ -18,7 +24,7 @@
 #   1. ARM_SRC_DIR       an already-extracted Wine tree
 #   2. ARM_SRC_TARBALL   a tarball holding `sources/wine/` (CrossOver) or `wine-<ver>/` (upstream)
 #   3. CX_ARM_VER        fetch crossover-sources-${CX_ARM_VER}.tar.gz from CodeWeavers
-#   4. ARM_WINE_TAG      shallow-clone upstream Wine from WineHQ git (default: wine-11.17)
+#   4. ARM_WINE_TAG      shallow-clone upstream Wine from WineHQ git (default: wine-11.21)
 #
 # IMPORTANT: the module ABI (wineserver protocol) must match the CrossOver build it is dropped
 # into. So the *correct* source is the CrossOver ARM source tree. CodeWeavers has not published
@@ -42,7 +48,8 @@
 #   scripts/build-wine-arm.sh apply      # git apply all of patches/ARM
 #   scripts/build-wine-arm.sh check      # non-destructive: report how far patches/ARM gets (clean/fuzz/fail)
 #   scripts/build-wine-arm.sh configure  # configure aarch64 host + x86_64 PE
-#   scripts/build-wine-arm.sh build      # make the modules into build/wine-arm-payload
+#   scripts/build-wine-arm.sh build      # make the modules into build/wine-arm-payload (then 'payload')
+#   scripts/build-wine-arm.sh payload    # add fwalpha.dylib + the arm64 MoltenVK to an existing payload
 #   scripts/build-wine-arm.sh all        # deps -> fetch -> apply -> configure -> build
 #
 # Env: BUILD_DIR (default ./build), JOBS (default: all cores), ARM_WINE_ARCHS (default
@@ -54,13 +61,19 @@ BUILD_DIR="${BUILD_DIR:-$REPO/build}"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"
 WINE_SRC="$BUILD_DIR/wine-arm-src"          # extracted sources/wine
 WINE_BUILD="$BUILD_DIR/wine-arm-build"      # out-of-tree build
+WINE_EC_BUILD="$BUILD_DIR/wine-arm-ec-build" # out-of-tree ARM64X build (modules x64 processes load)
 WINE_OUT="$BUILD_DIR/wine-arm-out"          # flat module output
 PAYLOAD_OUT="$BUILD_DIR/wine-arm-payload"   # payload-shaped output consumed by build-app.sh
 ARM_WINE_ARCHS="${ARM_WINE_ARCHS:-aarch64,x86_64}"
+# Modules that x64 processes load (Endfield itself) must be ARM64X like CrossOver ARM's own, which
+# takes an arm64ec,aarch64 build. They come from a second tree so the modules above keep the exact
+# build they were tested with.
+ARM_EC_ARCHS="${ARM_EC_ARCHS:-arm64ec,aarch64}"
+EC_MODULES="dlls/nsi/aarch64-windows/nsi.dll"
 CX_ARM_VER="${CX_ARM_VER:-}"
 ARM_SRC_DIR="${ARM_SRC_DIR:-}"
 ARM_SRC_TARBALL="${ARM_SRC_TARBALL:-}"
-ARM_WINE_TAG="${ARM_WINE_TAG:-wine-11.17}"
+ARM_WINE_TAG="${ARM_WINE_TAG:-wine-11.21}"
 ARM_SRC_URL="${ARM_SRC_URL:-}"
 BREW="$(command -v brew || echo /opt/homebrew/bin/brew)"
 
@@ -132,12 +145,11 @@ cmd_fetch() {
 }
 
 cmd_apply() {
-  log "Applying patches/ARM (em-backports -> misc -> ace-core -> macOS)"
+  log "Applying patches/ARM (misc -> ace-core -> macOS)"
   [ -d "$WINE_SRC" ] || { echo "run 'fetch' first"; exit 1; }
   local P="$REPO/patches/ARM" n=0 f
   ( cd "$WINE_SRC"
-    for f in $(ls "$P"/stage2-dwproton/em-backports/*.patch | sort) \
-             $(ls "$P"/stage2-dwproton/misc/*.patch | sort) \
+    for f in $(ls "$P"/stage2-dwproton/misc/*.patch | sort) \
              $(ls "$P"/stage2-dwproton/ace-core/*.patch | sort) \
              $(ls "$P"/stage1-macos/*.patch | sort); do
       # Fail loudly rather than silently skip.
@@ -159,8 +171,7 @@ cmd_check() {
   ( cd "$WINE_SRC"
     git reset -q --hard && git clean -qfd && git clean -qfdx
     local clean=0 fuzz=0 fail=0 f b
-    for f in $(ls "$P"/stage2-dwproton/em-backports/*.patch | sort) \
-             $(ls "$P"/stage2-dwproton/misc/*.patch | sort) \
+    for f in $(ls "$P"/stage2-dwproton/misc/*.patch | sort) \
              $(ls "$P"/stage2-dwproton/ace-core/*.patch | sort) \
              $(ls "$P"/stage1-macos/*.patch | sort); do
       b="$(basename "$f")"
@@ -179,26 +190,33 @@ cmd_check() {
   )
 }
 
-cmd_configure() {
-  log "Configuring aarch64 host + x86_64 PE ($ARM_WINE_ARCHS)"
-  [ -d "$WINE_SRC" ] || { echo "run 'fetch' first"; exit 1; }
-  rm -rf "$WINE_BUILD"; mkdir -p "$WINE_BUILD"
-  use_bison; use_pe_toolchain
-  # Host (unix) = aarch64, no Rosetta. The PE side stays x86_64 because Endfield is x86_64.
-  # Same library opt-outs as the x64 pipeline; add SONAME defines below as it does.
-  ( cd "$WINE_BUILD" && CC="/usr/bin/clang -arch arm64" CXX="/usr/bin/clang++ -arch arm64" OBJC="/usr/bin/clang -arch arm64" \
+configure_tree() {
+  local dir="$1" archs="$2" logfile="$3"
+  rm -rf "$dir"; mkdir -p "$dir"
+  # Host (unix) = aarch64, no Rosetta. Same library opt-outs as the x64 pipeline; add SONAME
+  # defines below as it does.
+  ( cd "$dir" && CC="/usr/bin/clang -arch arm64" CXX="/usr/bin/clang++ -arch arm64" OBJC="/usr/bin/clang -arch arm64" \
       "$WINE_SRC/configure" \
-      --build=aarch64-apple-darwin --host=aarch64-apple-darwin --enable-archs="$ARM_WINE_ARCHS" \
+      --build=aarch64-apple-darwin --host=aarch64-apple-darwin --enable-archs="$archs" \
       --disable-tests --without-x --without-freetype --without-gnutls --without-sdl --without-vulkan \
       --without-krb5 --without-gstreamer --without-gphoto --without-sane --without-pcap --without-usb \
       --without-cups --without-coreaudio
-  ) 2>&1 | tee "$BUILD_DIR/configure-arm.log"
-  [ "${PIPESTATUS[0]}" = 0 ] || { echo "configure failed — see $BUILD_DIR/configure-arm.log"; exit 1; }
-  local cfg="$WINE_BUILD/include/config.h"
+  ) 2>&1 | tee "$logfile"
+  [ "${PIPESTATUS[0]}" = 0 ] || { echo "configure failed — see $logfile"; exit 1; }
+  local cfg="$dir/include/config.h"
   [ -f "$cfg" ] && {
     sed -i '' 's|/\* #undef SONAME_LIBVULKAN \*/|#define SONAME_LIBVULKAN "libvulkan.1.dylib"|' "$cfg"
     sed -i '' 's|/\* #undef SONAME_LIBMOLTENVK \*/|#define SONAME_LIBMOLTENVK "libMoltenVK.dylib"|' "$cfg"
   }
+}
+
+cmd_configure() {
+  [ -d "$WINE_SRC" ] || { echo "run 'fetch' first"; exit 1; }
+  use_bison; use_pe_toolchain
+  log "Configuring aarch64 host + PE ($ARM_WINE_ARCHS)"
+  configure_tree "$WINE_BUILD" "$ARM_WINE_ARCHS" "$BUILD_DIR/configure-arm.log"
+  log "Configuring aarch64 host + ARM64X PE ($ARM_EC_ARCHS)"
+  configure_tree "$WINE_EC_BUILD" "$ARM_EC_ARCHS" "$BUILD_DIR/configure-arm-ec.log"
 }
 
 # Build the modules, then assemble the payload tree. These are the ARM64 PE modules an arm64 bottle
@@ -215,12 +233,49 @@ cmd_build() {
   rm -rf "$PAYLOAD_OUT"; mkdir -p "$PAYLOAD_OUT/aarch64-windows"
   local module
   for module in $modules; do cp "$WINE_BUILD/$module" "$PAYLOAD_OUT/aarch64-windows/"; done
+
+  log "Building ARM64X modules (make -j$JOBS)"
+  [ -f "$WINE_EC_BUILD/Makefile" ] || { echo "run 'configure' first"; exit 1; }
+  # shellcheck disable=SC2086
+  ( cd "$WINE_EC_BUILD" && make -j"$JOBS" $EC_MODULES ) 2>&1 | tee "$BUILD_DIR/build-arm-ec.log"
+  [ "${PIPESTATUS[0]}" = 0 ] || { echo "make failed — see $BUILD_DIR/build-arm-ec.log"; exit 1; }
+  # Stripped of the DWARF the build adds, to roughly CrossOver's own size.
+  for module in $EC_MODULES; do
+    llvm-strip -o "$PAYLOAD_OUT/aarch64-windows/$(basename "$module")" "$WINE_EC_BUILD/$module" || exit 1
+  done
   cp "$WINE_SRC/COPYING.LIB" "$PAYLOAD_OUT/" 2>/dev/null || true
+  cmd_payload
+}
+
+# Add the parts that aren't Wine modules to a payload whose aarch64-windows modules are already
+# built: CI restores those from its cache and runs only this.
+cmd_payload() {
+  log "Adding the launcher-alpha library and the arm64 MoltenVK to $PAYLOAD_OUT"
+  # CI restores the modules from a cache: make sure that holds every one, nsi.dll included.
+  local module
+  for module in ntoskrnl.exe rundll32.exe wdfldr.sys $(for m in $EC_MODULES; do basename "$m"; done); do
+    [ -f "$PAYLOAD_OUT/aarch64-windows/$module" ] || { echo "no aarch64-windows/$module in $PAYLOAD_OUT — run 'build' first"; exit 1; }
+  done
+
+  # The launcher-alpha library is plain Objective-C against AppKit, not part of the Wine tree.
+  mkdir -p "$PAYLOAD_OUT/aarch64-unix"
+  xcrun clang -arch arm64 -mmacosx-version-min=13.0 -fobjc-arc -dynamiclib -O2 -Wall -Wno-deprecated-declarations \
+      -framework AppKit -framework QuartzCore -install_name @loader_path/fwalpha.dylib \
+      -o "$PAYLOAD_OUT/aarch64-unix/fwalpha.dylib" "$REPO/patches/ARM/winemac-shim/fwalpha.m" \
+    || { echo "fwalpha.dylib failed to build"; exit 1; }
+  codesign --force --sign - "$PAYLOAD_OUT/aarch64-unix/fwalpha.dylib" || exit 1
+
+  # CrossOver ARM's stock MoltenVK is 1.2.10; ship the same patched build as x64, for arm64.
+  local mvk="${MVK_ARM_DIR:-$BUILD_DIR/moltenvk-out-aarch64}/libMoltenVK.dylib"
+  [ -f "$mvk" ] || { echo "no arm64 MoltenVK at $mvk — run: MVK_ARCH=aarch64 scripts/build-moltenvk.sh"; exit 1; }
+  mkdir -p "$PAYLOAD_OUT/lib/aarch64"
+  cp "$mvk" "$PAYLOAD_OUT/lib/aarch64/libMoltenVK.dylib" || exit 1
+  cp "$(dirname "$mvk")/LICENSE.MoltenVK" "$PAYLOAD_OUT/lib/aarch64/" 2>/dev/null || true
   echo "built $PAYLOAD_OUT"
 }
 
 case "${1:-all}" in
-  deps|fetch|apply|configure|build|check) "cmd_$1" ;;
+  deps|fetch|apply|configure|build|payload|check) "cmd_$1" ;;
   all) cmd_deps; cmd_fetch; cmd_apply; cmd_configure; cmd_build ;;
-  *) echo "usage: $0 [all|deps|fetch|apply|configure|build|check]"; exit 1 ;;
+  *) echo "usage: $0 [all|deps|fetch|apply|configure|build|payload|check]"; exit 1 ;;
 esac
