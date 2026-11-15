@@ -159,4 +159,39 @@ final class RuntimeStoreTests: XCTestCase {
             manifest: RuntimeManifest(id: "z", name: "Zed", version: "1", wineVersion: "11")))
         XCTAssertEqual(store.list().map(\.kind), [.managed, .external])
     }
+
+    // MARK: The runtime built into the app
+
+    func testTheBuiltInRuntimeIsListedFirstAndHidesAnInstalledCopyOfItself() throws {
+        let sandbox = Sandbox()
+        let manifest = RuntimeManifest(id: "finewine-11.21-1", name: "FineWine", version: "1", wineVersion: "11.21")
+        let inApp = sandbox.makeRuntime(manifest: manifest)
+        let store = RuntimeStore(paths: sandbox.paths, bundledRoot: inApp)
+        try store.installManaged(from: sandbox.makeRuntime(manifest: manifest))            // the same runtime, installed
+        try store.installManaged(from: sandbox.makeRuntime(manifest: RuntimeManifest(id: "a-other", name: "A", version: "1", wineVersion: "10")))
+
+        let list = store.list()
+        XCTAssertEqual(list.map(\.id), ["finewine-11.21-1", "a-other"])
+        XCTAssertEqual(list.first?.kind, .bundled)
+        XCTAssertEqual(store.runtime(id: "finewine-11.21-1")?.root.path, inApp.path, "the one in the app is the one used")
+    }
+
+    func testAnAppWithoutARuntimeHasNoBuiltInOne() {
+        let sandbox = Sandbox()
+        XCTAssertNil(RuntimeStore(paths: sandbox.paths, bundledRoot: sandbox.root.appendingPathComponent("nothing")).bundled)
+        XCTAssertNil(RuntimeStore(paths: sandbox.paths, bundledRoot: nil).bundled)
+    }
+
+    func testAPrefixWithoutAUsableChoiceUsesTheBuiltInRuntime() throws {
+        let sandbox = Sandbox()
+        let inApp = sandbox.makeRuntime(manifest: RuntimeManifest(id: "builtin", name: "FineWine", version: "1", wineVersion: "11.21"))
+        let service = PrefixService(paths: sandbox.paths, runtimes: RuntimeStore(paths: sandbox.paths, bundledRoot: inApp))
+        for id in [nil, "gone-runtime"] as [String?] {
+            let prefix = Prefix(metadata: PrefixMetadata(name: "P", runtimeID: id), directory: sandbox.root.appendingPathComponent("pfx"))
+            XCTAssertEqual(try service.runtime(for: prefix).id, "builtin")
+        }
+        let none = PrefixService(paths: sandbox.paths, runtimes: RuntimeStore(paths: sandbox.paths, bundledRoot: nil))
+        let prefix = Prefix(metadata: PrefixMetadata(name: "P", runtimeID: "gone-runtime"), directory: sandbox.root.appendingPathComponent("pfx"))
+        XCTAssertThrowsError(try none.runtime(for: prefix))
+    }
 }

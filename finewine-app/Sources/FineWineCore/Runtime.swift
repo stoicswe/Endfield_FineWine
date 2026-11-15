@@ -53,6 +53,8 @@ public struct WineRuntime: Equatable, Identifiable, Sendable {
     public enum Kind: String, Sendable {
         /// Installed under FineWine's own Runtimes folder.
         case managed
+        /// The runtime inside FineWine.app itself. It is always there and cannot be removed.
+        case bundled
         /// A Wine folder elsewhere on disk that the user pointed FineWine at.
         case external
     }
@@ -126,13 +128,38 @@ public struct WineRuntime: Equatable, Identifiable, Sendable {
 public struct RuntimeStore {
     public static let manifestName = "runtime.json"
 
+    /// The folder of the runtime built into the app, inside its Resources.
+    public static let bundledFolderName = "Runtime"
+
     public let paths: FineWinePaths
+    /// Where the built-in runtime is, if the app has one.
+    public let bundledRoot: URL?
     private let fm = FileManager.default
 
-    public init(paths: FineWinePaths) { self.paths = paths }
+    /// `bundledRoot` defaults to the running app's own; a development build run outside an app
+    /// bundle, and the tests, have none.
+    public init(paths: FineWinePaths,
+                bundledRoot: URL? = Bundle.main.resourceURL?.appendingPathComponent(RuntimeStore.bundledFolderName, isDirectory: true)) {
+        self.paths = paths
+        self.bundledRoot = bundledRoot
+    }
 
-    /// Managed runtimes first, then external ones, each sorted by name.
+    /// The runtime built into the app.
+    public var bundled: WineRuntime? {
+        guard let root = bundledRoot, let manifest = Self.readManifest(in: root) else { return nil }
+        return WineRuntime(manifest: manifest, root: root, kind: .bundled)
+    }
+
+    /// The built-in runtime first, then managed ones, then external ones, each sorted by name.
+    /// The first usable one is what a new prefix gets. An installed runtime with the built-in
+    /// one's id is left out: the one in the app is the one that is used.
     public func list() -> [WineRuntime] {
+        let all = listInstalled()
+        guard let bundled else { return all }
+        return [bundled] + all.filter { $0.id != bundled.id }
+    }
+
+    private func listInstalled() -> [WineRuntime] {
         var managed: [WineRuntime] = []
         let dirs = (try? fm.contentsOfDirectory(at: paths.runtimes, includingPropertiesForKeys: nil)) ?? []
         for dir in dirs {

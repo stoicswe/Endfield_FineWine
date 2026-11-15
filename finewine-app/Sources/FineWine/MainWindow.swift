@@ -261,6 +261,7 @@ private struct RuntimeRow: View {
                     Text(runtime.name).fontWeight(.medium)
                     if !runtime.manifest.wineVersion.isEmpty { Pill(text: "Wine \(runtime.manifest.wineVersion)") }
                     if runtime.kind == .external { Pill(text: "External", symbol: "folder") }
+                    if runtime.kind == .bundled { Pill(text: "Built in", symbol: "shippingbox") }
                 }
                 Text(runtime.root.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 ForEach(problems, id: \.self) { problem in
@@ -268,9 +269,11 @@ private struct RuntimeRow: View {
                 }
             }
             Spacer()
-            Button("Remove") { confirmingRemoval = true }
-                .buttonStyle(.glass)
-                .controlSize(.small)
+            if runtime.kind != .bundled {
+                Button("Remove") { confirmingRemoval = true }
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+            }
         }
         .confirmationDialog("Remove “\(runtime.name)”?", isPresented: $confirmingRemoval) {
             Button("Remove", role: .destructive) { model.remove(runtime) }
