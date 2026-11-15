@@ -15,3 +15,6 @@ dist/
 patcher-app/.build/
 patcher-app/build/
 patcher-app/.swiftpm/
+finewine-app/.build/
+finewine-app/build/
+finewine-app/.swiftpm/

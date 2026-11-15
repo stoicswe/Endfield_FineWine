@@ -1,0 +1,47 @@
+{
+  "fill" : "automatic",
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "blend-mode" : "normal",
+          "image-name" : "fw.png",
+          "name" : "fw",
+          "opacity" : 0.24,
+          "position" : {
+            "scale" : 0.71,
+            "translation-in-points" : [
+              -175,
+              183
+            ]
+          }
+        },
+        {
+          "image-name" : "clker-free-vector-images-glass-33492.svg",
+          "name" : "clker-free-vector-images-glass-33492",
+          "position" : {
+            "scale" : 3.5,
+            "translation-in-points" : [
+              220.8129941737734,
+              -0.009637107101980291
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.3
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

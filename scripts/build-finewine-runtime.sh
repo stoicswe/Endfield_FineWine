@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+# build-finewine-runtime.sh — build FineWine's own Wine runtime for Apple Silicon.
+#
+# The result is build/finewine-runtime/: a folder with bin/, lib/, share/ and a runtime.json,
+# which FineWine installs from Settings > Add Runtime…. Nothing here comes from CrossOver's
+# binaries; it is upstream Wine plus this repository's patches.
+#
+#   source   upstream Wine (WINE_TAG, default wine-11.21), shallow-cloned from WineHQ
+#   patches  patches/ARM (the ARM series, minus the x86-only ones listed in SKIP_ARM_PATCHES)
+#            then patches/runtime/*.patch (runtime-only work, such as MSync)
+#   build    native arm64 Mac side; Windows side as ARM64X (--enable-archs=arm64ec,aarch64),
+#            the same shape CrossOver ARM uses, so x64 programs can load the DLLs once an
+#            x64 emulator is present
+#
+# Usage:
+#   scripts/build-finewine-runtime.sh deps       # Homebrew build dependencies
+#   scripts/build-finewine-runtime.sh fetch      # clone the Wine source
+#   scripts/build-finewine-runtime.sh apply      # apply the patch series
+#   scripts/build-finewine-runtime.sh configure
+#   scripts/build-finewine-runtime.sh build
+#   scripts/build-finewine-runtime.sh package    # install into build/finewine-runtime + runtime.json
+#   scripts/build-finewine-runtime.sh all        # everything above, in order
+#
+# Env: BUILD_DIR (default ./build), JOBS (default: all cores), WINE_TAG, RUNTIME_VERSION
+#      (default 1; part of the runtime's id), WINE_SRC_DIR (use an existing Wine checkout
+#      instead of cloning; it is copied, never modified).
+set -euo pipefail
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD_DIR="${BUILD_DIR:-$REPO/build}"
+JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"
+WINE_TAG="${WINE_TAG:-wine-11.21}"
+RUNTIME_VERSION="${RUNTIME_VERSION:-1}"
+SRC="$BUILD_DIR/finewine-runtime-src"
+OBJ="$BUILD_DIR/finewine-runtime-build"
+STAGE="$BUILD_DIR/finewine-runtime-stage"
+OUT="$BUILD_DIR/finewine-runtime"
+BREW="$(command -v brew || echo /opt/homebrew/bin/brew)"
+
+# ARM-series patches that can't go into an ARM64X build. In ARM64EC code __x86_64__ is defined
+# but x86 assembly does not assemble, and both of these add an x86 `int3` stub to kernel32.
+SKIP_ARM_PATCHES="
+0009-HACK-kernel32-Spoof-GetProcAddress-of-KiUserApcDispa.patch
+0010-HACK-kernel32-Lock-GetProcAddress-hack-to-when-neede.patch
+"
+
+log(){ printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+die(){ echo "ERROR: $*" >&2; exit 1; }
+
+# Homebrew bison (the system one is too old for Wine) and LLVM + lld for the Windows side.
+toolchain(){
+  export PATH="$("$BREW" --prefix bison)/bin:$("$BREW" --prefix llvm)/bin:$("$BREW" --prefix lld)/bin:$PATH"
+}
+
+cmd_deps(){
+  log "Installing build dependencies with Homebrew"
+  "$BREW" install bison pkgconf llvm lld freetype gnutls sdl2 molten-vk
+}
+
+cmd_fetch(){
+  log "Fetching Wine ($WINE_TAG)"
+  mkdir -p "$BUILD_DIR"; rm -rf "$SRC"
+  if [ -n "${WINE_SRC_DIR:-}" ]; then
+    [ -d "$WINE_SRC_DIR" ] || die "WINE_SRC_DIR not found: $WINE_SRC_DIR"
+    cp -R "$WINE_SRC_DIR" "$SRC"
+    git -C "$SRC" checkout -q -- . 2>/dev/null || true
+    git -C "$SRC" clean -qfdx 2>/dev/null || true
+  else
+    git init -q "$SRC"
+    git -C "$SRC" fetch -q --depth 1 https://gitlab.winehq.org/wine/wine.git "refs/tags/$WINE_TAG"
+    git -C "$SRC" checkout -q FETCH_HEAD
+  fi
+  echo "source: $SRC ($(cat "$SRC/VERSION"))"
+}
+
+patch_series(){
+  local P="$REPO/patches/ARM" f
+  for f in $(ls "$P"/stage2-dwproton/misc/*.patch | sort) \
+           $(ls "$P"/stage2-dwproton/ace-core/*.patch | sort) \
+           $(ls "$P"/stage1-macos/*.patch | sort); do
+    case "$SKIP_ARM_PATCHES" in *"$(basename "$f")"*) continue ;; esac
+    echo "$f"
+  done
+  ls "$REPO"/patches/runtime/*.patch 2>/dev/null | sort || true
+}
+
+cmd_apply(){
+  log "Applying patches"
+  [ -d "$SRC" ] || die "run 'fetch' first"
+  local n=0 f
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    git -C "$SRC" apply "$f" || die "patch failed: $f"
+    n=$((n+1))
+  done < <(patch_series)
+  # The server protocol changed (MSync adds a reply field): regenerate the files derived from it.
+  ( cd "$SRC" && perl tools/make_requests )
+  echo "applied $n patches"
+}
+
+cmd_configure(){
+  log "Configuring"
+  [ -d "$SRC" ] || die "run 'fetch' first"
+  toolchain
+  local hb; hb="$("$BREW" --prefix)"
+  mkdir -p "$OBJ"
+  # x86_64_CC: the ARM64EC modules contain a few x86_64 objects. Left alone, configure picks
+  # Homebrew's mingw gcc for them when it is installed, and its assembler rejects Wine's code.
+  ( cd "$OBJ" && x86_64_CC=clang \
+      CC="/usr/bin/clang -arch arm64" CXX="/usr/bin/clang++ -arch arm64" OBJC="/usr/bin/clang -arch arm64" \
+      PKG_CONFIG_PATH="$hb/lib/pkgconfig" CPPFLAGS="-I$hb/include" LDFLAGS="-L$hb/lib" \
+      "$SRC/configure" --build=aarch64-apple-darwin --host=aarch64-apple-darwin \
+        --enable-archs=arm64ec,aarch64 --prefix=/ --disable-tests \
+        --without-x --without-krb5 --without-gstreamer --without-gphoto --without-sane --without-pcap \
+        --without-usb --without-cups --without-opencl --without-pcsclite --without-dbus --without-netapi
+  ) > "$BUILD_DIR/configure-runtime.log" 2>&1 || die "configure failed, see $BUILD_DIR/configure-runtime.log"
+  # configure looks for libvulkan; on macOS Vulkan is MoltenVK, which the runtime bundles.
+  sed -i '' 's|/\* #undef SONAME_LIBMOLTENVK \*/|#define SONAME_LIBMOLTENVK "libMoltenVK.dylib"|' "$OBJ/include/config.h"
+  grep -q '^x86_64_CC = clang' "$OBJ/Makefile" || die "configure did not take clang as the x86_64 compiler"
+  echo "configured: $OBJ"
+}
+
+cmd_build(){
+  log "Building Wine ($JOBS jobs)"
+  [ -f "$OBJ/Makefile" ] || die "run 'configure' first"
+  toolchain
+  make -C "$OBJ" -j"$JOBS" > "$BUILD_DIR/build-runtime.log" 2>&1 \
+    || { grep -n ' error: \|Error [0-9]' "$BUILD_DIR/build-runtime.log" | tail -5; die "build failed, see $BUILD_DIR/build-runtime.log"; }
+  [ -x "$OBJ/loader/wine" ] && [ -x "$OBJ/server/wineserver" ] || die "the build produced no wine or wineserver"
+}
+
+# Copies a Homebrew dylib and the Homebrew dylibs it needs into the runtime's lib folder, and
+# points their references at each other, so the runtime runs on a Mac without Homebrew.
+bundle_dylib(){
+  local src="$1" name dep
+  name="$(basename "$src")"
+  [ -f "$OUT/lib/$name" ] && return 0
+  cp -L "$src" "$OUT/lib/$name"; chmod u+w "$OUT/lib/$name"
+  install_name_tool -id "@rpath/$name" "$OUT/lib/$name" 2>/dev/null
+  otool -L "$src" | awk 'NR>1{print $1}' | grep -E "^($("$BREW" --prefix)|@rpath|@loader_path)" | while IFS= read -r dep; do
+    local real="$dep"
+    case "$dep" in
+      @rpath/*|@loader_path/*) real="$(dirname "$(readlink -f "$src" 2>/dev/null || echo "$src")")/$(basename "$dep")" ;;
+    esac
+    [ -f "$real" ] || continue
+    [ "$(basename "$real")" = "$name" ] && continue
+    bundle_dylib "$real"
+    install_name_tool -change "$dep" "@loader_path/$(basename "$real")" "$OUT/lib/$name" 2>/dev/null
+  done
+  codesign --force --sign - "$OUT/lib/$name" 2>/dev/null
+}
+
+cmd_package(){
+  log "Packaging the runtime"
+  [ -x "$OBJ/loader/wine" ] || die "run 'build' first"
+  toolchain
+  rm -rf "$STAGE" "$OUT"
+  make -C "$OBJ" install DESTDIR="$STAGE" > "$BUILD_DIR/install-runtime.log" 2>&1 \
+    || die "install failed, see $BUILD_DIR/install-runtime.log"
+  mkdir -p "$OUT"
+  for d in bin lib share; do [ -d "$STAGE/$d" ] && mv "$STAGE/$d" "$OUT/$d"; done
+  rm -rf "$STAGE" "$OUT/share/man" "$OUT/include"
+
+  local hb; hb="$("$BREW" --prefix)"
+  # The libraries Wine opens by name at run time. FineWine puts <runtime>/lib on
+  # DYLD_FALLBACK_LIBRARY_PATH, so they only need to be here.
+  for lib in "$hb/lib/libfreetype.6.dylib" "$hb/lib/libgnutls.30.dylib" "$hb/lib/libSDL2-2.0.0.dylib"; do
+    [ -f "$lib" ] && bundle_dylib "$lib"
+  done
+  # MoltenVK: this repository's patched arm64 build when it exists, else Homebrew's.
+  if [ -f "$BUILD_DIR/moltenvk-out-aarch64/libMoltenVK.dylib" ]; then
+    cp "$BUILD_DIR/moltenvk-out-aarch64/libMoltenVK.dylib" "$OUT/lib/libMoltenVK.dylib"
+  elif [ -f "$hb/lib/libMoltenVK.dylib" ]; then
+    bundle_dylib "$hb/lib/libMoltenVK.dylib"
+  fi
+
+  local wine_version id
+  wine_version="$(sed 's/^Wine version //' "$SRC/VERSION")"
+  id="finewine-$wine_version-$RUNTIME_VERSION"
+  cat > "$OUT/runtime.json" <<JSON
+{
+  "id": "$id",
+  "name": "FineWine $wine_version",
+  "version": "$RUNTIME_VERSION",
+  "wineVersion": "$wine_version",
+  "architecture": "arm64",
+  "graphics": {}
+}
+JSON
+  # Mach-O files are signed ad hoc; arm64 macOS refuses to run unsigned code.
+  find "$OUT/bin" "$OUT/lib" -type f \( -perm -u+x -o -name '*.so' -o -name '*.dylib' \) -print0 \
+    | xargs -0 -n 50 codesign --force --sign - 2>/dev/null || true
+  echo "runtime: $OUT ($id, $(du -sh "$OUT" | cut -f1))"
+}
+
+case "${1:-}" in
+  deps) cmd_deps ;;
+  fetch) cmd_fetch ;;
+  apply) cmd_apply ;;
+  configure) cmd_configure ;;
+  build) cmd_build ;;
+  package) cmd_package ;;
+  all) cmd_deps; cmd_fetch; cmd_apply; cmd_configure; cmd_build; cmd_package ;;
+  *) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
