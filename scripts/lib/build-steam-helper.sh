@@ -3,7 +3,8 @@
 #   <runtime>/share/finewine/steam/steam.exe
 # It is an x64 program: the games that need it are. Needs the llvm-mingw compiler that
 # scripts/build-fex.sh downloads; without it the helper is left out and FineWine runs those
-# games directly.
+# games directly. Linked with -s: a released runtime carries no debug information, and the
+# compiler's own startup code would otherwise bring some.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="${1:?usage: build-steam-helper.sh <runtime folder>}"
@@ -13,6 +14,6 @@ if [ ! -x "$CC" ]; then
   exit 0
 fi
 mkdir -p "$OUT/share/finewine/steam"
-"$CC" -O2 -municode -mwindows -o "$OUT/share/finewine/steam/steam.exe" \
+"$CC" -O2 -s -municode -mwindows -o "$OUT/share/finewine/steam/steam.exe" \
   "$REPO/runtime-extras/steam-helper/steam.c" -lntdll
 echo "steam helper: $OUT/share/finewine/steam/steam.exe"
