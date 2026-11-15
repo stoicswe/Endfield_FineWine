@@ -1,0 +1,2692 @@
+FineWine: ray tracing pipelines as one compute shader built on ray queries
+
+Adds VK_KHR_ray_tracing_pipeline.
+
+Metal has no ray generation, hit, miss or callable shader stages, and SPIRV-Cross cannot
+translate them; it can translate ray queries. MoltenVKShaderConverter gains a SPIR-V pass
+(RayTracingLowering.cpp) that merges the shaders of a pipeline into one compute shader:
+
+- every shader is imported once for each trace depth it can run at, since Metal shaders
+  cannot recurse; ids are renumbered, and types, constants and descriptor variables that are
+  the same as ones already present are merged;
+- the ray tracing storage classes and built-in inputs become private variables;
+- OpTraceRayKHR becomes a call to a generated ray query loop that runs any-hit and
+  intersection shaders on candidates and then the closest-hit or miss shader, chosen by
+  reading the shader binding table through its buffer address;
+- OpReportIntersectionKHR and OpExecuteCallableKHR become generated functions; shader records
+  are read in place; specialization constants are fixed per stage.
+
+MVKRayTracingPipeline is a compute pipeline made from that shader. vkCmdTraceRaysKHR and
+vkCmdTraceRaysIndirectKHR dispatch it with one thread per ray, bind the shader binding
+table's addresses, and bind for each traced acceleration structure a texture of its
+instances' shader binding table offsets, which a Metal ray query does not return. The ray
+tracing bind point keeps its own pipeline and descriptor sets.
+
+Not supported: pipeline libraries, capture/replay handles, arrays of acceleration structures
+with non-zero instance offsets.
+
+The new source files are included from existing ones (SPIRVSupport.cpp, MVKPipeline.mm,
+MVKCmdDispatch.mm) so that the Xcode projects do not change.
+
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCmdAccelerationStructure.h b/MoltenVK/MoltenVK/Commands/MVKCmdAccelerationStructure.h
+index 4a5cbb5..15ad069 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCmdAccelerationStructure.h
++++ b/MoltenVK/MoltenVK/Commands/MVKCmdAccelerationStructure.h
+@@ -124,3 +124,47 @@ protected:
+ 	MVKQueryPool* _queryPool;
+ 	uint32_t _query;
+ };
++
++
++#pragma mark -
++#pragma mark MVKCmdBindRayTracingPipeline
++
++/** vkCmdBindPipeline for the ray tracing bind point. */
++class MVKCmdBindRayTracingPipeline : public MVKCommand {
++
++public:
++	VkResult setContent(MVKCommandBuffer* cmdBuff, VkPipeline pipeline);
++
++	void encode(MVKCommandEncoder* cmdEncoder) override;
++
++protected:
++	MVKCommandTypePool<MVKCommand>* getTypePool(MVKCommandPool* cmdPool) override;
++
++	MVKPipeline* _pipeline;
++};
++
++
++#pragma mark -
++#pragma mark MVKCmdTraceRays
++
++/** vkCmdTraceRaysKHR and vkCmdTraceRaysIndirectKHR: one compute thread per ray. */
++class MVKCmdTraceRays : public MVKCommand {
++
++public:
++	VkResult setContent(MVKCommandBuffer* cmdBuff,
++						const VkStridedDeviceAddressRegionKHR* pRaygen,
++						const VkStridedDeviceAddressRegionKHR* pMiss,
++						const VkStridedDeviceAddressRegionKHR* pHit,
++						const VkStridedDeviceAddressRegionKHR* pCallable,
++						uint32_t width, uint32_t height, uint32_t depth,
++						VkDeviceAddress indirectDeviceAddress);
++
++	void encode(MVKCommandEncoder* cmdEncoder) override;
++
++protected:
++	MVKCommandTypePool<MVKCommand>* getTypePool(MVKCommandPool* cmdPool) override;
++
++	VkStridedDeviceAddressRegionKHR _raygen, _miss, _hit, _callable;
++	uint32_t _width, _height, _depth;
++	VkDeviceAddress _indirectAddress;
++};
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCmdAccelerationStructure.mm b/MoltenVK/MoltenVK/Commands/MVKCmdAccelerationStructure.mm
+index d7d4f1d..1e32a6c 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCmdAccelerationStructure.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCmdAccelerationStructure.mm
+@@ -20,6 +20,9 @@
+ 
+ #include "MVKCmdAccelerationStructure.h"
+ #include "../GPUObjects/MVKAccelerationStructure.h"
++#include "../GPUObjects/MVKRayTracingPipeline.h"
++#include "../GPUObjects/MVKDescriptorSet.h"
++#include <MoltenVKShaderConverter/RayTracingLowering.h>
+ #include "MVKCommandBuffer.h"
+ #include "MVKCommandPool.h"
+ #include "MVKDevice.h"
+@@ -127,3 +130,103 @@
+ 	// Only pools of the two acceleration structure query types reach this command.
+ 	((MVKAccelerationStructureQueryPool*)_queryPool)->writeProperty(_query, _accelerationStructure, cmdEncoder);
+ }
++
++
++#pragma mark -
++#pragma mark MVKCmdBindRayTracingPipeline
++
++VkResult MVKCmdBindRayTracingPipeline::setContent(MVKCommandBuffer* cmdBuff, VkPipeline pipeline) {
++	_pipeline = (MVKPipeline*)pipeline;
++	return VK_SUCCESS;
++}
++
++void MVKCmdBindRayTracingPipeline::encode(MVKCommandEncoder* cmdEncoder) {
++	cmdEncoder->bindPipeline(VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipeline);
++}
++
++
++#pragma mark -
++#pragma mark MVKCmdTraceRays
++
++VkResult MVKCmdTraceRays::setContent(MVKCommandBuffer* cmdBuff,
++									 const VkStridedDeviceAddressRegionKHR* pRaygen,
++									 const VkStridedDeviceAddressRegionKHR* pMiss,
++									 const VkStridedDeviceAddressRegionKHR* pHit,
++									 const VkStridedDeviceAddressRegionKHR* pCallable,
++									 uint32_t width, uint32_t height, uint32_t depth,
++									 VkDeviceAddress indirectDeviceAddress) {
++	_raygen = pRaygen ? *pRaygen : VkStridedDeviceAddressRegionKHR();
++	_miss = pMiss ? *pMiss : VkStridedDeviceAddressRegionKHR();
++	_hit = pHit ? *pHit : VkStridedDeviceAddressRegionKHR();
++	_callable = pCallable ? *pCallable : VkStridedDeviceAddressRegionKHR();
++	_width = width;
++	_height = height;
++	_depth = depth;
++	_indirectAddress = indirectDeviceAddress;
++	return VK_SUCCESS;
++}
++
++void MVKCmdTraceRays::encode(MVKCommandEncoder* cmdEncoder) {
++	MVKCommandEncoderState& state = cmdEncoder->getState();
++	const MVKVulkanComputeCommandEncoderState& rt = state.vkRayTracing();
++	auto* pipeline = (MVKRayTracingPipeline*)rt._pipeline;
++	if ( !pipeline || !pipeline->getPipelineState() ) { return; }
++	MVKDevice* device = cmdEncoder->getDevice();
++
++	// The ray tracing bind point shares the Metal compute encoder with the compute bind point.
++	// A fresh encoder before and after keeps what one has bound from being taken for the other's.
++	cmdEncoder->endCurrentMetalEncoding();
++	id<MTLComputeCommandEncoder> mtlEncoder = cmdEncoder->getMTLComputeEncoder(kMVKCommandUseDispatch);
++	state.prepareRayTracingDispatch(mtlEncoder, *cmdEncoder);
++
++	// Where the shader finds the shader binding table.
++	mvk::RTDispatchParams params = {};
++	params.rayGenAddress = _raygen.deviceAddress;
++	params.missAddress = _miss.deviceAddress;
++	params.missStride = _miss.stride;
++	params.hitAddress = _hit.deviceAddress;
++	params.hitStride = _hit.stride;
++	params.callableAddress = _callable.deviceAddress;
++	params.callableStride = _callable.stride;
++	[mtlEncoder setBytes: &params length: sizeof(params) atIndex: pipeline->getParamsBufferIndex()];
++
++	// The instance table of each acceleration structure the shader traces against.
++	auto& tables = pipeline->getInstanceTableBindings();
++	NSMutableArray* keep = tables.empty() ? nil : [NSMutableArray array];
++	for (uint32_t i = 0; i < tables.size(); i++) {
++		id<MTLTexture> mtlTable = nil;
++		uint32_t set = tables[i].first;
++		if (rt._layout && set < rt._layout->getDescriptorSetCount() && rt._descriptorSets[set]) {
++			MVKDescriptorSetLayout* setLayout = rt._layout->getDescriptorSetLayout(set);
++			uint32_t idx = setLayout->getBindingIndex(tables[i].second);
++			if (idx < setLayout->bindings().size() && setLayout->bindings()[idx].descriptorType == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR) {
++				id mtlAS = *(id*)(rt._descriptorSets[set]->cpuBuffer + setLayout->bindings()[idx].cpuOffset);
++				mtlTable = mvkGetInstanceTable(mtlAS);
++			}
++		}
++		if ( !mtlTable ) { mtlTable = pipeline->getEmptyInstanceTable(); }
++		[mtlEncoder setTexture: mtlTable atIndex: pipeline->getInstanceTableTextureIndex(i)];
++		[keep addObject: mtlTable];
++	}
++	if (keep.count) {
++		NSArray* kept = [keep retain];
++		[cmdEncoder->_mtlCmdBuffer addCompletedHandler: ^(id<MTLCommandBuffer>) { [kept release]; }];
++	}
++
++	// One work group of one thread per ray: the shader takes its launch id from the work group id.
++	if (_indirectAddress) {
++		id<MTLBuffer> mtlIndirect = nil;
++		NSUInteger indirectOffset = 0;
++		if (device->getMTLBufferAtAddress(_indirectAddress, &mtlIndirect, &indirectOffset)) {
++			[mtlEncoder dispatchThreadgroupsWithIndirectBuffer: mtlIndirect
++										  indirectBufferOffset: indirectOffset
++										 threadsPerThreadgroup: MTLSizeMake(1, 1, 1)];
++		} else {
++			device->reportError(VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS, "vkCmdTraceRaysIndirectKHR(): The indirect address is not in a buffer created with VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT.");
++		}
++	} else if (_width && _height && _depth) {
++		[mtlEncoder dispatchThreadgroups: MTLSizeMake(_width, _height, _depth)
++				   threadsPerThreadgroup: MTLSizeMake(1, 1, 1)];
++	}
++	cmdEncoder->endCurrentMetalEncoding();
++}
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
+index 2b57cee..42f548f 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
+@@ -903,6 +903,10 @@ static MVKBarrierStage commandUseToBarrierStage(MVKCommandUse use) {
+             _state.bindComputePipeline(static_cast<MVKComputePipeline*>(pipeline));
+             break;
+ 
++        case VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR:
++            _state.bindRayTracingPipeline(static_cast<MVKComputePipeline*>(pipeline));
++            break;
++
+         default:
+             break;
+     }
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.h b/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.h
+index 6a27439..91d06f8 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.h
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.h
+@@ -450,6 +450,7 @@ class MVKCommandEncoderState {
+ 	MVKVulkanSharedCommandEncoderState   _vkShared;
+ 	MVKVulkanGraphicsCommandEncoderState _vkGraphics;
+ 	MVKVulkanComputeCommandEncoderState  _vkCompute;
++	MVKVulkanComputeCommandEncoderState  _vkRayTracing;	// FineWine: the ray tracing bind point; its pipelines are compute pipelines
+ 	MVKMetalSharedCommandEncoderState    _mtlShared;
+ 	MVKMetalGraphicsCommandEncoderState  _mtlGraphics;
+ 	MVKMetalComputeCommandEncoderState   _mtlCompute;
+@@ -471,6 +472,14 @@ public:
+ 	const MVKVulkanGraphicsCommandEncoderState& vkGraphics() const { return _vkGraphics; }
+ 	/** Get a reference to the Vulkan compute state.  Read-only, use methods on this class (which will invalidate associated Metal state) to modify. */
+ 	const MVKVulkanComputeCommandEncoderState&  vkCompute()  const { return _vkCompute; }
++	const MVKVulkanComputeCommandEncoderState&  vkRayTracing() const { return _vkRayTracing; }
++
++	/** FineWine: binds a ray tracing pipeline, which is a compute pipeline, to the ray tracing bind point. */
++	void bindRayTracingPipeline(MVKComputePipeline* pipeline);
++	/** FineWine: binds everything needed to dispatch the ray tracing bind point's pipeline on the current Metal compute state. */
++	void prepareRayTracingDispatch(id<MTLComputeCommandEncoder> encoder, MVKCommandEncoder& mvkEncoder) {
++		_mtlCompute.prepareComputeDispatch(encoder, mvkEncoder, _vkRayTracing, _vkShared);
++	}
+ 	/** Returns a reference to the Metal state shared between graphics and compute. */
+ 	MVKMetalSharedCommandEncoderState&   mtlShared()   { return _mtlShared; }
+ 	/** Returns a reference to the Metal graphics state. */
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.mm b/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.mm
+index 61b29b2..663fb7d 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.mm
+@@ -1760,6 +1760,15 @@ static void invalidateImplicitBuffer(MVKCommandEncoderState& state, VkPipelineBi
+ 	}
+ }
+ 
++void MVKCommandEncoderState::bindRayTracingPipeline(MVKComputePipeline* pipeline) {
++	_vkRayTracing._pipeline = pipeline;
++	MVKPipelineLayout* layout = pipeline->getLayout();
++	if (_vkRayTracing._layout != layout) {
++		mvkEnsureSize(_vkShared._pushConstants, layout->getPushConstantsLength());
++		_vkRayTracing.setLayout(layout);
++	}
++}
++
+ void MVKCommandEncoderState::pushConstants(uint32_t offset, uint32_t size, const void* data) {
+ 	mvkEnsureSize(_vkShared._pushConstants, offset + size);
+ 	memcpy(_vkShared._pushConstants.data() + offset, data, size);
+@@ -1785,6 +1794,8 @@ static void invalidateImplicitBuffer(MVKCommandEncoderState& state, VkPipelineBi
+ 		_vkGraphics.bindDescriptorSets(layout, firstSet, setCount, sets, dynamicOffsetCount, dynamicOffsets);
+ 	} else if (bindPoint == VK_PIPELINE_BIND_POINT_COMPUTE) {
+ 		_vkCompute.bindDescriptorSets(layout, firstSet, setCount, sets, dynamicOffsetCount, dynamicOffsets);
++	} else if (bindPoint == VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR) {
++		_vkRayTracing.bindDescriptorSets(layout, firstSet, setCount, sets, dynamicOffsetCount, dynamicOffsets);
+ 	}
+ }
+ 
+@@ -1792,6 +1803,7 @@ static void invalidateImplicitBuffer(MVKCommandEncoderState& state, VkPipelineBi
+ 	switch (bindPoint) {
+ 		case VK_PIPELINE_BIND_POINT_GRAPHICS: return &_vkGraphics;
+ 		case VK_PIPELINE_BIND_POINT_COMPUTE:  return &_vkCompute;
++		case VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR: return &_vkRayTracing;
+ 		default: return nullptr;
+ 	}
+ }
+@@ -1862,7 +1874,7 @@ static void invalidateImplicitBuffer(MVKCommandEncoderState& state, VkPipelineBi
+ void MVKCommandEncoderState::applyToActiveMTLState(VkPipelineBindPoint bindPoint, Fn&& fn) {
+ 	switch (_mtlActiveEncoder) {
+ 		case CommandEncoderClass::Graphics:
+-			if (bindPoint != VK_PIPELINE_BIND_POINT_COMPUTE)
++			if (bindPoint != VK_PIPELINE_BIND_POINT_COMPUTE && bindPoint != VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
+ 				std::forward<Fn>(fn)(_mtlGraphics);
+ 			break;
+ 		case CommandEncoderClass::Compute:
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommandTypePools.def b/MoltenVK/MoltenVK/Commands/MVKCommandTypePools.def
+index c44f30f..9b175a2 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandTypePools.def
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandTypePools.def
+@@ -142,6 +142,8 @@ MVK_CMD_TYPE_POOL(CopyAccelerationStructure)
+ MVK_CMD_TYPE_POOL(CopyAccelerationStructureToMemory)
+ MVK_CMD_TYPE_POOL(CopyMemoryToAccelerationStructure)
+ MVK_CMD_TYPE_POOL(WriteAccelerationStructureProperty)
++MVK_CMD_TYPE_POOL(BindRayTracingPipeline)
++MVK_CMD_TYPE_POOL(TraceRays)
+ MVK_CMD_TYPE_POOL(DispatchIndirect)
+ MVK_CMD_TYPE_POOL(PushDescriptorSet)
+ MVK_CMD_TYPE_POOL(PushDescriptorSetWithTemplate)
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKAccelerationStructure.h b/MoltenVK/MoltenVK/GPUObjects/MVKAccelerationStructure.h
+index ce6bfcd..5aec0e8 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKAccelerationStructure.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKAccelerationStructure.h
+@@ -114,10 +114,12 @@ public:
+ 
+ protected:
+ 	void propagateDebugName() override;
++	void setInstanceTable(id<MTLTexture> mtlTable);
+ 
+ 	id<MTLAccelerationStructure> _mtlAccelerationStructure = nil;
+ 	NSArray<id<MTLAccelerationStructure>>* _instancedStructures = nil;
+ 	MTLAccelerationStructureDescriptor* _buildDescriptor = nil;
++	id<MTLTexture> _instanceTable = nil;
+ 	MVKSmallVector<MVKAccelerationStructureGeometryExtent, 4> _buildExtents;
+ 	MVKSmallVector<VkDeviceAddress, 16> _instancedAddresses;
+ 	VkAccelerationStructureTypeKHR _type;
+@@ -138,6 +140,15 @@ protected:
+  */
+ NSArray<id<MTLAccelerationStructure>>* mvkGetInstancedMTLAccelerationStructures(id mtlAccelerationStructure);
+ 
++/**
++ * Returns the instance table of a Metal top-level structure, or nil: a texture holding the
++ * shader binding table offset of each instance, which a ray tracing pipeline's shader reads
++ * because a Metal ray query does not return it. Instance i is the texel at
++ * (i % kMVKInstanceTableWidth, i / kMVKInstanceTableWidth).
++ */
++id<MTLTexture> mvkGetInstanceTable(id mtlAccelerationStructure);
++static const uint32_t kMVKInstanceTableWidth = 4096;
++
+ /** Whether this device and OS can provide acceleration structures. */
+ bool mvkSupportsAccelerationStructures(id<MTLDevice> mtlDevice);
+ 
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKAccelerationStructure.mm b/MoltenVK/MoltenVK/GPUObjects/MVKAccelerationStructure.mm
+index d1a7a0b..c23dfb4 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKAccelerationStructure.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKAccelerationStructure.mm
+@@ -24,6 +24,7 @@
+ #include "MVKQueue.h"
+ #include "MVKCommandBuffer.h"
+ #include <atomic>
++#include <vector>
+ #import <objc/runtime.h>
+ 
+ using namespace std;
+@@ -33,6 +34,11 @@
+ #pragma mark Support functions
+ 
+ static const char _mvkInstancedStructuresKey = 0;
++static const char _mvkInstanceTableKey = 0;
++
++id<MTLTexture> mvkGetInstanceTable(id mtlAccelerationStructure) {
++	return mtlAccelerationStructure ? objc_getAssociatedObject(mtlAccelerationStructure, &_mvkInstanceTableKey) : nil;
++}
+ 
+ NSArray<id<MTLAccelerationStructure>>* mvkGetInstancedMTLAccelerationStructures(id mtlAccelerationStructure) {
+ 	return mtlAccelerationStructure ? objc_getAssociatedObject(mtlAccelerationStructure, &_mvkInstancedStructuresKey) : nil;
+@@ -351,11 +357,53 @@ static void mvkConvertInstance(const VkAccelerationStructureInstanceKHR& vkInst,
+ 	_device->addAccelerationStructure(this);
+ }
+ 
++void MVKAccelerationStructure::setInstanceTable(id<MTLTexture> mtlTable) {
++	if (mtlTable != _instanceTable) {
++		[_instanceTable release];
++		_instanceTable = [mtlTable retain];
++	}
++	// It travels with the Metal object, which is what the code that binds it has.
++	if (_mtlAccelerationStructure) {
++		objc_setAssociatedObject(_mtlAccelerationStructure, &_mvkInstanceTableKey, mtlTable, OBJC_ASSOCIATION_RETAIN);
++	}
++}
++
+ void MVKAccelerationStructure::setBuildRecord(MTLAccelerationStructureDescriptor* mtlDesc, const MVKAccelerationStructureBuildInputs& inputs) {
+ 	if (mtlDesc != _buildDescriptor) {
+ 		[_buildDescriptor release];
+ 		_buildDescriptor = [mtlDesc retain];
+ 	}
++
++	// A top-level structure: write its instances' shader binding table offsets into a texture
++	// of their own. A new texture each time, because commands encoded before this one may
++	// still be waiting to run with the old one.
++	id<MTLTexture> mtlTable = nil;
++	if ([mtlDesc isKindOfClass: [MTLInstanceAccelerationStructureDescriptor class]]) {
++		auto* instDesc = (MTLInstanceAccelerationStructureDescriptor*)mtlDesc;
++		NSUInteger count = instDesc.instanceCount;
++		const char* src = (const char*)instDesc.instanceDescriptorBuffer.contents;
++		if (count && src) {
++			src += instDesc.instanceDescriptorBufferOffset;
++			NSUInteger height = (count + kMVKInstanceTableWidth - 1) / kMVKInstanceTableWidth;
++			std::vector<uint32_t> offsets(height * kMVKInstanceTableWidth, 0);
++			for (NSUInteger i = 0; i < count; i++) {
++				offsets[i] = ((const MTLAccelerationStructureUserIDInstanceDescriptor*)(src + i * instDesc.instanceDescriptorStride))->intersectionFunctionTableOffset;
++			}
++			MTLTextureDescriptor* texDesc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat: MTLPixelFormatR32Uint
++																						   width: kMVKInstanceTableWidth
++																						  height: height
++																					   mipmapped: NO];
++			texDesc.usage = MTLTextureUsageShaderRead;
++			texDesc.storageMode = MTLStorageModeShared;
++			mtlTable = [[getMTLDevice() newTextureWithDescriptor: texDesc] autorelease];
++			[mtlTable replaceRegion: MTLRegionMake2D(0, 0, kMVKInstanceTableWidth, height)
++						mipmapLevel: 0
++						  withBytes: offsets.data()
++						bytesPerRow: kMVKInstanceTableWidth * sizeof(uint32_t)];
++		}
++	}
++	setInstanceTable(mtlTable);
++
+ 	_buildExtents.clear();
+ 	for (auto& e : inputs.extents) { _buildExtents.push_back(e); }
+ 	_instancedAddresses.clear();
+@@ -366,6 +414,7 @@ static void mvkConvertInstance(const VkAccelerationStructureInstanceKHR& vkInst,
+ 	if (src == this) { return; }
+ 	[_buildDescriptor release];
+ 	_buildDescriptor = [src->_buildDescriptor retain];
++	setInstanceTable(src->_instanceTable);
+ 	_buildExtents.clear();
+ 	for (auto& e : src->_buildExtents) { _buildExtents.push_back(e); }
+ 	_instancedAddresses.clear();
+@@ -375,6 +424,7 @@ static void mvkConvertInstance(const VkAccelerationStructureInstanceKHR& vkInst,
+ MVKAccelerationStructure::~MVKAccelerationStructure() {
+ 	_device->removeAccelerationStructure(this);
+ 	[_buildDescriptor release];
++	[_instanceTable release];
+ 	[_instancedStructures release];
+ 	[_mtlAccelerationStructure release];
+ }
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDescriptorSet.mm b/MoltenVK/MoltenVK/GPUObjects/MVKDescriptorSet.mm
+index 6027bf6..95b91ac 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDescriptorSet.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDescriptorSet.mm
+@@ -549,6 +549,8 @@ static uint32_t writeAuxOffsets(uint32_t* write, MVKArrayRef<const MVKDescriptor
+ 	descriptorType = vk.descriptorType;
+ 	descriptorCount = vk.descriptorCount;
+ 	stageFlags = vk.stageFlags;
++	// FineWine: the shaders of a ray tracing pipeline run as one compute shader.
++	if (stageFlags & kMVKRayTracingShaderStages) { stageFlags |= VK_SHADER_STAGE_COMPUTE_BIT; }
+ 	flags = canUseImmutableSamplers(descriptorType) && vk.pImmutableSamplers ? MVK_DESCRIPTOR_BINDING_USES_IMMUTABLE_SAMPLERS_BIT : 0;
+ }
+ 
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+index 3cfa4a9..bd00576 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+@@ -22,6 +22,7 @@
+ #include "MVKSurface.h"
+ #include "MVKBuffer.h"
+ #include "MVKAccelerationStructure.h"
++#include "MVKRayTracingPipeline.h"
+ #include "MVKImage.h"
+ #include "MVKSwapchain.h"
+ #include "MVKQueryPool.h"
+@@ -594,6 +595,17 @@
+ 				rayQueryFeatures->rayQuery = _supportedExtensions.vk_KHR_ray_query.enabled;
+ 				break;
+ 			}
++			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR: {
++				// FineWine: see MVKRayTracingPipeline.h. Capture/replay handles are not provided.
++				auto* rtPipelineFeatures = (VkPhysicalDeviceRayTracingPipelineFeaturesKHR*)next;
++				bool rtp = _supportedExtensions.vk_KHR_ray_tracing_pipeline.enabled;
++				rtPipelineFeatures->rayTracingPipeline = rtp;
++				rtPipelineFeatures->rayTracingPipelineShaderGroupHandleCaptureReplay = false;
++				rtPipelineFeatures->rayTracingPipelineShaderGroupHandleCaptureReplayMixed = false;
++				rtPipelineFeatures->rayTracingPipelineTraceRaysIndirect = rtp;
++				rtPipelineFeatures->rayTraversalPrimitiveCulling = rtp;
++				break;
++			}
+ 			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_7_FEATURES_KHR: {
+ 				auto* maintenance7Features = (VkPhysicalDeviceMaintenance7FeaturesKHR*)next;
+ 				maintenance7Features->maintenance7 = true;
+@@ -1282,6 +1294,18 @@
+ 				divisorProps->supportsNonZeroFirstInstance = supportedProps14.supportsNonZeroFirstInstance;
+ 				break;
+ 			}
++			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR: {
++				auto* rtPipelineProps = (VkPhysicalDeviceRayTracingPipelinePropertiesKHR*)next;
++				rtPipelineProps->shaderGroupHandleSize = kMVKRayTracingShaderGroupHandleSize;
++				rtPipelineProps->maxRayRecursionDepth = kMVKRayTracingMaxRecursionDepth;
++				rtPipelineProps->maxShaderGroupStride = 4096;
++				rtPipelineProps->shaderGroupBaseAlignment = 64;
++				rtPipelineProps->shaderGroupHandleCaptureReplaySize = 0;
++				rtPipelineProps->maxRayDispatchInvocationCount = 1u << 30;
++				rtPipelineProps->shaderGroupHandleAlignment = 8;
++				rtPipelineProps->maxRayHitAttributeSize = 32;
++				break;
++			}
+ 			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR: {
+ 				// FineWine: Metal publishes no limits for acceleration structures. These are the
+ 				// values Vulkan implementations commonly report, kept within what 32-bit counts hold.
+@@ -3557,6 +3581,11 @@ static uint32_t mvkGetEntryProperty(io_registry_entry_t entry, CFStringRef prope
+ 		pWritableExtns->vk_KHR_acceleration_structure.enabled = false;
+ 		pWritableExtns->vk_KHR_ray_query.enabled = false;
+ 	}
++	// A ray tracing pipeline is built on ray queries, and reads its instance tables from
++	// textures bound outside the argument buffers.
++	if ( !pWritableExtns->vk_KHR_ray_query.enabled || !_metalFeatures.argumentBuffers ) {
++		pWritableExtns->vk_KHR_ray_tracing_pipeline.enabled = false;
++	}
+ 
+ 	if (!_metalFeatures.subgroupUniformControlFlow) {
+ 		pWritableExtns->vk_KHR_shader_subgroup_uniform_control_flow.enabled = false;
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDeviceFeatureStructs.def b/MoltenVK/MoltenVK/GPUObjects/MVKDeviceFeatureStructs.def
+index 17c0434..031dc15 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDeviceFeatureStructs.def
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDeviceFeatureStructs.def
+@@ -83,6 +83,7 @@ MVK_DEVICE_FEATURE(ZeroInitializeWorkgroupMemory,         ZERO_INITIALIZE_WORKGR
+ MVK_DEVICE_FEATURE_EXTN(AccelerationStructure,            ACCELERATION_STRUCTURE,               KHR,   5)
+ MVK_DEVICE_FEATURE_EXTN(FragmentShaderBarycentric,        FRAGMENT_SHADER_BARYCENTRIC,          KHR,   1)
+ MVK_DEVICE_FEATURE_EXTN(RayQuery,                         RAY_QUERY,                            KHR,   1)
++MVK_DEVICE_FEATURE_EXTN(RayTracingPipeline,               RAY_TRACING_PIPELINE,                 KHR,   5)
+ MVK_DEVICE_FEATURE_EXTN(Maintenance7,                     MAINTENANCE_7,                        KHR,   1)
+ MVK_DEVICE_FEATURE_EXTN(Maintenance8,                     MAINTENANCE_8,                        KHR,   1)
+ MVK_DEVICE_FEATURE_EXTN(Maintenance9,                     MAINTENANCE_9,                        KHR,   1)
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKInstance.mm b/MoltenVK/MoltenVK/GPUObjects/MVKInstance.mm
+index 1d99516..5db8e51 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKInstance.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKInstance.mm
+@@ -759,6 +759,13 @@
+ 	// Device extension functions.
+ 	ADD_DVC_EXT_ENTRY_POINT(vkGetCalibratedTimestampsKHR, KHR_CALIBRATED_TIMESTAMPS);
+ 	ADD_DVC_EXT_ENTRY_POINT(vkGetPhysicalDeviceCalibrateableTimeDomainsKHR, KHR_CALIBRATED_TIMESTAMPS);
++	ADD_DVC_EXT_ENTRY_POINT(vkCreateRayTracingPipelinesKHR, KHR_RAY_TRACING_PIPELINE);
++	ADD_DVC_EXT_ENTRY_POINT(vkGetRayTracingShaderGroupHandlesKHR, KHR_RAY_TRACING_PIPELINE);
++	ADD_DVC_EXT_ENTRY_POINT(vkGetRayTracingCaptureReplayShaderGroupHandlesKHR, KHR_RAY_TRACING_PIPELINE);
++	ADD_DVC_EXT_ENTRY_POINT(vkGetRayTracingShaderGroupStackSizeKHR, KHR_RAY_TRACING_PIPELINE);
++	ADD_DVC_EXT_ENTRY_POINT(vkCmdTraceRaysKHR, KHR_RAY_TRACING_PIPELINE);
++	ADD_DVC_EXT_ENTRY_POINT(vkCmdTraceRaysIndirectKHR, KHR_RAY_TRACING_PIPELINE);
++	ADD_DVC_EXT_ENTRY_POINT(vkCmdSetRayTracingPipelineStackSizeKHR, KHR_RAY_TRACING_PIPELINE);
+ 	ADD_DVC_EXT_ENTRY_POINT(vkCreateAccelerationStructureKHR, KHR_ACCELERATION_STRUCTURE);
+ 	ADD_DVC_EXT_ENTRY_POINT(vkDestroyAccelerationStructureKHR, KHR_ACCELERATION_STRUCTURE);
+ 	ADD_DVC_EXT_ENTRY_POINT(vkGetAccelerationStructureBuildSizesKHR, KHR_ACCELERATION_STRUCTURE);
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.h b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.h
+index bdea785..a9d07db 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.h
+@@ -421,6 +421,10 @@ protected:
+ #pragma mark MVKComputePipeline
+ 
+ /** Represents an Vulkan compute pipeline. */
++/** FineWine: every stage of a ray tracing pipeline. They all run as one compute shader. */
++static const VkShaderStageFlags kMVKRayTracingShaderStages = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR |
++	VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR | VK_SHADER_STAGE_INTERSECTION_BIT_KHR | VK_SHADER_STAGE_CALLABLE_BIT_KHR;
++
+ class MVKComputePipeline : public MVKPipeline {
+ 
+ public:
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+index 0a26765..d613968 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include "MVKPipeline.h"
++#include "MVKRayTracingPipeline.h"
+ #include "MVKCommandBuffer.h"
+ #include "MVKInlineObjectConstructor.h"
+ #include "MVKImage.h"
+@@ -276,7 +277,7 @@ static bool isWriteable(VkDescriptorType type) {
+ 		if (mslBinding.resourceBinding.stage != execModel || !mslBinding.outIsUsedByShader) { continue; }
+ 		uint32_t set = mslBinding.resourceBinding.desc_set;
+ 		uint32_t binding = mslBinding.resourceBinding.binding;
+-		if (set >= _descriptorSetLayouts.size()) { assert(set == kPushConstDescSet); continue; }
++		if (set >= _descriptorSetLayouts.size()) { assert(set == kPushConstDescSet || set == kMVKRayTracingParamsDescSet); continue; }
+ 		// Aux buffers are always allocated out of the same buffer as the descriptor set itself, so they'll already be resident
+ 		if (binding == kBufferSizeBufferBinding) { continue; }
+ 		MVKDescriptorSetLayout* layout = _descriptorSetLayouts[set];
+@@ -363,6 +364,8 @@ static bool isWriteable(VkDescriptorType type) {
+ 
+ 	for (const VkPushConstantRange& range : MVKArrayRef(pCreateInfo->pPushConstantRanges, pCreateInfo->pushConstantRangeCount)) {
+ 		ret->_pushConstantStages |= range.stageFlags;
++		// FineWine: the shaders of a ray tracing pipeline run as one compute shader.
++		if (range.stageFlags & kMVKRayTracingShaderStages) { ret->_pushConstantStages |= VK_SHADER_STAGE_COMPUTE_BIT; }
+ 		ret->_pushConstantsLength = std::max(ret->_pushConstantsLength, range.offset + range.size);
+ 	}
+ 
+@@ -467,6 +470,7 @@ static void populateResourceUsage(MVKPipelineStageResourceInfo& dst, SPIRVToMSLC
+ 			dst.implicitBuffers.needed.add(MVKImplicitBuffer::PushConstant);
+ 			continue;
+ 		}
++		if (binding.resourceBinding.desc_set == kMVKRayTracingParamsDescSet) { continue; }	// FineWine: bound by vkCmdTraceRaysKHR itself
+ 		assert(binding.resourceBinding.desc_set < kMVKMaxDescriptorSetCount);
+ 		isUsed[binding.resourceBinding.desc_set] = true;
+ 		if (isArgBuf[binding.resourceBinding.desc_set])
+@@ -2550,6 +2554,29 @@ static void setEmulatedReversedDepthViewportConfig(SPIRVToMSLConversionConfigura
+ 	shaderConfig.options.mslOptions.indirect_params_buffer_index = _stageResources.implicitBuffers.ids[MVKImplicitBuffer::DispatchBase];
+ 	shaderConfig.options.mslOptions.replace_recursive_inputs = mvkOSVersionIsAtLeast(14.0, 17.0, 1.0);
+ 
++	// FineWine: the compute pipeline behind a ray tracing pipeline. Its shader reads the shader
++	// binding table's addresses from a buffer, and instance tables from textures, that are not
++	// in any descriptor set: vkCmdTraceRaysKHR binds them at these Metal indices.
++	for (const auto* next = (const VkBaseInStructure*)pCreateInfo->pNext; next; next = next->pNext) {
++		if (next->sType != kMVKStructureTypeRayTracingComputeInfo) { continue; }
++		auto* rtInfo = (const MVKRayTracingComputeInfo*)next;
++		mvk::MSLResourceBinding rb;
++		rb.resourceBinding.stage = spv::ExecutionModelGLCompute;
++		rb.resourceBinding.desc_set = kMVKRayTracingParamsDescSet;
++		rb.resourceBinding.count = 1;
++		rb.resourceBinding.basetype = SPIRV_CROSS_NAMESPACE::SPIRType::Void;
++		rb.resourceBinding.binding = 0;
++		rb.resourceBinding.msl_buffer = getImplicitBufferIndex(4);
++		shaderConfig.resourceBindings.push_back(rb);
++		for (uint32_t t = 0; t < rtInfo->instanceTableCount; t++) {
++			rb.resourceBinding.basetype = SPIRV_CROSS_NAMESPACE::SPIRType::Image;
++			rb.resourceBinding.binding = 1 + t;
++			rb.resourceBinding.msl_buffer = 0;
++			rb.resourceBinding.msl_texture = mvkRayTracingInstanceTableTextureIndex(getMetalFeatures().maxPerStageTextureCount, t);
++			shaderConfig.resourceBindings.push_back(rb);
++		}
++	}
++
+     MVKMTLFunction func = _module->getMTLFunction(&shaderConfig, pSS->pSpecializationInfo, this, pStageFB);
+ 	if ( !func.getMTLFunction() ) {
+ 		if (shouldFailOnPipelineCompileRequired()) {
+@@ -3667,3 +3694,7 @@ void mvkValidateCeralArchiveDefinitions() {
+ 	missingBytes += mvkValidateCerealArchiveSize<MVKCompressor<std::string>>(20);				// Contains collection
+ 	assert(missingBytes == 0 && "Cereal Archive definitions incomplete. See previous logged errors.");
+ }
++
++
++// FineWine: VK_KHR_ray_tracing_pipeline, built here so the Xcode project is unchanged.
++#include "MVKRayTracingPipeline.mm"
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKRayTracingPipeline.h b/MoltenVK/MoltenVK/GPUObjects/MVKRayTracingPipeline.h
+new file mode 100644
+index 0000000..0b932cb
+--- /dev/null
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKRayTracingPipeline.h
+@@ -0,0 +1,95 @@
++/*
++ * MVKRayTracingPipeline.h
++ *
++ * FineWine: VK_KHR_ray_tracing_pipeline. A ray tracing pipeline is a compute pipeline whose
++ * shader is every shader of the pipeline merged into one (see RayTracingLowering.h in
++ * MoltenVKShaderConverter), dispatched with one thread per ray.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#pragma once
++
++#include "MVKPipeline.h"
++#include <utility>
++#include <vector>
++
++/** The size of a shader group handle. The first four bytes are the group's index plus one. */
++static const uint32_t kMVKRayTracingShaderGroupHandleSize = 32;
++
++/** How deep a pipeline may say its rays recurse. Each level is another copy of its hit and miss shaders. */
++static const uint32_t kMVKRayTracingMaxRecursionDepth = 31;
++
++/**
++ * The descriptor set number, outside any pipeline layout, at which the merged shader declares
++ * what vkCmdTraceRaysKHR hands it: binding 0 is the shader binding table's addresses, and
++ * bindings 1 onwards are instance tables.
++ */
++static const uint32_t kMVKRayTracingParamsDescSet = 16;
++
++/** How many acceleration structure bindings of one pipeline can have an instance table. */
++static const uint32_t kMVKRayTracingMaxInstanceTables = 8;
++
++/** The Metal texture index of the n'th instance table: counted down from the top of what a shader stage can declare. */
++static inline uint32_t mvkRayTracingInstanceTableTextureIndex(uint32_t maxPerStageTextureCount, uint32_t n) {
++	uint32_t top = maxPerStageTextureCount < 128 ? maxPerStageTextureCount : 128;	// the shading language stops at index 127
++	return top - 1 - n;
++}
++
++/**
++ * Chained to the VkComputePipelineCreateInfo of the compute pipeline behind a ray tracing
++ * pipeline, to tell MVKComputePipeline to map the bindings above to Metal indices.
++ */
++static const VkStructureType kMVKStructureTypeRayTracingComputeInfo = (VkStructureType)0x46570001;
++struct MVKRayTracingComputeInfo {
++	VkStructureType sType;
++	const void* pNext;
++	uint32_t instanceTableCount;
++};
++
++class MVKRayTracingPipeline : public MVKComputePipeline {
++
++public:
++
++	uint32_t getGroupCount() { return _groupCount; }
++
++	/** vkGetRayTracingShaderGroupHandlesKHR. */
++	VkResult getGroupHandles(uint32_t firstGroup, uint32_t groupCount, size_t dataSize, void* pData);
++
++	/** The Metal buffer index the shader binding table's addresses are bound at. */
++	uint32_t getParamsBufferIndex();
++
++	/** The Metal texture index of the instance table of the n'th entry of getInstanceTableBindings(). */
++	uint32_t getInstanceTableTextureIndex(uint32_t n);
++
++	/** The (set, binding) of each acceleration structure whose instance table the shader reads. */
++	const std::vector<std::pair<uint32_t, uint32_t>>& getInstanceTableBindings() { return _instanceTables; }
++
++	/** A one-texel table of zero, for a binding whose acceleration structure has none. */
++	id<MTLTexture> getEmptyInstanceTable() { return _emptyInstanceTable; }
++
++	/** Merges the pipeline's shaders and makes the pipeline. On failure the result's configuration result says why. */
++	static MVKRayTracingPipeline* create(MVKDevice* device, MVKPipelineCache* pipelineCache, MVKPipeline* parent,
++										 const VkRayTracingPipelineCreateInfoKHR* pCreateInfo);
++
++	MVKRayTracingPipeline(MVKDevice* device, MVKPipelineCache* pipelineCache, MVKPipeline* parent,
++						  const VkComputePipelineCreateInfo* pComputeInfo, uint32_t groupCount,
++						  const std::vector<std::pair<uint32_t, uint32_t>>& instanceTables);
++
++	~MVKRayTracingPipeline() override;
++
++protected:
++	uint32_t _groupCount = 0;
++	std::vector<std::pair<uint32_t, uint32_t>> _instanceTables;
++	id<MTLTexture> _emptyInstanceTable = nil;
++};
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKRayTracingPipeline.mm b/MoltenVK/MoltenVK/GPUObjects/MVKRayTracingPipeline.mm
+new file mode 100644
+index 0000000..0478b66
+--- /dev/null
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKRayTracingPipeline.mm
+@@ -0,0 +1,165 @@
++/*
++ * MVKRayTracingPipeline.mm
++ *
++ * FineWine: VK_KHR_ray_tracing_pipeline.
++ * This file is compiled as part of MVKPipeline.mm, which includes it, so that the Xcode project
++ * does not have to change.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#include "MVKRayTracingPipeline.h"
++#include "MVKShaderModule.h"
++#include <MoltenVKShaderConverter/RayTracingLowering.h>
++
++static bool mvkRTStageKind(VkShaderStageFlagBits stage, mvk::RTStageKind& kind) {
++	switch (stage) {
++		case VK_SHADER_STAGE_RAYGEN_BIT_KHR:		kind = mvk::RTStageKind::RayGeneration; return true;
++		case VK_SHADER_STAGE_MISS_BIT_KHR:			kind = mvk::RTStageKind::Miss; return true;
++		case VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR:	kind = mvk::RTStageKind::ClosestHit; return true;
++		case VK_SHADER_STAGE_ANY_HIT_BIT_KHR:		kind = mvk::RTStageKind::AnyHit; return true;
++		case VK_SHADER_STAGE_INTERSECTION_BIT_KHR:	kind = mvk::RTStageKind::Intersection; return true;
++		case VK_SHADER_STAGE_CALLABLE_BIT_KHR:		kind = mvk::RTStageKind::Callable; return true;
++		default: return false;
++	}
++}
++
++MVKRayTracingPipeline* MVKRayTracingPipeline::create(MVKDevice* device, MVKPipelineCache* pipelineCache, MVKPipeline* parent,
++													 const VkRayTracingPipelineCreateInfoKHR* pCreateInfo) {
++	mvk::RTLoweringConfig cfg;
++	cfg.maxRecursionDepth = std::min(pCreateInfo->maxPipelineRayRecursionDepth, kMVKRayTracingMaxRecursionDepth);
++	cfg.handleSize = kMVKRayTracingShaderGroupHandleSize;
++	cfg.paramsDescSet = kMVKRayTracingParamsDescSet;
++	cfg.paramsBinding = 0;
++	std::string log;
++	bool ok = true;
++
++	if (pCreateInfo->pLibraryInfo && pCreateInfo->pLibraryInfo->libraryCount) {
++		log += "Ray tracing pipeline: pipeline libraries are not supported.\n";
++		ok = false;
++	}
++	for (uint32_t i = 0; ok && i < pCreateInfo->stageCount; i++) {
++		const VkPipelineShaderStageCreateInfo& ss = pCreateInfo->pStages[i];
++		mvk::RTStage stage;
++		if ( !mvkRTStageKind(ss.stage, stage.kind) ) {
++			log += "Ray tracing pipeline: a stage is not a ray tracing stage.\n";
++			ok = false;
++			break;
++		}
++		stage.entryName = ss.pName ? ss.pName : "main";
++		if (ss.module) {
++			stage.spirv = ((MVKShaderModule*)ss.module)->getSPIRV();
++		} else {
++			for (const auto* next = (const VkBaseInStructure*)ss.pNext; next; next = next->pNext) {
++				if (next->sType == VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO) {
++					auto* smci = (const VkShaderModuleCreateInfo*)next;
++					stage.spirv.assign(smci->pCode, smci->pCode + smci->codeSize / sizeof(uint32_t));
++				}
++			}
++		}
++		if (stage.spirv.empty()) {
++			log += "Ray tracing pipeline: a stage has no SPIR-V.\n";
++			ok = false;
++			break;
++		}
++		if (const VkSpecializationInfo* spec = ss.pSpecializationInfo) {
++			for (uint32_t e = 0; e < spec->mapEntryCount; e++) {
++				const VkSpecializationMapEntry& me = spec->pMapEntries[e];
++				mvk::RTSpecializationEntry entry;
++				entry.constantID = me.constantID;
++				entry.data.assign((const uint8_t*)spec->pData + me.offset, (const uint8_t*)spec->pData + me.offset + me.size);
++				stage.specialization.push_back(std::move(entry));
++			}
++		}
++		cfg.stages.push_back(std::move(stage));
++	}
++	for (uint32_t i = 0; ok && i < pCreateInfo->groupCount; i++) {
++		const VkRayTracingShaderGroupCreateInfoKHR& g = pCreateInfo->pGroups[i];
++		mvk::RTGroup group;
++		group.isHitGroup = g.type != VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
++		group.isProcedural = g.type == VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR;
++		auto index = [&](uint32_t shader) { return shader < cfg.stages.size() ? shader : mvk::kRTShaderUnused; };
++		if (group.isHitGroup) {
++			group.closestHit = index(g.closestHitShader);
++			group.anyHit = index(g.anyHitShader);
++			group.intersection = index(g.intersectionShader);
++		} else {
++			group.general = index(g.generalShader);
++		}
++		cfg.groups.push_back(group);
++	}
++
++	mvk::RTLoweringResult lowered;
++	if (ok) { ok = mvk::lowerRayTracingPipeline(cfg, lowered, log); }
++	if (ok && lowered.instanceTables.size() > kMVKRayTracingMaxInstanceTables) {
++		log += "Ray tracing pipeline: rays are traced against more acceleration structure bindings than are supported.\n";
++		ok = false;
++	}
++
++	// The merged shader goes in as the compute stage's own module, which the compute pipeline
++	// then owns. If merging failed there is no code, and the pipeline reports that it has none.
++	VkShaderModuleCreateInfo smci = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
++	smci.codeSize = lowered.spirv.size() * sizeof(uint32_t);
++	smci.pCode = lowered.spirv.data();
++	MVKRayTracingComputeInfo rtInfo = { kMVKStructureTypeRayTracingComputeInfo, nullptr, (uint32_t)lowered.instanceTables.size() };
++	VkComputePipelineCreateInfo cpci = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, &rtInfo };
++	cpci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
++	cpci.stage.pNext = ok ? &smci : nullptr;
++	cpci.stage.stage = ok ? VK_SHADER_STAGE_COMPUTE_BIT : (VkShaderStageFlagBits)0;
++	cpci.stage.pName = "main";
++	cpci.layout = pCreateInfo->layout;
++
++	auto* pipeline = new MVKRayTracingPipeline(device, pipelineCache, parent, &cpci, pCreateInfo->groupCount, lowered.instanceTables);
++	if ( !ok ) {
++		pipeline->setConfigurationResult(pipeline->reportError(VK_ERROR_INITIALIZATION_FAILED, "vkCreateRayTracingPipelinesKHR(): %s", log.c_str()));
++	}
++	return pipeline;
++}
++
++MVKRayTracingPipeline::MVKRayTracingPipeline(MVKDevice* device, MVKPipelineCache* pipelineCache, MVKPipeline* parent,
++											 const VkComputePipelineCreateInfo* pComputeInfo, uint32_t groupCount,
++											 const std::vector<std::pair<uint32_t, uint32_t>>& instanceTables)
++	: MVKComputePipeline(device, pipelineCache, parent, pComputeInfo), _groupCount(groupCount), _instanceTables(instanceTables) {
++
++	if ( !_instanceTables.empty() ) {
++		MTLTextureDescriptor* desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat: MTLPixelFormatR32Uint width: 1 height: 1 mipmapped: NO];
++		desc.usage = MTLTextureUsageShaderRead;
++		desc.storageMode = MTLStorageModeShared;
++		_emptyInstanceTable = [getMTLDevice() newTextureWithDescriptor: desc];
++		uint32_t zero = 0;
++		[_emptyInstanceTable replaceRegion: MTLRegionMake2D(0, 0, 1, 1) mipmapLevel: 0 withBytes: &zero bytesPerRow: sizeof(zero)];
++	}
++}
++
++MVKRayTracingPipeline::~MVKRayTracingPipeline() {
++	[_emptyInstanceTable release];
++}
++
++VkResult MVKRayTracingPipeline::getGroupHandles(uint32_t firstGroup, uint32_t groupCount, size_t dataSize, void* pData) {
++	if (firstGroup + groupCount > _groupCount || dataSize < (size_t)groupCount * kMVKRayTracingShaderGroupHandleSize) {
++		return reportError(VK_ERROR_UNKNOWN, "vkGetRayTracingShaderGroupHandlesKHR(): The groups or the data size are out of range.");
++	}
++	memset(pData, 0, (size_t)groupCount * kMVKRayTracingShaderGroupHandleSize);
++	for (uint32_t i = 0; i < groupCount; i++) {
++		auto* handle = (uint32_t*)((char*)pData + (size_t)i * kMVKRayTracingShaderGroupHandleSize);
++		handle[0] = firstGroup + i + 1;		// what the merged shader switches on; zero is "no shader"
++		handle[1] = 0x54524657;				// "FWRT", to recognise a handle in a memory dump
++	}
++	return VK_SUCCESS;
++}
++
++uint32_t MVKRayTracingPipeline::getParamsBufferIndex() { return getImplicitBufferIndex(4); }
++
++uint32_t MVKRayTracingPipeline::getInstanceTableTextureIndex(uint32_t n) {
++	return mvkRayTracingInstanceTableTextureIndex(getMetalFeatures().maxPerStageTextureCount, n);
++}
+diff --git a/MoltenVK/MoltenVK/Layers/MVKExtensions.def b/MoltenVK/MoltenVK/Layers/MVKExtensions.def
+index 1200387..899deb3 100644
+--- a/MoltenVK/MoltenVK/Layers/MVKExtensions.def
++++ b/MoltenVK/MoltenVK/Layers/MVKExtensions.def
+@@ -95,6 +95,7 @@ MVK_EXTENSION(KHR_present_wait,                         KHR_PRESENT_WAIT,
+ MVK_EXTENSION(KHR_present_wait2,                        KHR_PRESENT_WAIT_2,                       DEVICE,   10.11,  8.0,  1.0)
+ MVK_EXTENSION(KHR_push_descriptor,                      KHR_PUSH_DESCRIPTOR,                      DEVICE,   10.11,  8.0,  1.0)
+ MVK_EXTENSION(KHR_ray_query,                             KHR_RAY_QUERY,                            DEVICE,   15.0,  18.0,  2.0)
++MVK_EXTENSION(KHR_ray_tracing_pipeline,                  KHR_RAY_TRACING_PIPELINE,                 DEVICE,   15.0,  18.0,  2.0)
+ MVK_EXTENSION(KHR_relaxed_block_layout,                 KHR_RELAXED_BLOCK_LAYOUT,                 DEVICE,   10.11,  8.0,  1.0)
+ MVK_EXTENSION(KHR_robustness2,                          KHR_ROBUSTNESS_2,                         DEVICE,   10.11,  8.0,  1.0)
+ MVK_EXTENSION(KHR_sampler_mirror_clamp_to_edge,         KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE,         DEVICE,   10.11, 14.0,  1.0)
+diff --git a/MoltenVK/MoltenVK/Vulkan/vulkan.mm b/MoltenVK/MoltenVK/Vulkan/vulkan.mm
+index 3c688cb..4aa4b4f 100644
+--- a/MoltenVK/MoltenVK/Vulkan/vulkan.mm
++++ b/MoltenVK/MoltenVK/Vulkan/vulkan.mm
+@@ -28,6 +28,7 @@
+ #include "MVKCmdQueries.h"
+ #include "MVKImage.h"
+ #include "../GPUObjects/MVKAccelerationStructure.h"
++#include "../GPUObjects/MVKRayTracingPipeline.h"
+ #include "MVKBuffer.h"
+ #include "MVKDeviceMemory.h"
+ #include "MVKDescriptorSet.h"
+@@ -1440,6 +1441,10 @@ MVK_PUBLIC_VULKAN_SYMBOL void vkCmdBindPipeline(
+ 			MVKAddCmd(BindComputePipeline, commandBuffer, pipeline);
+ 			break;
+ 		}
++		case VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR: {
++			MVKAddCmd(BindRayTracingPipeline, commandBuffer, pipeline);
++			break;
++		}
+ 		default:
+ 			break;
+ 	}
+@@ -2987,6 +2992,18 @@ MVK_PUBLIC_VULKAN_SYMBOL void vkCmdBindDescriptorSets2(
+ 					pBindDescriptorSetsInfo->descriptorSetCount, pBindDescriptorSetsInfo->pDescriptorSets);
+ 		}
+ 	}
++	if (pBindDescriptorSetsInfo->stageFlags & kMVKRayTracingShaderStages) {		// FineWine
++		if (pBindDescriptorSetsInfo->dynamicOffsetCount) {
++			MVKAddCmdFromThreshold(BindDescriptorSetsDynamic, pBindDescriptorSetsInfo->descriptorSetCount, 4, commandBuffer,
++					VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pBindDescriptorSetsInfo->layout, pBindDescriptorSetsInfo->firstSet,
++					pBindDescriptorSetsInfo->descriptorSetCount, pBindDescriptorSetsInfo->pDescriptorSets, pBindDescriptorSetsInfo->dynamicOffsetCount,
++					pBindDescriptorSetsInfo->pDynamicOffsets);
++		} else {
++			MVKAddCmdFrom2Thresholds(BindDescriptorSetsStatic, pBindDescriptorSetsInfo->descriptorSetCount, 1, 4, commandBuffer,
++					VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pBindDescriptorSetsInfo->layout, pBindDescriptorSetsInfo->firstSet,
++					pBindDescriptorSetsInfo->descriptorSetCount, pBindDescriptorSetsInfo->pDescriptorSets);
++		}
++	}
+ 	if (pBindDescriptorSetsInfo->stageFlags & VK_SHADER_STAGE_COMPUTE_BIT) {
+ 		if (pBindDescriptorSetsInfo->dynamicOffsetCount) {
+ 			MVKAddCmdFromThreshold(BindDescriptorSetsDynamic, pBindDescriptorSetsInfo->descriptorSetCount, 4, commandBuffer,
+@@ -3221,6 +3238,122 @@ MVK_PUBLIC_VULKAN_SYMBOL VkResult vkGetCalibratedTimestampsKHR(
+ MVK_PUBLIC_VULKAN_CORE_ALIAS(vkCmdNextSubpass2, KHR);
+ MVK_PUBLIC_VULKAN_CORE_ALIAS(vkCmdEndRenderPass2, KHR);
+ 
++#pragma mark -
++#pragma mark VK_KHR_ray_tracing_pipeline extension (FineWine)
++
++MVK_PUBLIC_VULKAN_SYMBOL VkResult vkCreateRayTracingPipelinesKHR(
++	VkDevice                                    device,
++	VkDeferredOperationKHR                      deferredOperation,
++	VkPipelineCache                             pipelineCache,
++	uint32_t                                    createInfoCount,
++	const VkRayTracingPipelineCreateInfoKHR*    pCreateInfos,
++	const VkAllocationCallbacks*                pAllocator,
++	VkPipeline*                                 pPipelines) {
++
++	// Created before returning, which a deferred operation is told with VK_OPERATION_NOT_DEFERRED_KHR.
++	MVKTraceVulkanCallStart();
++	MVKDevice* mvkDev = MVKDevice::getMVKDevice(device);
++	VkResult rslt = VK_SUCCESS;
++	for (uint32_t i = 0; i < createInfoCount; i++) {
++		@autoreleasepool {
++			auto* mvkPL = MVKRayTracingPipeline::create(mvkDev, (MVKPipelineCache*)pipelineCache, nullptr, &pCreateInfos[i]);
++			VkResult plRslt = mvkPL->getConfigurationResult();
++			if (plRslt == VK_SUCCESS) {
++				pPipelines[i] = (VkPipeline)mvkPL;
++			} else {
++				pPipelines[i] = VK_NULL_HANDLE;
++				mvkDev->destroyPipeline(mvkPL, pAllocator);
++				if (rslt == VK_SUCCESS) { rslt = plRslt; }
++			}
++		}
++	}
++	if (rslt == VK_SUCCESS && deferredOperation != VK_NULL_HANDLE) { rslt = VK_OPERATION_NOT_DEFERRED_KHR; }
++	MVKTraceVulkanCallEnd();
++	return rslt;
++}
++
++MVK_PUBLIC_VULKAN_SYMBOL VkResult vkGetRayTracingShaderGroupHandlesKHR(
++	VkDevice                                    device,
++	VkPipeline                                  pipeline,
++	uint32_t                                    firstGroup,
++	uint32_t                                    groupCount,
++	size_t                                      dataSize,
++	void*                                       pData) {
++
++	MVKTraceVulkanCallStart();
++	VkResult rslt = ((MVKRayTracingPipeline*)pipeline)->getGroupHandles(firstGroup, groupCount, dataSize, pData);
++	MVKTraceVulkanCallEnd();
++	return rslt;
++}
++
++MVK_PUBLIC_VULKAN_SYMBOL VkResult vkGetRayTracingCaptureReplayShaderGroupHandlesKHR(
++	VkDevice                                    device,
++	VkPipeline                                  pipeline,
++	uint32_t                                    firstGroup,
++	uint32_t                                    groupCount,
++	size_t                                      dataSize,
++	void*                                       pData) {
++
++	// rayTracingPipelineShaderGroupHandleCaptureReplay is reported as unsupported.
++	MVKTraceVulkanCallStart();
++	MVKDevice* mvkDev = MVKDevice::getMVKDevice(device);
++	VkResult rslt = mvkDev->reportError(VK_ERROR_FEATURE_NOT_PRESENT, "vkGetRayTracingCaptureReplayShaderGroupHandlesKHR(): Capture and replay of shader group handles is not supported.");
++	MVKTraceVulkanCallEnd();
++	return rslt;
++}
++
++MVK_PUBLIC_VULKAN_SYMBOL VkDeviceSize vkGetRayTracingShaderGroupStackSizeKHR(
++	VkDevice                                    device,
++	VkPipeline                                  pipeline,
++	uint32_t                                    group,
++	VkShaderGroupShaderKHR                      groupShader) {
++
++	// The shaders are inlined into one compute shader, which has no stack to size.
++	MVKTraceVulkanCallStart();
++	MVKTraceVulkanCallEnd();
++	return 0;
++}
++
++MVK_PUBLIC_VULKAN_SYMBOL void vkCmdSetRayTracingPipelineStackSizeKHR(
++	VkCommandBuffer                             commandBuffer,
++	uint32_t                                    pipelineStackSize) {
++
++	MVKTraceVulkanCallStart();
++	MVKTraceVulkanCallEnd();
++}
++
++MVK_PUBLIC_VULKAN_SYMBOL void vkCmdTraceRaysKHR(
++	VkCommandBuffer                             commandBuffer,
++	const VkStridedDeviceAddressRegionKHR*      pRaygenShaderBindingTable,
++	const VkStridedDeviceAddressRegionKHR*      pMissShaderBindingTable,
++	const VkStridedDeviceAddressRegionKHR*      pHitShaderBindingTable,
++	const VkStridedDeviceAddressRegionKHR*      pCallableShaderBindingTable,
++	uint32_t                                    width,
++	uint32_t                                    height,
++	uint32_t                                    depth) {
++
++	MVKTraceVulkanCallStart();
++	MVKAddCmd(TraceRays, commandBuffer, pRaygenShaderBindingTable, pMissShaderBindingTable, pHitShaderBindingTable,
++			  pCallableShaderBindingTable, width, height, depth, (VkDeviceAddress)0);
++	MVKTraceVulkanCallEnd();
++}
++
++MVK_PUBLIC_VULKAN_SYMBOL void vkCmdTraceRaysIndirectKHR(
++	VkCommandBuffer                             commandBuffer,
++	const VkStridedDeviceAddressRegionKHR*      pRaygenShaderBindingTable,
++	const VkStridedDeviceAddressRegionKHR*      pMissShaderBindingTable,
++	const VkStridedDeviceAddressRegionKHR*      pHitShaderBindingTable,
++	const VkStridedDeviceAddressRegionKHR*      pCallableShaderBindingTable,
++	VkDeviceAddress                             indirectDeviceAddress) {
++
++	// VkTraceRaysIndirectCommandKHR is three 32-bit counts, which is what Metal's indirect dispatch reads.
++	MVKTraceVulkanCallStart();
++	MVKAddCmd(TraceRays, commandBuffer, pRaygenShaderBindingTable, pMissShaderBindingTable, pHitShaderBindingTable,
++			  pCallableShaderBindingTable, 0u, 0u, 0u, indirectDeviceAddress);
++	MVKTraceVulkanCallEnd();
++}
++
++
+ #pragma mark -
+ #pragma mark VK_KHR_acceleration_structure extension (FineWine)
+ 
+diff --git a/MoltenVKShaderConverter/MoltenVKShaderConverter/RayTracingLowering.cpp b/MoltenVKShaderConverter/MoltenVKShaderConverter/RayTracingLowering.cpp
+new file mode 100644
+index 0000000..6b381aa
+--- /dev/null
++++ b/MoltenVKShaderConverter/MoltenVKShaderConverter/RayTracingLowering.cpp
+@@ -0,0 +1,1469 @@
++/*
++ * RayTracingLowering.cpp
++ *
++ * FineWine: turns the shaders of a Vulkan ray tracing pipeline into one compute shader.
++ * This file is compiled as part of SPIRVSupport.cpp, which includes it, so that the Xcode
++ * project does not have to change. See RayTracingLowering.h for what it is for.
++ *
++ * How the result is put together:
++ *
++ *  - Every shader is imported once for each place it can run: the ray generation shaders at
++ *    trace depth 0, the hit, miss and intersection shaders at each depth from 1 to the
++ *    pipeline's maximum, callable shaders at each depth they can be called from. Metal shaders
++ *    cannot recurse, and each copy has its own payload and built-in variables, so a hit shader
++ *    that traces a ray calls the next depth's copies and nothing overwrites anything.
++ *  - Importing gives a module's ids new numbers, merges types, constants and descriptor
++ *    variables that are the same as ones already there, and turns the ray tracing storage
++ *    classes and built-in inputs into ordinary private variables.
++ *  - OpTraceRayKHR becomes a call to a generated function: a ray query loop that runs any-hit
++ *    and intersection shaders on candidates, then the closest-hit or miss shader. Which shader
++ *    is read from the shader binding table through its buffer address.
++ *  - OpReportIntersectionKHR and OpExecuteCallableKHR become calls to generated functions too.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#include "RayTracingLowering.h"
++#include <spirv-tools/libspirv.h>
++#include <cstring>
++#include <map>
++#include <set>
++#include <tuple>
++#include <unordered_map>
++
++namespace {
++
++using namespace spv;
++typedef std::vector<uint32_t> Words;
++
++
++#pragma mark Parsing
++
++/** One instruction of an input module, with the positions of its id operands. */
++struct PInst {
++	uint16_t op = 0;
++	Words w;						// the whole instruction, first word included
++	uint32_t typeId = 0;
++	uint32_t resultId = 0;
++	std::vector<uint16_t> ids;		// offsets into w of every id, result and type included
++};
++
++struct PModule {
++	uint32_t version = 0;
++	uint32_t bound = 0;
++	std::vector<PInst> insts;
++	size_t firstFunction = 0;		// index of the first OpFunction
++};
++
++static spv_result_t onParsedHeader(void* user, spv_endianness_t, uint32_t, uint32_t version, uint32_t, uint32_t bound, uint32_t) {
++	auto* pm = (PModule*)user;
++	pm->version = version;
++	pm->bound = bound;
++	return SPV_SUCCESS;
++}
++
++static spv_result_t onParsedInstruction(void* user, const spv_parsed_instruction_t* pi) {
++	auto* pm = (PModule*)user;
++	PInst inst;
++	inst.op = pi->opcode;
++	inst.w.assign(pi->words, pi->words + pi->num_words);
++	inst.typeId = pi->type_id;
++	inst.resultId = pi->result_id;
++	for (uint16_t i = 0; i < pi->num_operands; i++) {
++		const spv_parsed_operand_t& o = pi->operands[i];
++		switch (o.type) {
++			case SPV_OPERAND_TYPE_ID:
++			case SPV_OPERAND_TYPE_TYPE_ID:
++			case SPV_OPERAND_TYPE_RESULT_ID:
++			case SPV_OPERAND_TYPE_MEMORY_SEMANTICS_ID:
++			case SPV_OPERAND_TYPE_SCOPE_ID:
++				for (uint16_t k = 0; k < o.num_words; k++) { inst.ids.push_back(o.offset + k); }
++				break;
++			default:
++				break;
++		}
++	}
++	pm->insts.push_back(std::move(inst));
++	return SPV_SUCCESS;
++}
++
++static void emit(Words& section, uint32_t op, const Words& operands) {
++	section.push_back(((uint32_t)(operands.size() + 1) << 16) | op);
++	section.insert(section.end(), operands.begin(), operands.end());
++}
++
++static void appendString(Words& w, const std::string& s) {
++	size_t n = s.size() / 4 + 1;		// always room for the terminating zero
++	size_t start = w.size();
++	w.resize(start + n, 0);
++	memcpy(&w[start], s.data(), s.size());
++}
++
++static std::string readString(const Words& w, size_t start) {
++	std::string s;
++	for (size_t i = start; i < w.size(); i++) {
++		for (int b = 0; b < 4; b++) {
++			char c = (char)((w[i] >> (8 * b)) & 0xFF);
++			if ( !c ) { return s; }
++			s.push_back(c);
++		}
++	}
++	return s;
++}
++
++static bool isTypeOp(uint32_t op) {
++	return (op >= OpTypeVoid && op <= OpTypeForwardPointer) || op == OpTypeRayQueryKHR || op == OpTypeAccelerationStructureKHR;
++}
++
++static bool isRayTracingStorage(uint32_t sc) {
++	return sc == StorageClassRayPayloadKHR || sc == StorageClassIncomingRayPayloadKHR || sc == StorageClassHitAttributeKHR ||
++		   sc == StorageClassCallableDataKHR || sc == StorageClassIncomingCallableDataKHR;
++}
++
++// What a pointer of an input module's storage class becomes in the compute shader.
++static uint32_t convertStorageClass(uint32_t sc) {
++	if (isRayTracingStorage(sc) || sc == StorageClassInput) { return StorageClassPrivate; }
++	if (sc == StorageClassShaderRecordBufferKHR) { return StorageClassPhysicalStorageBuffer; }
++	return sc;
++}
++
++static uint32_t executionModelOf(mvk::RTStageKind kind) {
++	switch (kind) {
++		case mvk::RTStageKind::RayGeneration:	return ExecutionModelRayGenerationKHR;
++		case mvk::RTStageKind::Miss:			return ExecutionModelMissKHR;
++		case mvk::RTStageKind::ClosestHit:		return ExecutionModelClosestHitKHR;
++		case mvk::RTStageKind::AnyHit:			return ExecutionModelAnyHitKHR;
++		case mvk::RTStageKind::Intersection:	return ExecutionModelIntersectionKHR;
++		case mvk::RTStageKind::Callable:		return ExecutionModelCallableKHR;
++	}
++	return ExecutionModelMax;
++}
++
++
++#pragma mark Lowering
++
++/** A definition in the output module's types, constants and variables section. */
++struct GDef {
++	uint32_t op = 0;
++	Words w;		// the instruction's operands: for a type, the result id first; for a constant or variable, the type then the result id
++};
++
++/** One copy of a shader. */
++struct Instance {
++	uint32_t stage = 0;
++	uint32_t traceDepth = 0;
++	uint32_t callDepth = 0;
++	uint32_t entryFunction = 0;
++	std::map<uint32_t, uint32_t> builtinVars;	// SPIR-V built-in to the private variable standing in for it
++	uint32_t incomingPayloadVar = 0;
++	uint32_t hitAttributeVar = 0;
++	uint32_t incomingCallableVar = 0;
++	uint32_t shaderRecordVar = 0;				// holds a pointer to the shader record
++	uint32_t committedAttributeVar = 0;			// intersection shaders: the attributes of the hit that was accepted
++	uint32_t reportFunction = 0;				// intersection shaders: what OpReportIntersectionKHR calls
++};
++
++/** The state of the trace in progress at one depth. All private variables. */
++struct Level {
++	bool made = false;
++	uint32_t rayQuery = 0;
++	uint32_t origin = 0, direction = 0, tMin = 0, tMax = 0, flags = 0, cullMask = 0;
++	uint32_t handle = 0;			// the shader group handle of the hit group of the candidate being looked at
++	uint32_t recordAddress = 0;		// and the address of its shader record
++	uint32_t committedKind = 0;		// hit kind an intersection shader reported for the hit that was accepted
++	uint32_t ignore = 0;			// set by an any-hit shader: ignore this candidate
++	uint32_t terminate = 0;			// set by an any-hit shader: accept this candidate and stop
++	std::vector<std::pair<uint32_t, uint32_t>> sharedPayloads;	// pointer type to the incoming payload variable every shader at this depth uses
++};
++
++struct PendingTrace { uint32_t function; int caller; uint32_t payloadVar; bool hasInstanceTable; };
++struct PendingCall { uint32_t function; int caller; uint32_t dataVar; };
++
++class Lowering {
++
++public:
++	Lowering(const mvk::RTLoweringConfig& config, std::string& log) : cfg(config), log(log) {}
++
++	bool run(Words& out);
++
++	std::vector<std::pair<uint32_t, uint32_t>> instanceTableBindings;	// in the order their textures are bound
++
++protected:
++	friend struct Builder;
++
++	const mvk::RTLoweringConfig& cfg;
++	std::string& log;
++	bool failed = false;
++
++	uint32_t nextId = 1;
++	std::set<uint32_t> capabilities;
++	std::set<std::string> extensions;
++	std::map<std::string, uint32_t> extInstImports;
++	Words entryPoint, strings, debug, annotations, globals, functions;
++	std::vector<uint32_t> globalVars;
++
++	std::unordered_map<std::string, uint32_t> keys;			// structural key of a type, constant or descriptor variable to its id
++	std::unordered_map<uint32_t, GDef> gdef;
++	std::unordered_map<uint32_t, uint32_t> idType;			// result type of ids inside functions
++	std::map<uint32_t, std::pair<uint32_t, uint32_t>> varBinding;	// descriptor variables: set and binding
++	std::map<std::pair<uint32_t, uint32_t>, uint32_t> instanceTables;
++
++	std::vector<PModule> parsed;
++	std::vector<Instance> instances;
++	std::map<std::tuple<uint32_t, uint32_t, uint32_t>, int> instanceIndex;
++	std::vector<Level> levels;
++	std::vector<PendingTrace> pendingTraces;
++	std::vector<PendingCall> pendingCalls;
++	std::vector<int> pendingReports;
++	std::map<std::tuple<int, uint32_t, bool>, uint32_t> traceFunctions;
++	std::map<std::pair<int, uint32_t>, uint32_t> callFunctions;
++
++	uint32_t paramsVar = 0, launchIdVar = 0, launchSizeVar = 0;
++	uint32_t handleBlock = 0;		// what a shader group handle is read as: a block holding the group's index plus one
++
++	uint32_t newId() { return nextId++; }
++	bool fail(const std::string& msg) { log += "Ray tracing pipeline: " + msg + "\n"; failed = true; return false; }
++
++	// Types, constants and variables
++	static std::string makeKey(uint32_t op, const Words& operands, const std::string& extra);
++	uint32_t declare(uint32_t op, const Words& operands, uint32_t typeId = 0);
++	uint32_t tVoid() { return declare(OpTypeVoid, {}); }
++	uint32_t tBool() { return declare(OpTypeBool, {}); }
++	uint32_t tUInt() { return declare(OpTypeInt, { 32, 0 }); }
++	uint32_t tUInt64() { return declare(OpTypeInt, { 64, 0 }); }
++	uint32_t tFloat() { return declare(OpTypeFloat, { 32 }); }
++	uint32_t tVec(uint32_t elem, uint32_t n) { return declare(OpTypeVector, { elem, n }); }
++	uint32_t tPtr(uint32_t sc, uint32_t pointee) { return declare(OpTypePointer, { sc, pointee }); }
++	uint32_t tRayQuery() { return declare(OpTypeRayQueryKHR, {}); }
++	uint32_t tAccel() { return declare(OpTypeAccelerationStructureKHR, {}); }
++	uint32_t tInstanceTable() { return declare(OpTypeImage, { tUInt(), Dim2D, 0, 0, 0, 1, ImageFormatUnknown }); }
++	uint32_t tFunction(uint32_t ret, const Words& params) { Words o = { ret }; o.insert(o.end(), params.begin(), params.end()); return declare(OpTypeFunction, o); }
++	uint32_t cUInt(uint32_t v) { return declare(OpConstant, { v }, tUInt()); }
++	uint32_t cUInt64(uint64_t v) { return declare(OpConstant, { (uint32_t)v, (uint32_t)(v >> 32) }, tUInt64()); }
++	uint32_t cBool(bool v) { return declare(v ? OpConstantTrue : OpConstantFalse, {}, tBool()); }
++	uint32_t privateVar(uint32_t pointeeType, const std::string& name);
++	uint32_t pointee(uint32_t varId);
++	bool logicallyMatch(uint32_t typeA, uint32_t typeB);
++	void name(uint32_t id, const std::string& n) { Words o = { id }; appendString(o, n); emit(debug, OpName, o); }
++	void decorate(uint32_t id, uint32_t decoration, const Words& operands = {}) {
++		Words o = { id, decoration }; o.insert(o.end(), operands.begin(), operands.end()); emit(annotations, OpDecorate, o);
++	}
++
++	Level& level(uint32_t depth);
++	bool parseStage(uint32_t stageIdx);
++	int getInstance(uint32_t stageIdx, uint32_t traceDepth, uint32_t callDepth);
++	int importInstance(uint32_t stageIdx, uint32_t traceDepth, uint32_t callDepth);
++	uint32_t instanceTableVar(uint32_t set, uint32_t binding, uint32_t arrayType);
++	bool hasStageKind(mvk::RTStageKind kind);
++
++	void makeParams();
++	void generateTrace(const PendingTrace& t);
++	void generateCall(const PendingCall& c);
++	void generateReport(int instIdx);
++	void generateMain();
++};
++
++std::string Lowering::makeKey(uint32_t op, const Words& operands, const std::string& extra) {
++	std::string k((const char*)&op, sizeof(op));
++	if ( !operands.empty() ) { k.append((const char*)operands.data(), operands.size() * sizeof(uint32_t)); }
++	k.push_back('|');
++	k.append(extra);
++	return k;
++}
++
++// Returns the id of a type or constant, making it if the module does not have it yet.
++uint32_t Lowering::declare(uint32_t op, const Words& operands, uint32_t typeId) {
++	Words keyOps;
++	if (typeId) { keyOps.push_back(typeId); }
++	keyOps.insert(keyOps.end(), operands.begin(), operands.end());
++	std::string key = makeKey(op, keyOps, "");
++	auto it = keys.find(key);
++	if (it != keys.end()) { return it->second; }
++
++	uint32_t id = newId();
++	Words w;
++	if (typeId) { w.push_back(typeId); }
++	w.push_back(id);
++	w.insert(w.end(), operands.begin(), operands.end());
++	emit(globals, op, w);
++	gdef[id] = { op, w };
++	keys[key] = id;
++	return id;
++}
++
++uint32_t Lowering::privateVar(uint32_t pointeeType, const std::string& n) {
++	uint32_t id = newId();
++	Words w = { tPtr(StorageClassPrivate, pointeeType), id, StorageClassPrivate };
++	emit(globals, OpVariable, w);
++	gdef[id] = { OpVariable, w };
++	globalVars.push_back(id);
++	name(id, n);
++	return id;
++}
++
++// The type a variable holds.
++uint32_t Lowering::pointee(uint32_t varId) {
++	auto v = gdef.find(varId);
++	if (v == gdef.end() || v->second.op != OpVariable) { return 0; }
++	auto p = gdef.find(v->second.w[0]);
++	if (p == gdef.end() || p->second.op != OpTypePointer) { return 0; }
++	return p->second.w[2];
++}
++
++// Whether a value of one type can be copied into the other with OpCopyLogical.
++bool Lowering::logicallyMatch(uint32_t a, uint32_t b) {
++	if (a == b) { return true; }
++	auto da = gdef.find(a), db = gdef.find(b);
++	if (da == gdef.end() || db == gdef.end() || da->second.op != db->second.op) { return false; }
++	const Words& wa = da->second.w;
++	const Words& wb = db->second.w;
++	if (da->second.op == OpTypeStruct) {
++		if (wa.size() != wb.size()) { return false; }
++		for (size_t i = 1; i < wa.size(); i++) { if ( !logicallyMatch(wa[i], wb[i]) ) { return false; } }
++		return true;
++	}
++	if (da->second.op == OpTypeArray) { return wa[2] == wb[2] && logicallyMatch(wa[1], wb[1]); }
++	return false;
++}
++
++Level& Lowering::level(uint32_t depth) {
++	if (levels.size() <= depth) { levels.resize(depth + 1); }
++	Level& lv = levels[depth];
++	if ( !lv.made ) {
++		std::string sfx = "_d" + std::to_string(depth);
++		uint32_t f = tFloat(), u = tUInt(), v3 = tVec(tFloat(), 3), b = tBool();
++		lv.made = true;
++		lv.rayQuery = privateVar(tRayQuery(), "fwRayQuery" + sfx);
++		lv.origin = privateVar(v3, "fwOrigin" + sfx);
++		lv.direction = privateVar(v3, "fwDirection" + sfx);
++		lv.tMin = privateVar(f, "fwTMin" + sfx);
++		lv.tMax = privateVar(f, "fwTMax" + sfx);
++		lv.flags = privateVar(u, "fwRayFlags" + sfx);
++		lv.cullMask = privateVar(u, "fwCullMask" + sfx);
++		lv.handle = privateVar(u, "fwHitGroup" + sfx);
++		lv.recordAddress = privateVar(tUInt64(), "fwRecordAddress" + sfx);
++		lv.committedKind = privateVar(u, "fwCommittedHitKind" + sfx);
++		lv.ignore = privateVar(b, "fwIgnoreHit" + sfx);
++		lv.terminate = privateVar(b, "fwTerminateRay" + sfx);
++	}
++	return levels[depth];
++}
++
++bool Lowering::hasStageKind(mvk::RTStageKind kind) {
++	for (auto& s : cfg.stages) { if (s.kind == kind) { return true; } }
++	return false;
++}
++
++// Parses one stage's module, and gives its specialization constants their final values: every
++// stage has its own, and the compute shader they all end up in could only take one set.
++bool Lowering::parseStage(uint32_t stageIdx) {
++	const mvk::RTStage& st = cfg.stages[stageIdx];
++	PModule& pm = parsed[stageIdx];
++	if ( !pm.insts.empty() ) { return true; }
++
++	spv_context ctx = spvContextCreate(SPV_ENV_UNIVERSAL_1_6);
++	spv_diagnostic diag = nullptr;
++	spv_result_t r = spvBinaryParse(ctx, &pm, st.spirv.data(), st.spirv.size(), onParsedHeader, onParsedInstruction, &diag);
++	std::string err = (diag && diag->error) ? diag->error : "";
++	if (diag) { spvDiagnosticDestroy(diag); }
++	spvContextDestroy(ctx);
++	if (r != SPV_SUCCESS) { return fail("stage " + std::to_string(stageIdx) + " is not valid SPIR-V: " + err); }
++
++	std::unordered_map<uint32_t, uint32_t> specIds;
++	pm.firstFunction = pm.insts.size();
++	for (size_t i = 0; i < pm.insts.size(); i++) {
++		PInst& pi = pm.insts[i];
++		if (pi.op == OpFunction) { pm.firstFunction = i; break; }
++		if (pi.op == OpDecorate && pi.w.size() >= 4 && pi.w[2] == DecorationSpecId) { specIds[pi.w[1]] = pi.w[3]; }
++	}
++	auto findSpec = [&](uint32_t resultId) -> const mvk::RTSpecializationEntry* {
++		auto it = specIds.find(resultId);
++		if (it == specIds.end()) { return nullptr; }
++		for (auto& e : st.specialization) { if (e.constantID == it->second) { return &e; } }
++		return nullptr;
++	};
++	for (size_t i = 0; i < pm.firstFunction; i++) {
++		PInst& pi = pm.insts[i];
++		switch (pi.op) {
++			case OpSpecConstantTrue:
++			case OpSpecConstantFalse: {
++				bool v = pi.op == OpSpecConstantTrue;
++				if (auto* e = findSpec(pi.resultId)) {
++					uint32_t b = 0;
++					memcpy(&b, e->data.data(), std::min<size_t>(e->data.size(), 4));
++					v = b != 0;
++				}
++				pi.op = v ? OpConstantTrue : OpConstantFalse;
++				break;
++			}
++			case OpSpecConstant:
++				if (auto* e = findSpec(pi.resultId)) {
++					size_t bytes = (pi.w.size() - 3) * sizeof(uint32_t);
++					memcpy(&pi.w[3], e->data.data(), std::min(bytes, e->data.size()));
++				}
++				pi.op = OpConstant;
++				break;
++			case OpSpecConstantComposite:
++				pi.op = OpConstantComposite;
++				break;
++			default:
++				break;
++		}
++	}
++	return true;
++}
++
++int Lowering::getInstance(uint32_t stageIdx, uint32_t traceDepth, uint32_t callDepth) {
++	auto key = std::make_tuple(stageIdx, traceDepth, callDepth);
++	auto it = instanceIndex.find(key);
++	if (it != instanceIndex.end()) { return it->second; }
++	int idx = importInstance(stageIdx, traceDepth, callDepth);
++	instanceIndex[key] = idx;
++	return idx;
++}
++
++// The texture that holds the shader binding table offsets of an acceleration structure's instances.
++uint32_t Lowering::instanceTableVar(uint32_t set, uint32_t binding, uint32_t arrayType) {
++	auto key = std::make_pair(set, binding);
++	auto it = instanceTables.find(key);
++	if (it != instanceTables.end()) { return it->second; }
++
++	// Arrays of acceleration structures get no table: their instances' offsets read as zero.
++	if (arrayType) { return 0; }
++	uint32_t type = tInstanceTable();
++	uint32_t id = newId();
++	Words w = { tPtr(StorageClassUniformConstant, type), id, StorageClassUniformConstant };
++	emit(globals, OpVariable, w);
++	gdef[id] = { OpVariable, w };
++	globalVars.push_back(id);
++	instanceTableBindings.push_back(key);
++	decorate(id, DecorationDescriptorSet, { cfg.paramsDescSet });
++	decorate(id, DecorationBinding, { cfg.paramsBinding + (uint32_t)instanceTableBindings.size() });
++	name(id, "fwInstanceTable_" + std::to_string(set) + "_" + std::to_string(binding));
++	instanceTables[key] = id;
++	return id;
++}
++
++
++#pragma mark Importing a shader
++
++int Lowering::importInstance(uint32_t stageIdx, uint32_t traceDepth, uint32_t callDepth) {
++	int index = (int)instances.size();
++	instances.push_back(Instance());
++	instances[index].stage = stageIdx;
++	instances[index].traceDepth = traceDepth;
++	instances[index].callDepth = callDepth;
++	if ( !parseStage(stageIdx) ) { return index; }
++
++	const mvk::RTStage& st = cfg.stages[stageIdx];
++	const PModule& pm = parsed[stageIdx];
++	std::vector<uint32_t> map(pm.bound + 1, 0);
++	std::vector<uint8_t> merged(pm.bound + 1, 0);
++	auto M = [&](uint32_t local) -> uint32_t {
++		if (local > pm.bound) { return 0; }
++		if ( !map[local] ) { map[local] = newId(); }
++		return map[local];
++	};
++	auto remap = [&](const PInst& pi) -> Words {		// operands only, ids renumbered
++		Words o(pi.w.begin() + 1, pi.w.end());
++		for (uint16_t off : pi.ids) { o[off - 1] = M(pi.w[off]); }
++		return o;
++	};
++
++	// What decorates what, before anything is emitted: decorations are part of what makes two types the same.
++	std::unordered_map<uint32_t, std::string> decorationKey;
++	std::unordered_map<uint32_t, uint32_t> builtinOf, setOf, bindingOf;
++	std::set<uint32_t> nonSemanticSets;
++	uint32_t entryLocal = 0;
++	uint32_t wantedModel = executionModelOf(st.kind);
++	for (size_t i = 0; i < pm.firstFunction; i++) {
++		const PInst& pi = pm.insts[i];
++		switch (pi.op) {
++			case OpCapability:
++				if (pi.w[1] != CapabilityRayTracingKHR) { capabilities.insert(pi.w[1]); }
++				break;
++			case OpExtension: {
++				std::string ext = readString(pi.w, 1);
++				if (ext != "SPV_KHR_ray_tracing") { extensions.insert(ext); }
++				break;
++			}
++			case OpExtInstImport: {
++				std::string set = readString(pi.w, 2);
++				if (set.compare(0, 11, "NonSemantic") == 0) {
++					nonSemanticSets.insert(pi.w[1]);
++				} else {
++					auto it = extInstImports.find(set);
++					if (it == extInstImports.end()) { it = extInstImports.emplace(set, newId()).first; }
++					map[pi.w[1]] = it->second;
++					merged[pi.w[1]] = 1;
++				}
++				break;
++			}
++			case OpEntryPoint:
++				if (pi.w[1] == wantedModel && readString(pi.w, 3) == st.entryName) { entryLocal = pi.w[2]; }
++				break;
++			case OpDecorate:
++				if (pi.w.size() >= 4 && pi.w[2] == DecorationBuiltIn) { builtinOf[pi.w[1]] = pi.w[3]; }
++				if (pi.w.size() >= 4 && pi.w[2] == DecorationDescriptorSet) { setOf[pi.w[1]] = pi.w[3]; }
++				if (pi.w.size() >= 4 && pi.w[2] == DecorationBinding) { bindingOf[pi.w[1]] = pi.w[3]; }
++				// fall through
++			case OpMemberDecorate:
++			case OpDecorateId:
++			case OpDecorateString:
++			case OpMemberDecorateString: {
++				std::string& k = decorationKey[pi.w[1]];
++				k.append((const char*)&pi.op, sizeof(pi.op));
++				k.append((const char*)&pi.w[2], (pi.w.size() - 2) * sizeof(uint32_t));
++				break;
++			}
++			default:
++				break;
++		}
++	}
++	if ( !entryLocal ) {
++		fail("stage " + std::to_string(stageIdx) + " has no entry point named \"" + st.entryName + "\" of the stage it was given as");
++		return index;
++	}
++
++	// Types, constants and variables.
++	for (size_t i = 0; i < pm.firstFunction; i++) {
++		const PInst& pi = pm.insts[i];
++		uint32_t lr = pi.resultId;
++		if (pi.op == OpTypeForwardPointer) {
++			emit(globals, OpTypeForwardPointer, { M(pi.w[1]), convertStorageClass(pi.w[2]) });
++			continue;
++		}
++		if (isTypeOp(pi.op)) {
++			// A pointer type that was forward declared already has its id, and stays as it is.
++			bool forwardDeclared = map[lr] != 0 && pi.op == OpTypePointer;
++			Words o = remap(pi);		// result id first
++			if (pi.op == OpTypePointer) { o[1] = convertStorageClass(o[1]); }
++			Words keyOps(o.begin() + 1, o.end());
++			std::string key = makeKey(pi.op, keyOps, decorationKey.count(lr) ? decorationKey[lr] : "");
++			auto it = keys.find(key);
++			if (it != keys.end() && !forwardDeclared) {
++				map[lr] = it->second;
++				merged[lr] = 1;
++				continue;
++			}
++			o[0] = M(lr);
++			emit(globals, pi.op, o);
++			gdef[o[0]] = { pi.op, o };
++			if ( !forwardDeclared ) { keys[key] = o[0]; }
++			continue;
++		}
++		if (pi.op >= OpConstantTrue && pi.op <= OpConstantNull) {
++			Words o = remap(pi);		// type, result id, value
++			Words keyOps = { o[0] };
++			keyOps.insert(keyOps.end(), o.begin() + 2, o.end());
++			std::string key = makeKey(pi.op, keyOps, "");
++			auto it = keys.find(key);
++			if (it != keys.end()) {
++				map[lr] = it->second;
++				merged[lr] = 1;
++				continue;
++			}
++			emit(globals, pi.op, o);
++			gdef[o[1]] = { pi.op, o };
++			keys[key] = o[1];
++			continue;
++		}
++		if (pi.op == OpSpecConstantOp || pi.op == OpUndef) {
++			Words o = remap(pi);
++			emit(globals, pi.op, o);
++			gdef[o[1]] = { pi.op, o };
++			continue;
++		}
++		if (pi.op != OpVariable) { continue; }
++
++		uint32_t sc = pi.w[3];
++		uint32_t type = M(pi.w[1]);		// already declared, with its storage class converted
++		uint32_t init = pi.w.size() > 4 ? M(pi.w[4]) : 0;
++		uint32_t newSC = convertStorageClass(sc);
++		Instance& inst = instances[index];
++		std::string key;
++
++		if (sc == StorageClassIncomingRayPayloadKHR) {
++			// Every shader that runs at this depth works on the same payload variable, so that
++			// what an any-hit shader writes is what the closest-hit shader reads.
++			Level& lv = level(traceDepth);
++			bool found = false;
++			for (auto& sp : lv.sharedPayloads) {
++				if (sp.first == type) { map[lr] = sp.second; merged[lr] = 1; inst.incomingPayloadVar = sp.second; found = true; break; }
++			}
++			if (found) { continue; }
++		} else if (sc == StorageClassShaderRecordBufferKHR) {
++			// The record is somewhere in the shader binding table. The variable becomes one
++			// that holds a pointer to it, set before the shader is called.
++			type = tPtr(StorageClassPrivate, type);
++			newSC = StorageClassPrivate;
++		} else if (setOf.count(lr) && bindingOf.count(lr)) {
++			key = "V" + std::to_string(setOf[lr]) + "," + std::to_string(bindingOf[lr]) + "," + std::to_string(type) + "," + std::to_string(sc);
++		} else if (sc == StorageClassPushConstant) {
++			key = "P" + std::to_string(type);
++		}
++		if ( !key.empty() ) {
++			auto it = keys.find(key);
++			if (it != keys.end()) {
++				map[lr] = it->second;
++				merged[lr] = 1;
++				continue;
++			}
++		}
++
++		uint32_t id = M(lr);
++		Words w = { type, id, newSC };
++		if (init) { w.push_back(init); }
++		emit(globals, OpVariable, w);
++		gdef[id] = { OpVariable, w };
++		globalVars.push_back(id);
++		if ( !key.empty() ) { keys[key] = id; }
++		if (setOf.count(lr) && bindingOf.count(lr)) { varBinding[id] = { setOf[lr], bindingOf[lr] }; }
++
++		switch (sc) {
++			case StorageClassInput:					if (builtinOf.count(lr)) { inst.builtinVars[builtinOf[lr]] = id; } break;
++			case StorageClassIncomingRayPayloadKHR:	inst.incomingPayloadVar = id; level(traceDepth).sharedPayloads.push_back({ type, id }); break;
++			case StorageClassHitAttributeKHR:		inst.hitAttributeVar = id; break;
++			case StorageClassIncomingCallableDataKHR: inst.incomingCallableVar = id; break;
++			case StorageClassShaderRecordBufferKHR:	inst.shaderRecordVar = id; break;
++			default: break;
++		}
++	}
++
++	// Names and decorations, for what was not merged into something already there.
++	for (size_t i = 0; i < pm.firstFunction; i++) {
++		const PInst& pi = pm.insts[i];
++		switch (pi.op) {
++			case OpString:
++				emit(strings, pi.op, remap(pi));
++				break;
++			case OpName:
++			case OpMemberName:
++				if ( !merged[pi.w[1]] ) { emit(debug, pi.op, remap(pi)); }
++				break;
++			case OpDecorate:
++				if (pi.w[2] == DecorationBuiltIn || pi.w[2] == DecorationSpecId) { break; }
++				// fall through
++			case OpMemberDecorate:
++			case OpDecorateId:
++			case OpDecorateString:
++			case OpMemberDecorateString:
++				if ( !merged[pi.w[1]] ) { emit(annotations, pi.op, remap(pi)); }
++				break;
++			default:
++				break;
++		}
++	}
++
++	// Functions.
++	uint32_t uintType = tUInt();
++	uint32_t voidType = tVoid();
++	uint32_t returnType = 0;
++	std::unordered_map<uint32_t, uint32_t> loadedFrom;							// value to the pointer it was loaded from
++	std::unordered_map<uint32_t, std::pair<uint32_t, Words>> chains;			// access chain to its base and indices
++	auto emitResult = [&](uint32_t op, uint32_t type, const Words& operands) -> uint32_t {
++		uint32_t id = newId();
++		Words o = { type, id };
++		o.insert(o.end(), operands.begin(), operands.end());
++		emit(functions, op, o);
++		idType[id] = type;
++		return id;
++	};
++	auto asUInt = [&](uint32_t id) -> uint32_t {
++		auto it = idType.find(id);
++		bool isConst = gdef.count(id) != 0;
++		uint32_t type = isConst ? gdef[id].w[0] : (it != idType.end() ? it->second : uintType);
++		return type == uintType ? id : emitResult(OpBitcast, uintType, { id });
++	};
++	auto isPhysicalPointer = [&](uint32_t valueId) -> bool {
++		auto it = idType.find(valueId);
++		if (it == idType.end()) { return false; }
++		auto d = gdef.find(it->second);
++		return d != gdef.end() && d->second.op == OpTypePointer && d->second.w[1] == StorageClassPhysicalStorageBuffer;
++	};
++	// The instance table that goes with an acceleration structure value. The value was loaded
++	// from a descriptor; the table is a texture bound for that descriptor's set and binding.
++	auto loadInstanceTable = [&](uint32_t accel) -> uint32_t {
++		auto ld = loadedFrom.find(accel);
++		if (ld == loadedFrom.end()) { return 0; }
++		uint32_t ptr = ld->second;
++		uint32_t base = ptr;
++		Words indices;
++		auto ch = chains.find(ptr);
++		if (ch != chains.end()) { base = ch->second.first; indices = ch->second.second; }
++		auto vb = varBinding.find(base);
++		if (vb == varBinding.end()) { return 0; }
++		uint32_t held = pointee(base);
++		uint32_t heldOp = gdef.count(held) ? gdef[held].op : 0;
++		uint32_t table = tInstanceTable();
++		if (indices.empty() && heldOp == OpTypeAccelerationStructureKHR) {
++			return emitResult(OpLoad, table, { instanceTableVar(vb->second.first, vb->second.second, 0) });
++		}
++		return 0;
++	};
++
++	for (size_t i = pm.firstFunction; i < pm.insts.size(); i++) {
++		const PInst& pi = pm.insts[i];
++		Instance& inst = instances[index];
++		switch (pi.op) {
++			case OpLine:
++			case OpNoLine:
++				continue;
++
++			case OpExtInst:
++				if (nonSemanticSets.count(pi.w[3])) { continue; }
++				break;
++
++			case OpFunction:
++				returnType = M(pi.w[1]);
++				break;
++
++			case OpTraceRayKHR: {
++				if (traceDepth >= cfg.maxRecursionDepth) { continue; }		// deeper than the pipeline said it would go
++				uint32_t accel = M(pi.w[1]);
++				uint32_t table = loadInstanceTable(accel);
++				uint32_t payload = M(pi.w[11]);
++				auto key = std::make_tuple(index, payload, table != 0);
++				auto it = traceFunctions.find(key);
++				if (it == traceFunctions.end()) {
++					it = traceFunctions.emplace(key, newId()).first;
++					pendingTraces.push_back({ it->second, index, payload, table != 0 });
++				}
++				Words args = { it->second, accel };
++				if (table) { args.push_back(table); }
++				for (int a = 2; a <= 6; a++) { args.push_back(asUInt(M(pi.w[a]))); }		// flags, cull mask, offset, stride, miss index
++				for (int a = 7; a <= 10; a++) { args.push_back(M(pi.w[a])); }				// origin, tmin, direction, tmax
++				emitResult(OpFunctionCall, voidType, args);
++				continue;
++			}
++
++			case OpExecuteCallableKHR: {
++				if (callDepth >= cfg.maxCallableDepth || !hasStageKind(mvk::RTStageKind::Callable)) { continue; }
++				uint32_t data = M(pi.w[2]);
++				auto key = std::make_pair(index, data);
++				auto it = callFunctions.find(key);
++				if (it == callFunctions.end()) {
++					it = callFunctions.emplace(key, newId()).first;
++					pendingCalls.push_back({ it->second, index, data });
++				}
++				uint32_t sbtIndex = asUInt(M(pi.w[1]));
++				emitResult(OpFunctionCall, voidType, { it->second, sbtIndex });
++				continue;
++			}
++
++			case OpReportIntersectionKHR: {
++				if ( !inst.reportFunction ) {
++					instances[index].reportFunction = newId();
++					pendingReports.push_back(index);
++				}
++				uint32_t hitT = M(pi.w[3]);
++				uint32_t hitKind = asUInt(M(pi.w[4]));
++				Words o = { M(pi.w[1]), M(pi.w[2]), instances[index].reportFunction, hitT, hitKind };
++				emit(functions, OpFunctionCall, o);
++				idType[o[1]] = o[0];
++				continue;
++			}
++
++			case OpIgnoreIntersectionKHR:
++			case OpTerminateRayKHR: {
++				// Both end the any-hit shader. The trace loop that called it reads the flag.
++				Level& lv = level(traceDepth);
++				emit(functions, OpStore, { pi.op == OpIgnoreIntersectionKHR ? lv.ignore : lv.terminate, cBool(true) });
++				if (returnType == voidType) {
++					emit(functions, OpReturn, {});
++				} else {
++					emit(functions, OpReturnValue, { emitResult(OpUndef, returnType, {}) });
++				}
++				continue;
++			}
++
++			default:
++				break;
++		}
++
++		Words o = remap(pi);
++		if (inst.shaderRecordVar) {
++			// The variable now holds a pointer to the record, so every use loads that pointer first.
++			for (uint16_t off : pi.ids) {
++				if (pi.w[off] == pi.resultId || pi.w[off] == pi.typeId || o[off - 1] != inst.shaderRecordVar) { continue; }
++				o[off - 1] = emitResult(OpLoad, pointee(inst.shaderRecordVar), { inst.shaderRecordVar });
++			}
++		}
++		if (pi.typeId && pi.resultId) { idType[o[1]] = o[0]; }
++		if (pi.op == OpLoad) {
++			loadedFrom[o[1]] = o[2];
++			if (o.size() == 3 && isPhysicalPointer(o[2])) { o.push_back(MemoryAccessAlignedMask); o.push_back(4); }
++		} else if (pi.op == OpStore) {
++			if (o.size() == 2 && isPhysicalPointer(o[0])) { o.push_back(MemoryAccessAlignedMask); o.push_back(4); }
++		} else if (pi.op == OpAccessChain || pi.op == OpInBoundsAccessChain) {
++			chains[o[1]] = { o[2], Words(o.begin() + 3, o.end()) };
++		}
++		emit(functions, pi.op, o);
++	}
++
++	instances[index].entryFunction = M(entryLocal);
++	return index;
++}
++
++
++#pragma mark Generating functions
++
++/** Writes one function, with structured control flow. */
++struct Builder {
++	Lowering& l;
++	Words out;
++	bool terminated = false;	// the current block already ended in a return
++	uint32_t voidType, boolType, uintType, floatType;
++
++	Builder(Lowering& lowering) : l(lowering) {
++		voidType = l.tVoid(); boolType = l.tBool(); uintType = l.tUInt(); floatType = l.tFloat();
++	}
++
++	uint32_t r(uint32_t op, uint32_t type, const Words& operands) {
++		uint32_t id = l.newId();
++		Words o = { type, id };
++		o.insert(o.end(), operands.begin(), operands.end());
++		emit(out, op, o);
++		l.idType[id] = type;
++		return id;
++	}
++	void v(uint32_t op, const Words& operands) { emit(out, op, operands); }
++	void label(uint32_t id) { emit(out, OpLabel, { id }); terminated = false; }
++	uint32_t load(uint32_t var) { return r(OpLoad, l.pointee(var), { var }); }
++	void store(uint32_t var, uint32_t value) { v(OpStore, { var, value }); }
++
++	// Returns the ids of the parameters.
++	Words begin(uint32_t function, uint32_t returnType, const Words& paramTypes, const std::string& name) {
++		emit(out, OpFunction, { returnType, function, FunctionControlMaskNone, l.tFunction(returnType, paramTypes) });
++		Words params;
++		for (uint32_t t : paramTypes) {
++			uint32_t p = l.newId();
++			emit(out, OpFunctionParameter, { t, p });
++			l.idType[p] = t;
++			params.push_back(p);
++		}
++		label(l.newId());
++		l.name(function, name);
++		return params;
++	}
++	void ret() { if ( !terminated ) { v(OpReturn, {}); terminated = true; } }
++	void retValue(uint32_t value) { if ( !terminated ) { v(OpReturnValue, { value }); terminated = true; } }
++	void end() { ret(); emit(out, OpFunctionEnd, {}); l.functions.insert(l.functions.end(), out.begin(), out.end()); }
++
++	struct If { uint32_t elseLabel, merge; bool hasElse; };
++	If beginIf(uint32_t cond, bool withElse = false) {
++		uint32_t thenLabel = l.newId(), merge = l.newId(), elseLabel = withElse ? l.newId() : merge;
++		v(OpSelectionMerge, { merge, SelectionControlMaskNone });
++		v(OpBranchConditional, { cond, thenLabel, elseLabel });
++		label(thenLabel);
++		return { elseLabel, merge, withElse };
++	}
++	void beginElse(If& c) {
++		if ( !terminated ) { v(OpBranch, { c.merge }); }
++		label(c.elseLabel);
++	}
++	void endIf(If& c) {
++		if ( !terminated ) { v(OpBranch, { c.merge }); }
++		label(c.merge);
++	}
++
++	struct Loop { uint32_t header, body, cont, merge; };
++	Loop beginLoop() {
++		Loop c = { l.newId(), l.newId(), l.newId(), l.newId() };
++		uint32_t test = l.newId();
++		v(OpBranch, { c.header });
++		label(c.header);
++		v(OpLoopMerge, { c.merge, c.cont, LoopControlMaskNone });
++		v(OpBranch, { test });
++		label(test);
++		return c;
++	}
++	void loopWhile(Loop& c, uint32_t cond) {
++		v(OpBranchConditional, { cond, c.body, c.merge });
++		label(c.body);
++	}
++	void endLoop(Loop& c) {
++		if ( !terminated ) { v(OpBranch, { c.cont }); }
++		label(c.cont);
++		v(OpBranch, { c.header });
++		label(c.merge);
++	}
++
++	struct Switch { uint32_t merge; Words labels; };
++	Switch beginSwitch(uint32_t selector, const Words& literals) {
++		Switch c;
++		c.merge = l.newId();
++		Words o = { selector, c.merge };
++		for (uint32_t lit : literals) {
++			uint32_t lab = l.newId();
++			c.labels.push_back(lab);
++			o.push_back(lit);
++			o.push_back(lab);
++		}
++		v(OpSelectionMerge, { c.merge, SelectionControlMaskNone });
++		v(OpSwitch, o);
++		terminated = true;
++		return c;
++	}
++	void beginCase(Switch& c, size_t i) { label(c.labels[i]); }
++	void endCase(Switch& c) { if ( !terminated ) { v(OpBranch, { c.merge }); terminated = true; } }
++	void endSwitch(Switch& c) { label(c.merge); }
++
++	// Copies what one variable holds into another, if their types allow it.
++	void copyVar(uint32_t dstVar, uint32_t srcVar) {
++		if ( !dstVar || !srcVar || dstVar == srcVar ) { return; }
++		uint32_t dt = l.pointee(dstVar), st = l.pointee(srcVar);
++		if (dt == st) {
++			store(dstVar, load(srcVar));
++		} else if (l.logicallyMatch(dt, st)) {
++			store(dstVar, r(OpCopyLogical, dt, { load(srcVar) }));
++		}
++	}
++
++	// Stores a value into a variable whose type may be the signed or unsigned twin of the value's.
++	void storeAs(uint32_t var, uint32_t value, uint32_t valueType) {
++		uint32_t pt = l.pointee(var);
++		if (pt != valueType) { value = r(OpBitcast, pt, { value }); }
++		store(var, value);
++	}
++
++	uint32_t param64(uint32_t index) {
++		uint32_t u64 = l.tUInt64();
++		uint32_t ptr = r(OpAccessChain, l.tPtr(StorageClassUniform, u64), { l.paramsVar, l.cUInt(index) });
++		return r(OpLoad, u64, { ptr });
++	}
++
++	// Reads the shader group handle of entry `index` of a shader binding table.
++	// Returns the handle, which is the group's index plus one, and sets recordAddress.
++	uint32_t readHandle(uint32_t base, uint32_t stride, uint32_t index, uint32_t& recordAddress) {
++		uint32_t u64 = l.tUInt64();
++		uint32_t address = base;
++		if (stride && index) {
++			uint32_t wide = r(OpUConvert, u64, { index });
++			address = r(OpIAdd, u64, { base, r(OpIMul, u64, { stride, wide }) });
++		}
++		recordAddress = address;
++		uint32_t ptr = r(OpConvertUToPtr, l.tPtr(StorageClassPhysicalStorageBuffer, l.handleBlock), { address });
++		uint32_t member = r(OpAccessChain, l.tPtr(StorageClassPhysicalStorageBuffer, uintType), { ptr, l.cUInt(0) });
++		return r(OpLoad, uintType, { member, MemoryAccessAlignedMask, 4 });
++	}
++
++	// Points a shader at its shader record, then calls it.
++	void invoke(const Instance& inst, uint32_t recordAddress) {
++		if (inst.shaderRecordVar && recordAddress) {
++			uint32_t dataAddress = r(OpIAdd, l.tUInt64(), { recordAddress, l.cUInt64(l.cfg.handleSize) });
++			store(inst.shaderRecordVar, r(OpConvertUToPtr, l.pointee(inst.shaderRecordVar), { dataAddress }));
++		}
++		if (inst.entryFunction) { r(OpFunctionCall, voidType, { inst.entryFunction }); }
++	}
++
++	enum Hit { NoHit, Candidate, Committed };
++
++	// Gives a shader's built-in variables their values for the call that follows.
++	void setBuiltins(const Instance& inst, uint32_t depth, Hit hit, uint32_t tValue, uint32_t hitKind) {
++		uint32_t v3 = l.tVec(floatType, 3), u3 = l.tVec(uintType, 3);
++		uint32_t which = l.cUInt(hit == Committed ? 1 : 0);
++		for (auto& bv : inst.builtinVars) {
++			uint32_t var = bv.second;
++			uint32_t pt = l.pointee(var);
++			switch (bv.first) {
++				case BuiltInLaunchIdKHR:		storeAs(var, load(l.launchIdVar), u3); break;
++				case BuiltInLaunchSizeKHR:		storeAs(var, load(l.launchSizeVar), u3); break;
++				default: break;
++			}
++			if (depth == 0 || !l.levels[depth].made) { continue; }
++			const Level& lv = l.levels[depth];
++			switch (bv.first) {
++				case BuiltInWorldRayOriginKHR:		storeAs(var, load(lv.origin), v3); break;
++				case BuiltInWorldRayDirectionKHR:	storeAs(var, load(lv.direction), v3); break;
++				case BuiltInRayTminKHR:				storeAs(var, load(lv.tMin), floatType); break;
++				case BuiltInIncomingRayFlagsKHR:	storeAs(var, load(lv.flags), uintType); break;
++				case BuiltInCullMaskKHR:			storeAs(var, load(lv.cullMask), uintType); break;
++				case BuiltInRayTmaxKHR:				if (tValue) { storeAs(var, tValue, floatType); } break;
++				case BuiltInHitKindKHR:				if (hitKind) { storeAs(var, hitKind, uintType); } break;
++				default: break;
++			}
++			if (hit == NoHit) { continue; }
++			uint32_t getter = 0;
++			switch (bv.first) {
++				case BuiltInObjectRayOriginKHR:		getter = OpRayQueryGetIntersectionObjectRayOriginKHR; break;
++				case BuiltInObjectRayDirectionKHR:	getter = OpRayQueryGetIntersectionObjectRayDirectionKHR; break;
++				case BuiltInObjectToWorldKHR:		getter = OpRayQueryGetIntersectionObjectToWorldKHR; break;
++				case BuiltInWorldToObjectKHR:		getter = OpRayQueryGetIntersectionWorldToObjectKHR; break;
++				case BuiltInInstanceCustomIndexKHR:	getter = OpRayQueryGetIntersectionInstanceCustomIndexKHR; break;
++				case BuiltInInstanceId:				getter = OpRayQueryGetIntersectionInstanceIdKHR; break;
++				case BuiltInPrimitiveId:			getter = OpRayQueryGetIntersectionPrimitiveIndexKHR; break;
++				case BuiltInRayGeometryIndexKHR:	getter = OpRayQueryGetIntersectionGeometryIndexKHR; break;
++				default: break;
++			}
++			if (getter) { store(var, r(getter, pt, { lv.rayQuery, which })); }
++		}
++	}
++
++	// A triangle hit's attributes are its barycentric coordinates.
++	void setTriangleAttributes(const Instance& inst, const Level& lv, Hit hit) {
++		if ( !inst.hitAttributeVar ) { return; }
++		uint32_t v2 = l.tVec(floatType, 2);
++		uint32_t pt = l.pointee(inst.hitAttributeVar);
++		auto d = l.gdef.find(pt);
++		bool isStructOfVec2 = d != l.gdef.end() && d->second.op == OpTypeStruct && d->second.w.size() >= 2 && d->second.w[1] == v2;
++		if (pt != v2 && !isStructOfVec2) { return; }
++		uint32_t bary = r(OpRayQueryGetIntersectionBarycentricsKHR, v2, { lv.rayQuery, l.cUInt(hit == Committed ? 1 : 0) });
++		if (pt == v2) {
++			store(inst.hitAttributeVar, bary);
++		} else {
++			store(r(OpAccessChain, l.tPtr(StorageClassPrivate, v2), { inst.hitAttributeVar, l.cUInt(0) }), bary);
++		}
++	}
++
++	// The distance a new hit has to beat: that of the hit accepted so far, or the ray's end.
++	uint32_t currentTMax(const Level& lv) {
++		uint32_t type = r(OpRayQueryGetIntersectionTypeKHR, uintType, { lv.rayQuery, l.cUInt(1) });
++		uint32_t has = r(OpINotEqual, boolType, { type, l.cUInt(0) });
++		uint32_t t = r(OpRayQueryGetIntersectionTKHR, floatType, { lv.rayQuery, l.cUInt(1) });
++		return r(OpSelect, floatType, { has, t, load(lv.tMax) });
++	}
++};
++
++void Lowering::makeParams() {
++	// struct { uint64 values[8]; } as a uniform block: see mvk::RTDispatchParams.
++	uint32_t u64 = tUInt64();
++	Words members = { newId() };
++	for (int i = 0; i < 8; i++) { members.push_back(u64); }
++	emit(globals, OpTypeStruct, members);
++	uint32_t block = members[0];
++	gdef[block] = { OpTypeStruct, members };
++	decorate(block, DecorationBlock);
++	for (uint32_t i = 0; i < 8; i++) { emit(annotations, OpMemberDecorate, { block, i, DecorationOffset, i * 8 }); }
++	name(block, "fwDispatchParams");
++
++	paramsVar = newId();
++	Words w = { tPtr(StorageClassUniform, block), paramsVar, StorageClassUniform };
++	emit(globals, OpVariable, w);
++	gdef[paramsVar] = { OpVariable, w };
++	globalVars.push_back(paramsVar);
++	decorate(paramsVar, DecorationDescriptorSet, { cfg.paramsDescSet });
++	decorate(paramsVar, DecorationBinding, { cfg.paramsBinding });
++	name(paramsVar, "fwParams");
++
++	// Made by hand rather than through declare(): it is decorated, and must not be merged
++	// with a struct of a shader that happens to have the same members.
++	handleBlock = newId();
++	Words hb = { handleBlock, tUInt() };
++	emit(globals, OpTypeStruct, hb);
++	gdef[handleBlock] = { OpTypeStruct, hb };
++	decorate(handleBlock, DecorationBlock);
++	emit(annotations, OpMemberDecorate, { handleBlock, 0, DecorationOffset, 0 });
++	name(handleBlock, "fwShaderGroupHandle");
++
++	uint32_t u3 = tVec(tUInt(), 3);
++	launchIdVar = privateVar(u3, "fwLaunchId");
++	launchSizeVar = privateVar(u3, "fwLaunchSize");
++}
++
++// What OpTraceRayKHR calls: (acceleration structure, [instance table,] flags, cull mask,
++// sbt offset, sbt stride, miss index, origin, tmin, direction, tmax).
++void Lowering::generateTrace(const PendingTrace& t) {
++	uint32_t depth = instances[t.caller].traceDepth + 1;
++	level(depth);
++
++	// Every shader a ray traced from here can reach, at the next depth. Importing them first
++	// also settles which payload variable they share.
++	struct Arm { uint32_t handle; int inst; int intersectionInst; bool procedural; };
++	std::vector<Arm> missArms, closestArms, anyHitArms, intersectionArms;
++	for (uint32_t g = 0; g < cfg.groups.size(); g++) {
++		const mvk::RTGroup& grp = cfg.groups[g];
++		if ( !grp.isHitGroup ) {
++			if (grp.general != mvk::kRTShaderUnused && cfg.stages[grp.general].kind == mvk::RTStageKind::Miss) {
++				missArms.push_back({ g + 1, getInstance(grp.general, depth, 0), -1, false });
++			}
++			continue;
++		}
++		int isect = (grp.isProcedural && grp.intersection != mvk::kRTShaderUnused) ? getInstance(grp.intersection, depth, 0) : -1;
++		if (isect >= 0 && instances[isect].hitAttributeVar && !instances[isect].committedAttributeVar) {
++			// Where the attributes of the hit that was accepted are kept until the closest-hit
++			// shader runs: the intersection shader's own variable is overwritten by later candidates.
++			instances[isect].committedAttributeVar = privateVar(pointee(instances[isect].hitAttributeVar), "fwCommittedAttributes");
++		}
++		if (grp.closestHit != mvk::kRTShaderUnused) { closestArms.push_back({ g + 1, getInstance(grp.closestHit, depth, 0), isect, grp.isProcedural }); }
++		if (grp.anyHit != mvk::kRTShaderUnused) {
++			int ah = getInstance(grp.anyHit, depth, 0);
++			if ( !grp.isProcedural ) { anyHitArms.push_back({ g + 1, ah, -1, false }); }
++		}
++		if (isect >= 0) { intersectionArms.push_back({ g + 1, isect, isect, true }); }
++	}
++	if (failed) { return; }
++
++	// The callers' payload variable, and the one the shaders at the next depth use.
++	const Level& lv = levels[depth];
++	uint32_t payload = t.payloadVar;
++	uint32_t payloadType = pointee(payload);
++	uint32_t shared = 0;
++	for (auto& sp : lv.sharedPayloads) { if (pointee(sp.second) == payloadType) { shared = sp.second; break; } }
++	if ( !shared ) { for (auto& sp : lv.sharedPayloads) { if (logicallyMatch(pointee(sp.second), payloadType)) { shared = sp.second; break; } } }
++
++	Builder b(*this);
++	uint32_t u = b.uintType, f = b.floatType, v3 = tVec(f, 3), bl = b.boolType;
++	Words paramTypes = { tAccel() };
++	if (t.hasInstanceTable) { paramTypes.push_back(tInstanceTable()); }
++	for (int i = 0; i < 5; i++) { paramTypes.push_back(u); }
++	paramTypes.insert(paramTypes.end(), { v3, f, v3, f });
++	Words p = b.begin(t.function, b.voidType, paramTypes, "fwTraceRay_d" + std::to_string(depth));
++	size_t n = 0;
++	uint32_t accel = p[n++];
++	uint32_t table = t.hasInstanceTable ? p[n++] : 0;
++	uint32_t flags = p[n++], cull = p[n++], sbtOffset = p[n++], sbtStride = p[n++], missIndex = p[n++];
++	uint32_t origin = p[n++], tMin = p[n++], direction = p[n++], tMax = p[n++];
++
++	b.store(lv.origin, origin);
++	b.store(lv.direction, direction);
++	b.store(lv.tMin, tMin);
++	b.store(lv.tMax, tMax);
++	b.store(lv.flags, flags);
++	b.store(lv.cullMask, cull);
++	b.store(lv.ignore, cBool(false));
++	b.store(lv.terminate, cBool(false));
++	b.copyVar(shared, payload);
++	// Only the low four bits of the offset and stride count.
++	uint32_t offsetLow = b.r(OpBitwiseAnd, u, { sbtOffset, cUInt(0xF) });
++	uint32_t strideLow = b.r(OpBitwiseAnd, u, { sbtStride, cUInt(0xF) });
++
++	// Reads the hit group of the candidate, or of the hit that was accepted, into lv.handle and lv.recordAddress.
++	auto findHitGroup = [&](Builder::Hit hit) -> uint32_t {
++		uint32_t which = cUInt(hit == Builder::Committed ? 1 : 0);
++		uint32_t geometry = b.r(OpRayQueryGetIntersectionGeometryIndexKHR, u, { lv.rayQuery, which });
++		uint32_t index = b.r(OpIAdd, u, { b.r(OpIMul, u, { geometry, strideLow }), offsetLow });
++		if (table) {
++			uint32_t instance = b.r(OpRayQueryGetIntersectionInstanceIdKHR, u, { lv.rayQuery, which });
++			uint32_t width = cUInt(cfg.instanceTableWidth);
++			uint32_t coord = b.r(OpCompositeConstruct, tVec(u, 2), { b.r(OpUMod, u, { instance, width }), b.r(OpUDiv, u, { instance, width }) });
++			uint32_t texel = b.r(OpImageFetch, tVec(u, 4), { table, coord, ImageOperandsLodMask, cUInt(0) });
++			index = b.r(OpIAdd, u, { index, b.r(OpCompositeExtract, u, { texel, 0 }) });
++		}
++		uint32_t record = 0;
++		uint32_t handle = b.readHandle(b.param64(3), b.param64(4), index, record);
++		b.store(lv.handle, handle);
++		b.store(lv.recordAddress, record);
++		return handle;
++	};
++	auto literalsOf = [](const std::vector<Arm>& arms) { Words w; for (auto& a : arms) { w.push_back(a.handle); } return w; };
++
++	b.v(OpRayQueryInitializeKHR, { lv.rayQuery, accel, flags, cull, origin, tMin, direction, tMax });
++
++	// Candidates: triangles that are not opaque, and bounding boxes.
++	auto loop = b.beginLoop();
++	b.loopWhile(loop, b.r(OpRayQueryProceedKHR, bl, { lv.rayQuery }));
++	{
++		uint32_t candidateType = b.r(OpRayQueryGetIntersectionTypeKHR, u, { lv.rayQuery, cUInt(0) });
++		uint32_t handle = findHitGroup(Builder::Candidate);
++		uint32_t record = b.load(lv.recordAddress);
++		auto isTriangle = b.beginIf(b.r(OpIEqual, bl, { candidateType, cUInt(0) }), true);
++		{
++			b.store(lv.ignore, cBool(false));
++			if ( !anyHitArms.empty() ) {
++				uint32_t hitT = b.r(OpRayQueryGetIntersectionTKHR, f, { lv.rayQuery, cUInt(0) });
++				uint32_t front = b.r(OpRayQueryGetIntersectionFrontFaceKHR, bl, { lv.rayQuery, cUInt(0) });
++				uint32_t kind = b.r(OpSelect, u, { front, cUInt(0xFE), cUInt(0xFF) });
++				auto sw = b.beginSwitch(handle, literalsOf(anyHitArms));
++				for (size_t i = 0; i < anyHitArms.size(); i++) {
++					const Instance& inst = instances[anyHitArms[i].inst];
++					b.beginCase(sw, i);
++					b.setBuiltins(inst, depth, Builder::Candidate, hitT, kind);
++					b.setTriangleAttributes(inst, lv, Builder::Candidate);
++					b.invoke(inst, record);
++					b.endCase(sw);
++				}
++				b.endSwitch(sw);
++			}
++			auto accepted = b.beginIf(b.r(OpLogicalNot, bl, { b.load(lv.ignore) }));
++			b.v(OpRayQueryConfirmIntersectionKHR, { lv.rayQuery });
++			auto stop = b.beginIf(b.load(lv.terminate));
++			b.v(OpRayQueryTerminateKHR, { lv.rayQuery });
++			b.endIf(stop);
++			b.endIf(accepted);
++		}
++		b.beginElse(isTriangle);
++		if ( !intersectionArms.empty() ) {
++			// The intersection shader reports its hits through its report function, which
++			// runs the any-hit shader and accepts the hit.
++			uint32_t limit = b.currentTMax(lv);
++			auto sw = b.beginSwitch(handle, literalsOf(intersectionArms));
++			for (size_t i = 0; i < intersectionArms.size(); i++) {
++				const Instance& inst = instances[intersectionArms[i].inst];
++				b.beginCase(sw, i);
++				b.setBuiltins(inst, depth, Builder::Candidate, limit, 0);
++				b.invoke(inst, record);
++				b.endCase(sw);
++			}
++			b.endSwitch(sw);
++		}
++		b.endIf(isTriangle);
++	}
++	b.endLoop(loop);
++
++	// The closest hit, or a miss.
++	uint32_t committedType = b.r(OpRayQueryGetIntersectionTypeKHR, u, { lv.rayQuery, cUInt(1) });
++	auto wasHit = b.beginIf(b.r(OpINotEqual, bl, { committedType, cUInt(0) }), true);
++	{
++		uint32_t skip = b.r(OpBitwiseAnd, u, { flags, cUInt(0x8) });		// gl_RayFlagsSkipClosestHitShaderEXT
++		auto run = b.beginIf(b.r(OpIEqual, bl, { skip, cUInt(0) }));
++		if ( !closestArms.empty() ) {
++			uint32_t handle = findHitGroup(Builder::Committed);
++			uint32_t record = b.load(lv.recordAddress);
++			uint32_t hitT = b.r(OpRayQueryGetIntersectionTKHR, f, { lv.rayQuery, cUInt(1) });
++			uint32_t isTri = b.r(OpIEqual, bl, { committedType, cUInt(1) });
++			uint32_t front = b.r(OpRayQueryGetIntersectionFrontFaceKHR, bl, { lv.rayQuery, cUInt(1) });
++			uint32_t triKind = b.r(OpSelect, u, { front, cUInt(0xFE), cUInt(0xFF) });
++			uint32_t kind = b.r(OpSelect, u, { isTri, triKind, b.load(lv.committedKind) });
++			auto sw = b.beginSwitch(handle, literalsOf(closestArms));
++			for (size_t i = 0; i < closestArms.size(); i++) {
++				const Instance& inst = instances[closestArms[i].inst];
++				b.beginCase(sw, i);
++				b.setBuiltins(inst, depth, Builder::Committed, hitT, kind);
++				if (closestArms[i].procedural) {
++					if (closestArms[i].intersectionInst >= 0) {
++						b.copyVar(inst.hitAttributeVar, instances[closestArms[i].intersectionInst].committedAttributeVar);
++					}
++				} else {
++					b.setTriangleAttributes(inst, lv, Builder::Committed);
++				}
++				b.invoke(inst, record);
++				b.endCase(sw);
++			}
++			b.endSwitch(sw);
++		}
++		b.endIf(run);
++	}
++	b.beginElse(wasHit);
++	if ( !missArms.empty() ) {
++		uint32_t record = 0;
++		uint32_t handle = b.readHandle(b.param64(1), b.param64(2), missIndex, record);
++		auto sw = b.beginSwitch(handle, literalsOf(missArms));
++		for (size_t i = 0; i < missArms.size(); i++) {
++			const Instance& inst = instances[missArms[i].inst];
++			b.beginCase(sw, i);
++			b.setBuiltins(inst, depth, Builder::NoHit, tMax, 0);
++			b.invoke(inst, record);
++			b.endCase(sw);
++		}
++		b.endSwitch(sw);
++	}
++	b.endIf(wasHit);
++
++	b.copyVar(payload, shared);
++	b.end();
++}
++
++// What OpReportIntersectionKHR calls in one intersection shader: (hitT, hitKind) -> accepted.
++void Lowering::generateReport(int instIdx) {
++	uint32_t depth = instances[instIdx].traceDepth;
++	uint32_t stage = instances[instIdx].stage;
++	level(depth);
++
++	// The any-hit shaders of the hit groups this intersection shader belongs to.
++	struct Arm { uint32_t handle; int inst; };
++	std::vector<Arm> arms;
++	for (uint32_t g = 0; g < cfg.groups.size(); g++) {
++		const mvk::RTGroup& grp = cfg.groups[g];
++		if (grp.isHitGroup && grp.isProcedural && grp.intersection == stage && grp.anyHit != mvk::kRTShaderUnused) {
++			arms.push_back({ g + 1, getInstance(grp.anyHit, depth, 0) });
++		}
++	}
++	if (failed) { return; }
++	if (instances[instIdx].hitAttributeVar && !instances[instIdx].committedAttributeVar) {
++		instances[instIdx].committedAttributeVar = privateVar(pointee(instances[instIdx].hitAttributeVar), "fwCommittedAttributes");
++	}
++	const Instance& inst = instances[instIdx];
++	const Level& lv = levels[depth];
++
++	Builder b(*this);
++	uint32_t u = b.uintType, f = b.floatType, bl = b.boolType;
++	Words p = b.begin(inst.reportFunction, bl, { f, u }, "fwReportIntersection_d" + std::to_string(depth));
++	uint32_t hitT = p[0], hitKind = p[1];
++
++	// A hit outside the ray's current interval is not one.
++	uint32_t tooNear = b.r(OpFOrdLessThan, bl, { hitT, b.load(lv.tMin) });
++	uint32_t tooFar = b.r(OpFOrdGreaterThan, bl, { hitT, b.currentTMax(lv) });
++	auto outside = b.beginIf(b.r(OpLogicalOr, bl, { tooNear, tooFar }));
++	b.retValue(cBool(false));
++	b.endIf(outside);
++
++	b.store(lv.ignore, cBool(false));
++	if ( !arms.empty() ) {
++		uint32_t opaque = b.r(OpRayQueryGetIntersectionCandidateAABBOpaqueKHR, bl, { lv.rayQuery });
++		auto notOpaque = b.beginIf(b.r(OpLogicalNot, bl, { opaque }));
++		uint32_t record = b.load(lv.recordAddress);
++		Words literals;
++		for (auto& a : arms) { literals.push_back(a.handle); }
++		auto sw = b.beginSwitch(b.load(lv.handle), literals);
++		for (size_t i = 0; i < arms.size(); i++) {
++			const Instance& anyHit = instances[arms[i].inst];
++			b.beginCase(sw, i);
++			b.setBuiltins(anyHit, depth, Builder::Candidate, hitT, hitKind);
++			b.copyVar(anyHit.hitAttributeVar, inst.hitAttributeVar);
++			b.invoke(anyHit, record);
++			b.endCase(sw);
++		}
++		b.endSwitch(sw);
++		b.endIf(notOpaque);
++	}
++	auto ignored = b.beginIf(b.load(lv.ignore));
++	b.retValue(cBool(false));
++	b.endIf(ignored);
++
++	b.v(OpRayQueryGenerateIntersectionKHR, { lv.rayQuery, hitT });
++	b.store(lv.committedKind, hitKind);
++	b.copyVar(inst.committedAttributeVar, inst.hitAttributeVar);
++	auto stop = b.beginIf(b.load(lv.terminate));
++	b.v(OpRayQueryTerminateKHR, { lv.rayQuery });
++	b.endIf(stop);
++	b.retValue(cBool(true));
++	b.end();
++}
++
++// What OpExecuteCallableKHR calls: (sbt index).
++void Lowering::generateCall(const PendingCall& c) {
++	uint32_t traceDepth = instances[c.caller].traceDepth;
++	uint32_t callDepth = instances[c.caller].callDepth + 1;
++	struct Arm { uint32_t handle; int inst; };
++	std::vector<Arm> arms;
++	for (uint32_t g = 0; g < cfg.groups.size(); g++) {
++		const mvk::RTGroup& grp = cfg.groups[g];
++		if ( !grp.isHitGroup && grp.general != mvk::kRTShaderUnused && cfg.stages[grp.general].kind == mvk::RTStageKind::Callable) {
++			arms.push_back({ g + 1, getInstance(grp.general, traceDepth, callDepth) });
++		}
++	}
++	if (failed) { return; }
++
++	Builder b(*this);
++	Words p = b.begin(c.function, b.voidType, { b.uintType }, "fwExecuteCallable");
++	uint32_t record = 0;
++	uint32_t handle = b.readHandle(b.param64(5), b.param64(6), p[0], record);
++	Words literals;
++	for (auto& a : arms) { literals.push_back(a.handle); }
++	if ( !arms.empty() ) {
++		auto sw = b.beginSwitch(handle, literals);
++		for (size_t i = 0; i < arms.size(); i++) {
++			const Instance& callee = instances[arms[i].inst];
++			b.beginCase(sw, i);
++			b.copyVar(callee.incomingCallableVar, c.dataVar);
++			b.setBuiltins(callee, 0, Builder::NoHit, 0, 0);
++			b.invoke(callee, record);
++			b.copyVar(c.dataVar, callee.incomingCallableVar);
++			b.endCase(sw);
++		}
++		b.endSwitch(sw);
++	}
++	b.end();
++}
++
++// The compute shader's entry point: one ray generation shader invocation.
++void Lowering::generateMain() {
++	struct Arm { uint32_t handle; int inst; };
++	std::vector<Arm> arms;
++	for (uint32_t g = 0; g < cfg.groups.size(); g++) {
++		const mvk::RTGroup& grp = cfg.groups[g];
++		if ( !grp.isHitGroup && grp.general != mvk::kRTShaderUnused && cfg.stages[grp.general].kind == mvk::RTStageKind::RayGeneration) {
++			arms.push_back({ g + 1, getInstance(grp.general, 0, 0) });
++		}
++	}
++	if (failed) { return; }
++
++	uint32_t u3 = tVec(tUInt(), 3);
++	auto input = [&](uint32_t builtin, const char* n) {
++		uint32_t id = newId();
++		Words w = { tPtr(StorageClassInput, u3), id, StorageClassInput };
++		emit(globals, OpVariable, w);
++		gdef[id] = { OpVariable, w };
++		globalVars.push_back(id);
++		decorate(id, DecorationBuiltIn, { builtin });
++		name(id, n);
++		return id;
++	};
++	uint32_t invocation = input(BuiltInGlobalInvocationId, "gl_GlobalInvocationID");
++	uint32_t groups = input(BuiltInNumWorkgroups, "gl_NumWorkGroups");
++
++	Builder b(*this);
++	uint32_t mainFn = newId();
++	b.begin(mainFn, b.voidType, {}, "main");
++	b.store(launchIdVar, b.load(invocation));
++	b.store(launchSizeVar, b.load(groups));
++	uint32_t record = 0;
++	uint32_t handle = b.readHandle(b.param64(0), 0, 0, record);
++	Words literals;
++	for (auto& a : arms) { literals.push_back(a.handle); }
++	if ( !arms.empty() ) {
++		auto sw = b.beginSwitch(handle, literals);
++		for (size_t i = 0; i < arms.size(); i++) {
++			const Instance& inst = instances[arms[i].inst];
++			b.beginCase(sw, i);
++			b.setBuiltins(inst, 0, Builder::NoHit, 0, 0);
++			b.invoke(inst, record);
++			b.endCase(sw);
++		}
++		b.endSwitch(sw);
++	}
++	b.end();
++
++	// Everything the generated code left to do: each trace, call and report function, which
++	// may import further shaders and so leave more to do.
++	while ( !failed && (!pendingTraces.empty() || !pendingCalls.empty() || !pendingReports.empty()) ) {
++		if ( !pendingTraces.empty() ) { PendingTrace t = pendingTraces.back(); pendingTraces.pop_back(); generateTrace(t); continue; }
++		if ( !pendingCalls.empty() ) { PendingCall c = pendingCalls.back(); pendingCalls.pop_back(); generateCall(c); continue; }
++		int r = pendingReports.back(); pendingReports.pop_back(); generateReport(r);
++	}
++
++	// The entry point lists every global variable, as SPIR-V 1.4 and later want.
++	Words entry = { ExecutionModelGLCompute, mainFn };
++	appendString(entry, "main");
++	entry.insert(entry.end(), globalVars.begin(), globalVars.end());
++	Words header;
++	emit(header, OpEntryPoint, entry);
++	emit(header, OpExecutionMode, { mainFn, ExecutionModeLocalSize, 1, 1, 1 });
++	entryPoint = header;
++}
++
++bool Lowering::run(Words& out) {
++	if (cfg.stages.empty() || cfg.groups.empty()) { return fail("no stages or no groups"); }
++	parsed.resize(cfg.stages.size());
++	levels.resize(cfg.maxRecursionDepth + 2);
++	capabilities = { CapabilityShader, CapabilityRayQueryKHR, CapabilityPhysicalStorageBufferAddresses, CapabilityInt64 };
++	extensions = { "SPV_KHR_ray_query", "SPV_KHR_physical_storage_buffer" };
++
++	makeParams();
++	generateMain();
++	if (failed) { return false; }
++
++	out.clear();
++	out.insert(out.end(), { MagicNumber, 0x00010500u, 0u, nextId, 0u });
++	for (uint32_t c : capabilities) { emit(out, OpCapability, { c }); }
++	for (auto& e : extensions) { Words o; appendString(o, e); emit(out, OpExtension, o); }
++	for (auto& i : extInstImports) { Words o = { i.second }; appendString(o, i.first); emit(out, OpExtInstImport, o); }
++	emit(out, OpMemoryModel, { AddressingModelPhysicalStorageBuffer64, MemoryModelGLSL450 });
++	out.insert(out.end(), entryPoint.begin(), entryPoint.end());
++	out.insert(out.end(), strings.begin(), strings.end());
++	out.insert(out.end(), debug.begin(), debug.end());
++	out.insert(out.end(), annotations.begin(), annotations.end());
++	out.insert(out.end(), globals.begin(), globals.end());
++	out.insert(out.end(), functions.begin(), functions.end());
++	return true;
++}
++
++}	// namespace
++
++bool mvk::lowerRayTracingPipeline(const RTLoweringConfig& config, RTLoweringResult& result, std::string& log) {
++	Lowering lowering(config, log);
++	if ( !lowering.run(result.spirv) ) { return false; }
++	result.instanceTables = lowering.instanceTableBindings;
++	return true;
++}
+diff --git a/MoltenVKShaderConverter/MoltenVKShaderConverter/RayTracingLowering.h b/MoltenVKShaderConverter/MoltenVKShaderConverter/RayTracingLowering.h
+new file mode 100644
+index 0000000..13cbd28
+--- /dev/null
++++ b/MoltenVKShaderConverter/MoltenVKShaderConverter/RayTracingLowering.h
+@@ -0,0 +1,118 @@
++/*
++ * RayTracingLowering.h
++ *
++ * FineWine: turns the shaders of a Vulkan ray tracing pipeline into one compute shader.
++ *
++ * Metal has no ray generation, hit, miss or callable shader stages, and SPIRV-Cross cannot
++ * translate them. It can translate ray queries. So the shaders of a pipeline are merged, at the
++ * SPIR-V level, into a single compute shader in which every traceRayEXT() is a ray query loop
++ * that calls the hit, miss and intersection shaders as ordinary functions, picked through the
++ * shader binding table at run time.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#pragma once
++
++#include <cstdint>
++#include <string>
++#include <utility>
++#include <vector>
++
++namespace mvk {
++
++	enum class RTStageKind : uint32_t { RayGeneration, Miss, ClosestHit, AnyHit, Intersection, Callable };
++
++	/** The value an application gave a specialization constant of one stage. */
++	struct RTSpecializationEntry {
++		uint32_t constantID = 0;
++		std::vector<uint8_t> data;
++	};
++
++	/** One shader of the pipeline. */
++	struct RTStage {
++		RTStageKind kind = RTStageKind::RayGeneration;
++		std::vector<uint32_t> spirv;
++		std::string entryName;
++		std::vector<RTSpecializationEntry> specialization;
++	};
++
++	static const uint32_t kRTShaderUnused = ~0u;
++
++	/** One shader group: a general group names one shader, a hit group up to three. Values index RTLoweringConfig::stages. */
++	struct RTGroup {
++		bool isHitGroup = false;
++		bool isProcedural = false;
++		uint32_t general = kRTShaderUnused;
++		uint32_t closestHit = kRTShaderUnused;
++		uint32_t anyHit = kRTShaderUnused;
++		uint32_t intersection = kRTShaderUnused;
++	};
++
++	struct RTLoweringConfig {
++		std::vector<RTStage> stages;
++		std::vector<RTGroup> groups;
++
++		/** How deep traceRayEXT() may nest. Each level is a copy of the hit and miss shaders. */
++		uint32_t maxRecursionDepth = 1;
++
++		/** How deep executeCallableEXT() may nest. */
++		uint32_t maxCallableDepth = 2;
++
++		/** The size of a shader group handle. Its first four bytes hold the group's index plus one. */
++		uint32_t handleSize = 32;
++
++		/**
++		 * Where the compute shader finds the shader binding table: a uniform block at this set
++		 * and binding, laid out as RTDispatchParams. The set is not one of the pipeline's.
++		 */
++		uint32_t paramsDescSet = 0;
++		uint32_t paramsBinding = 0;
++
++		/**
++		 * Metal ray queries do not return an instance's shader binding table offset. For each
++		 * acceleration structure binding that rays are traced against, the compute shader
++		 * therefore reads a texture holding those offsets: instance i is the texel at
++		 * (i % width, i / width). The textures are at paramsDescSet, bindings paramsBinding + 1
++		 * onwards, in the order RTLoweringResult::instanceTables lists the bindings they are for.
++		 */
++		uint32_t instanceTableWidth = 4096;
++	};
++
++	struct RTLoweringResult {
++		std::vector<uint32_t> spirv;
++
++		/** The (set, binding) of each acceleration structure that needs its instance table bound. */
++		std::vector<std::pair<uint32_t, uint32_t>> instanceTables;
++	};
++
++	/** What the compute shader reads at paramsDescSet / paramsBinding. All fields are 64 bits. */
++	struct RTDispatchParams {
++		uint64_t rayGenAddress;
++		uint64_t missAddress;
++		uint64_t missStride;
++		uint64_t hitAddress;
++		uint64_t hitStride;
++		uint64_t callableAddress;
++		uint64_t callableStride;
++		uint64_t reserved;
++	};
++
++	/**
++	 * Produces the compute shader: entry point "main", local size 1x1x1, to be dispatched with one
++	 * work group per ray (gl_LaunchIDEXT is the work group id, gl_LaunchSizeEXT the work group count).
++	 * Returns false and says why in log if the pipeline uses something that is not handled.
++	 */
++	bool lowerRayTracingPipeline(const RTLoweringConfig& config, RTLoweringResult& result, std::string& log);
++
++}
+diff --git a/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVSupport.cpp b/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVSupport.cpp
+index 51db825..d7245b9 100644
+--- a/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVSupport.cpp
++++ b/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVSupport.cpp
+@@ -119,4 +119,16 @@ void mvk::logSPIRV(vector<uint32_t>& spirv, string& spvLog) {
+ 	}
+ }
+ 
++
++// FineWine: the ray tracing pipeline lowering, built here so the Xcode project is unchanged.
++#include "RayTracingLowering.cpp"
++
++#endif
++
++#ifdef MVK_EXCLUDE_SPIRV_TOOLS
++#include "RayTracingLowering.h"
++bool mvk::lowerRayTracingPipeline(const RTLoweringConfig&, RTLoweringResult&, std::string& log) {
++	log += "Ray tracing pipelines need MoltenVK built with SPIRV-Tools.\n";
++	return false;
++}
+ #endif

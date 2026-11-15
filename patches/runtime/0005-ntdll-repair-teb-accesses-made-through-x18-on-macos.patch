@@ -1,0 +1,296 @@
+From: FineWine
+Subject: [PATCH] ntdll: Repair TEB accesses made through x18 on macOS.
+
+Patch 0002 stopped this tree from using x18 for the TEB, because macOS clears that register
+whenever a thread passes through the kernel. Code not built from this tree still uses it:
+prebuilt toolchain start-up code and C++ runtime that get linked into DLLs (DXMT's, for one),
+compiler-generated thread-local accesses, and third-party ARM64 programs. With x18 cleared,
+those accesses address the first few kilobytes of memory and fault.
+
+The fault handler now repairs them:
+
+- An access through x18 itself is always a TEB access. x18 cannot be restored from a signal
+  handler (the kernel clears it again on return), so the load or store is performed for the
+  instruction.
+- An access through another register holding a zeroed copy of x18 gets the TEB put in that
+  register and runs again. This cannot be told apart from a real null pointer, so it applies
+  only to code in a PE image, never to code a program generated at run time: there a low
+  address is the emulated program's own null pointer and has to fault.
+
+The instruction decoder added in patch 0004 becomes emulate_memory_access(), which now also
+handles stores, and is shared by both repairs.
+
+Each repaired access costs a trap, so this is a compatibility path, not a fast one. Code that
+can be rebuilt should use NtCurrentTeb() from this tree's headers instead.
+---
+diff --git a/dlls/ntdll/unix/signal_arm64.c b/dlls/ntdll/unix/signal_arm64.c
+index 9fd6710..56b4817 100644
+--- a/dlls/ntdll/unix/signal_arm64.c
++++ b/dlls/ntdll/unix/signal_arm64.c
+@@ -1133,31 +1133,24 @@ static BOOL handle_syscall_fault( struct thread_data *data, ucontext_t *context,
+ 
+ #ifdef __APPLE__
+ /***********************************************************************
+- *           emulate_shared_data_read
++ *           emulate_memory_access
+  *
+- * FineWine: Windows has its shared data page at 0x7ffe0000 and programs read it directly, but
+- * macOS gives an ARM64 process no memory below 4 GB, so Wine keeps the page at user_shared_data
+- * instead. Code built from this tree uses that address. Code that was not (third-party ARM64
+- * programs, and the code an x64 emulator generates for x64 programs) still reads 0x7ffe0000 and
+- * faults. This performs such a read from the real page and steps over the instruction.
++ * FineWine: performs the load or store at the faulting instruction against 'mem' instead of the
++ * address it used, then steps over it. 'mem' points at the byte the instruction addressed and
++ * 'avail' is how many bytes are valid from there.
+  *
+- * Handles the load forms compilers and FEX emit: LDR/LDUR and the byte, halfword and signed
+- * variants with immediate, register or pre/post-indexed addressing, LDP, the SIMD forms of
+- * those, and the acquire loads (LDAR, LDAPR, LDAPUR) an emulator uses for x86 memory ordering.
+- * Returns FALSE for anything else, including every store: the page is read-only.
++ * Handles the forms compilers and FEX emit: LDR/STR and LDUR/STUR with their byte, halfword and
++ * signed variants in immediate, register-offset and pre- and post-indexed addressing; LDP/STP;
++ * the SIMD forms of those; and the acquire loads (LDAR, LDAPR, LDAPUR) an emulator uses for x86
++ * memory ordering. Returns FALSE for anything else, and for stores unless 'allow_write'.
+  */
+-static BOOL emulate_shared_data_read( ucontext_t *sigcontext, const void *fault_addr )
++static BOOL emulate_memory_access( ucontext_t *sigcontext, BYTE *mem, SIZE_T avail, BOOL allow_write )
+ {
+-    static const ULONG_PTR page = 0x7ffe0000, page_size = 0x1000;
+-    ULONG_PTR addr = (ULONG_PTR)fault_addr;
+-    const BYTE *src;
+     DWORD insn;
+     unsigned int rt, rt2 = 32, rn, size, bytes, sign_bytes = 0, count = 1, i;
+-    BOOL vector = FALSE, sign64 = TRUE;
++    BOOL vector = FALSE, sign64 = TRUE, store = FALSE, has_writeback = FALSE;
+     LONG_PTR writeback = 0;
+-    BOOL has_writeback = FALSE;
+ 
+-    if (addr < page || addr >= page + page_size) return FALSE;
+     memcpy( &insn, (void *)PC_sig(sigcontext), sizeof(insn) );
+     rt = insn & 31;
+     rn = (insn >> 5) & 31;
+@@ -1173,22 +1166,23 @@ static BOOL emulate_shared_data_read( ucontext_t *sigcontext, const void *fault_
+         vector = (insn >> 26) & 1;
+         if (vector)
+         {
+-            if (opc == 1) bytes = 1 << size;
+-            else if (opc == 3 && size == 0) bytes = 16;
+-            else return FALSE;                                    /* store */
++            if (opc == 0 || opc == 1) bytes = 1 << size;
++            else if (size == 0) bytes = 16;
++            else return FALSE;
++            store = !(opc & 1);
+         }
+         else
+         {
+-            if (opc == 0) return FALSE;                           /* store */
+             if (opc == 2 && size == 3) goto done;                 /* prefetch: nothing to do */
+             if (opc == 3 && size >= 2) return FALSE;
+             bytes = 1 << size;
++            store = (opc == 0);
+             if (opc >= 2) { sign_bytes = bytes; sign64 = (opc == 2); }
+         }
+         if (!(insn & 0x01000000) && !(insn & 0x00200000))
+         {
+             unsigned int mode = (insn >> 10) & 3;
+-            if (mode == 2) return FALSE;                          /* unprivileged load */
++            if (mode == 2) return FALSE;                          /* unprivileged access */
+             if (mode == 1 || mode == 3)
+             {
+                 has_writeback = TRUE;
+@@ -1196,17 +1190,18 @@ static BOOL emulate_shared_data_read( ucontext_t *sigcontext, const void *fault_
+             }
+         }
+     }
+-    else if ((insn & 0x3a400000) == 0x28400000)                   /* load pair */
++    else if ((insn & 0x3a000000) == 0x28000000)                   /* load/store pair */
+     {
+         unsigned int opc = insn >> 30, mode = (insn >> 23) & 3;
+ 
+         vector = (insn >> 26) & 1;
++        store = !((insn >> 22) & 1);
+         rt2 = (insn >> 10) & 31;
+         count = 2;
+         if (vector) { if (opc == 3) return FALSE; bytes = 4 << opc; }
+         else if (opc == 0) bytes = 4;
+         else if (opc == 2) bytes = 8;
+-        else if (opc == 1) { bytes = 4; sign_bytes = 4; }         /* LDPSW */
++        else if (opc == 1 && !store) { bytes = 4; sign_bytes = 4; }  /* LDPSW */
+         else return FALSE;
+         if (mode == 0) return FALSE;                              /* non-temporal */
+         if (mode == 1 || mode == 3)
+@@ -1220,34 +1215,43 @@ static BOOL emulate_shared_data_read( ucontext_t *sigcontext, const void *fault_
+     {
+         bytes = 1 << size;
+     }
+-    else if ((insn & 0x3f200c00) == 0x19000000)                   /* LDAPUR and signed variants */
++    else if ((insn & 0x3f200c00) == 0x19000000)                   /* LDAPUR, STLUR and signed variants */
+     {
+         unsigned int opc = (insn >> 22) & 3;
+ 
+-        if (opc == 0) return FALSE;                               /* store */
+         if (opc == 3 && size >= 2) return FALSE;
+         bytes = 1 << size;
++        store = (opc == 0);
+         if (opc >= 2) { sign_bytes = bytes; sign64 = (opc == 2); }
+     }
+     else return FALSE;
+ 
+-    if (addr + bytes * count > page + page_size) return FALSE;
+-    src = (const BYTE *)user_shared_data + (addr - page);
++    if (store && !allow_write) return FALSE;
++    if ((SIZE_T)bytes * count > avail) return FALSE;
+ 
+-    for (i = 0; i < count; i++, src += bytes)
++    for (i = 0; i < count; i++, mem += bytes)
+     {
+         unsigned int reg = i ? rt2 : rt;
+ 
+         if (vector)
+         {
+             __uint128_t value = 0;
+-            memcpy( &value, src, bytes );
+-            sigcontext->uc_mcontext->__ns.__v[reg] = value;
++            if (store) memcpy( mem, &sigcontext->uc_mcontext->__ns.__v[reg], bytes );
++            else
++            {
++                memcpy( &value, mem, bytes );
++                sigcontext->uc_mcontext->__ns.__v[reg] = value;
++            }
++        }
++        else if (store)
++        {
++            ULONG64 value = (reg == 31) ? 0 : REGn_sig( reg, sigcontext );  /* x31 is the zero register here */
++            memcpy( mem, &value, bytes );
+         }
+-        else if (reg != 31)                                       /* x31 is the zero register here */
++        else if (reg != 31)
+         {
+             ULONG64 value = 0;
+-            memcpy( &value, src, bytes );
++            memcpy( &value, mem, bytes );
+             if (sign_bytes && sign_bytes < 8 && (value >> (sign_bytes * 8 - 1)) & 1)
+             {
+                 value |= ~(ULONG64)0 << (sign_bytes * 8);
+@@ -1261,6 +1265,70 @@ done:
+     PC_sig(sigcontext) += 4;
+     return TRUE;
+ }
++
++
++/***********************************************************************
++ *           emulate_shared_data_read
++ *
++ * FineWine: Windows has its shared data page at 0x7ffe0000 and programs read it directly, but
++ * macOS gives an ARM64 process no memory below 4 GB, so Wine keeps the page at user_shared_data
++ * instead. Code built from this tree uses that address. Code that was not (third-party ARM64
++ * programs, and the code an x64 emulator generates for x64 programs) still reads 0x7ffe0000 and
++ * faults. This performs such a read from the real page. Stores are refused: the page is
++ * read-only.
++ */
++static BOOL emulate_shared_data_read( ucontext_t *sigcontext, const void *fault_addr )
++{
++    static const ULONG_PTR page = 0x7ffe0000, page_size = 0x1000;
++    ULONG_PTR addr = (ULONG_PTR)fault_addr;
++
++    if (addr < page || addr >= page + page_size) return FALSE;
++    return emulate_memory_access( sigcontext, (BYTE *)user_shared_data + (addr - page),
++                                  page + page_size - addr, FALSE );
++}
++
++
++/***********************************************************************
++ *           fixup_teb_access
++ *
++ * FineWine: Windows on ARM keeps the TEB in x18 and compiled Windows code reads it from there,
++ * but macOS clears x18 whenever a thread passes through the kernel, so such code ends up
++ * addressing the first few kilobytes of memory, which are never mapped. Code built from this
++ * tree does not use x18 (see NtCurrentTeb in winnt.h). This repairs the rest: prebuilt
++ * toolchain start-up code and C++ runtime linked into DLLs, compiler-generated thread-local
++ * accesses, and third-party ARM64 programs.
++ *
++ * - An access through x18 itself is always a TEB access. x18 cannot be set from here (the
++ *   kernel clears it again on the way out), so the access is performed for the instruction.
++ * - An access through another register that holds a zeroed copy of x18 ("mov x8, x18" then
++ *   "ldr x9, [x8, #0x30]") gets the TEB put in that register, and the instruction runs again.
++ *
++ * The second case cannot be told apart from a genuine null pointer, so it only applies to code
++ * in a PE image. Code a program generates at run time (an x64 emulator's output) is left
++ * alone: there a low address is the emulated program's own null pointer, which must fault.
++ */
++static BOOL fixup_teb_access( ucontext_t *sigcontext, const void *fault_addr, struct thread_data *data )
++{
++    static const ULONG_PTR teb_range = 0x4000;  /* the TEB and the 32-bit TEB that follows it */
++    ULONG_PTR addr = (ULONG_PTR)fault_addr;
++    DWORD insn;
++    unsigned int rn;
++
++    if (addr >= teb_range || !data || !data->teb) return FALSE;
++    if (is_inside_syscall( data, SP_sig(sigcontext) )) return FALSE;  /* Unix-side code never uses x18 */
++
++    memcpy( &insn, (void *)PC_sig(sigcontext), sizeof(insn) );
++    if ((insn & 0x0a000000) != 0x08000000) return FALSE;         /* not a load or store */
++    rn = (insn >> 5) & 31;
++
++    if (rn == 18)
++        return emulate_memory_access( sigcontext, (BYTE *)data->teb + addr, teb_range - addr, TRUE );
++
++    if (rn == 31 || REGn_sig( rn, sigcontext ) >= teb_range) return FALSE;
++    if (!virtual_is_image_address( (void *)PC_sig(sigcontext) )) return FALSE;
++    REGn_sig( rn, sigcontext ) += (ULONG_PTR)data->teb;
++    return TRUE;
++}
+ #endif  /* __APPLE__ */
+ 
+ 
+@@ -1309,6 +1377,8 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *_sigcontext )
+ #ifdef __APPLE__
+     if (rec.ExceptionInformation[0] == EXCEPTION_READ_FAULT &&
+         emulate_shared_data_read( sigcontext, siginfo->si_addr )) return;
++    if (rec.ExceptionInformation[0] != EXCEPTION_EXECUTE_FAULT &&
++        fixup_teb_access( sigcontext, siginfo->si_addr, data )) return;
+ #endif
+ 
+     if (!virtual_handle_fault( data, &rec, (void *)SP_sig(sigcontext) )) return;
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index 0447250..5a97907 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -338,6 +338,7 @@ extern NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR limit_
+ extern void virtual_map_user_shared_data(void);
+ extern void virtual_init_user_shared_data(void);
+ extern NTSTATUS virtual_handle_fault( struct thread_data *data, EXCEPTION_RECORD *rec, void *stack );
++extern BOOL virtual_is_image_address( const void *addr );
+ extern unsigned int virtual_locked_server_call( void *req_ptr );
+ extern ssize_t virtual_locked_read( int fd, void *addr, size_t size );
+ extern ssize_t virtual_locked_pread( int fd, void *addr, size_t size, off_t offset );
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 7fb6d70..9e2c7a4 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -4368,6 +4368,25 @@ NTSTATUS virtual_handle_fault( struct thread_data *data, EXCEPTION_RECORD *rec,
+ }
+ 
+ 
++/***********************************************************************
++ *           virtual_is_image_address
++ *
++ * FineWine: whether an address lies inside a mapped PE image, as opposed to memory a program
++ * allocated (which is where a JIT or an emulator puts the code it generates).
++ */
++BOOL virtual_is_image_address( const void *addr )
++{
++    struct file_view *view;
++    BOOL ret;
++
++    mutex_lock( &virtual_mutex );  /* callers are signal handlers, as for virtual_handle_fault */
++    view = find_view( addr, 0 );
++    ret = view && (view->protect & SEC_IMAGE);
++    mutex_unlock( &virtual_mutex );
++    return ret;
++}
++
++
+ /***********************************************************************
+  *           virtual_setup_exception
+  */

@@ -8,6 +8,9 @@
 # Env: MVK_TAG (default v1.4.2, the patch target),
 #      MVK_ARCH (default x86_64 — CrossOver 26.x loads the x86_64 build; the ARM/aarch64
 #               pipeline sets MVK_ARCH=aarch64),
+#      MVK_FLAVOR (default none; "finewine" builds the MoltenVK of the FineWine runtime: arm64,
+#               the shared patches plus patches/moltenvk (ray queries), in source and output
+#               directories of its own so the CrossOver payload builds are not affected),
 #      BUILD_DIR (default <repo>/build)
 # Needs full Xcode; set DEVELOPER_DIR if xcode-select points at the Command Line Tools.
 #
@@ -18,20 +21,30 @@
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 MVK_TAG="${MVK_TAG:-v1.4.2}"
+MVK_FLAVOR="${MVK_FLAVOR:-}"
+case "$MVK_FLAVOR" in
+  "") SFX="" ;;
+  finewine) SFX="-finewine"; MVK_ARCH="${MVK_ARCH:-aarch64}" ;;
+  *) echo "unknown MVK_FLAVOR '$MVK_FLAVOR' (expected: finewine)"; exit 1 ;;
+esac
 MVK_ARCH="${MVK_ARCH:-x86_64}"
 # Xcode names the ARM architecture arm64; Wine and this repo say aarch64.
 XC_ARCH="$MVK_ARCH"; [ "$MVK_ARCH" = "aarch64" ] && XC_ARCH="arm64"
 BUILD_DIR="${BUILD_DIR:-$REPO/build}"
-MVK_SRC="$BUILD_DIR/moltenvk-src"
-SPVC_SRC="$BUILD_DIR/spirv-cross-src"      # patched, linked into MoltenVK's External/
-VKH_SRC="$BUILD_DIR/vulkan-headers-src"
+MVK_SRC="$BUILD_DIR/moltenvk${SFX}-src"
+SPVC_SRC="$BUILD_DIR/spirv-cross${SFX}-src"      # patched, linked into MoltenVK's External/
+VKH_SRC="$BUILD_DIR/vulkan-headers${SFX}-src"
 # Keep the x86_64 output path stable (build/moltenvk-out); suffix only non-default arches.
-if [ "$MVK_ARCH" = "x86_64" ]; then
+if [ -n "$MVK_FLAVOR" ]; then
+  MVK_OUT="${MVK_OUT:-$BUILD_DIR/moltenvk-out$SFX}"
+elif [ "$MVK_ARCH" = "x86_64" ]; then
   MVK_OUT="${MVK_OUT:-$BUILD_DIR/moltenvk-out}"
 else
   MVK_OUT="${MVK_OUT:-$BUILD_DIR/moltenvk-out-$MVK_ARCH}"
 fi
 P="$REPO/patches/x64/moltenvk"  # the same MoltenVK patches serve both architectures
+PX=""                           # patches only this flavour gets, applied after those
+[ "$MVK_FLAVOR" = "finewine" ] && PX="$REPO/patches/moltenvk"
 
 # Terminal dashboard (progress bars + live log tail). Must be sourced before any
 # real work so `zsh scripts/build-moltenvk.sh` can hand over to /bin/bash cleanly.
@@ -71,6 +84,7 @@ cmd_apply() {
   [ -d "$MVK_SRC/.git" ] || { echo "run 'fetch' first"; exit 1; }
   local list n unit
   list=$(ls "$P"/spirv-cross/*.patch 2>/dev/null)
+  [ -n "$PX" ] && list="$list $(ls "$PX"/spirv-cross/*.patch 2>/dev/null)"
   # shellcheck disable=SC2086 # patch paths contain no spaces
   set -- $list
   n=$#; unit="patches"; [ "$n" -eq 1 ] && unit="patch"
@@ -83,6 +97,7 @@ cmd_apply() {
       done' ui_sh "$SPVC_SRC" "$@" \
     || { echo "SPIRV-Cross patch failed — see $BUILD_DIR/moltenvk-apply-spvc.log"; exit 1; }
   list=$(ls "$P"/*.patch 2>/dev/null)
+  [ -n "$PX" ] && list="$list $(ls "$PX"/*.patch 2>/dev/null)"
   # shellcheck disable=SC2086
   set -- $list
   n=$#; unit="patches"; [ "$n" -eq 1 ] && unit="patch"
@@ -140,7 +155,7 @@ cmd_build() {
   ui_end
 }
 
-ui_init "FineWine — MoltenVK ${MVK_TAG} ($MVK_ARCH)"
+ui_init "FineWine — MoltenVK ${MVK_TAG} ($MVK_ARCH${MVK_FLAVOR:+, $MVK_FLAVOR})"
 mkdir -p "$BUILD_DIR"   # every step logs into build/*.log
 case "${1:-all}" in
   fetch|apply|deps|build) "cmd_$1" ;;

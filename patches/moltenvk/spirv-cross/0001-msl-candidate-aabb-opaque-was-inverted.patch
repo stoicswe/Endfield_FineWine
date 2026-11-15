@@ -1,0 +1,20 @@
+FineWine: msl: rayQueryGetIntersectionCandidateAABBOpaqueEXT returned the opposite
+
+The SPIR-V operation is true when the candidate bounding box is opaque. It was translated to
+Metal's is_candidate_non_opaque_bounding_box(), which is true when it is not. The ray tracing
+pipeline lowering uses it to decide whether an any-hit shader runs for a procedural hit.
+
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+index 85eb7cc..6677af8 100644
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -10510,7 +10510,8 @@ void CompilerMSL::emit_instruction(const Instruction &instruction)
+ 	case OpRayQueryGetIntersectionCandidateAABBOpaqueKHR:
+ 	{
+ 		flush_variable_declaration(ops[0]);
+-		emit_op(ops[0], ops[1], join(to_expression(ops[2]), ".is_candidate_non_opaque_bounding_box()"), false);
++		// The SPIR-V operation asks whether the box is opaque; the Metal function, whether it is not.
++		emit_op(ops[0], ops[1], join("!", to_expression(ops[2]), ".is_candidate_non_opaque_bounding_box()"), false);
+ 		break;
+ 	}
+ 	case OpRayQueryConfirmIntersectionKHR:

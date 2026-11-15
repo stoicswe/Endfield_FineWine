@@ -1,0 +1,22 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// One ray per launch index, each aimed at a different part of the scene, plus one callable call.
+layout(location = 0) rayPayloadEXT Payload payload;
+layout(location = 0) callableDataEXT float callData;
+layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
+struct Result { float t; uint custom; uint marker; float extra; uint aux; float call; uint launchSize; uint pad; };
+layout(set = 0, binding = 1) buffer Results { Result r[]; } results;
+
+void main()
+{
+    const float xs[6] = float[6](0.0, 10.0, -10.0, 20.0, 30.0, 40.0);
+    uint i = gl_LaunchIDEXT.x;
+    payload = Payload(-1.0, 0u, 0u, 0.0, 0u);
+    traceRayEXT(scene, gl_RayFlagsNoneEXT, 0xFF, 0, 1, 0, vec3(xs[i], 0.0, -5.0), 0.001, vec3(0.0, 0.0, 1.0), 100.0, 0);
+    callData = float(i) + 1.0;
+    executeCallableEXT(0, 0);
+    results.r[i] = Result(payload.t, payload.custom, payload.marker, payload.extra, payload.aux, callData, gl_LaunchSizeEXT.x, 0u);
+}

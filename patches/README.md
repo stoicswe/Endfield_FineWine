@@ -159,4 +159,66 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
   Wine's in-process synchronisation interface. The code comes from the Wine tree CodeWeavers
   publishes for CrossOver 26.3 (LGPL-2.1-or-later), with this project's fixes, moved from Wine
   11.0 to 11.21. It changes the server protocol, so the script runs `tools/make_requests` after
-  applying. It applies cleanly but has not been compiled or run yet.
+  applying. With `WINEMSYNC=1` a prefix boots and the server reports MSync running.
+- `0002-macos-arm64-run-without-x18-or-low-memory.patch` lets Wine start on a stock Mac. macOS
+  clears register x18 (where Windows on ARM keeps the TEB) and gives an ARM64 process no memory
+  below 4 GB unless it holds an Apple-issued entitlement. The patch reads the TEB from
+  thread-specific data slot 6 instead, moves the shared data page to `0x17ffe0000`, and links
+  the loader with macOS's default layout. It covers code built from this tree only.
+- `0003-ntdll-writable-and-executable-pages-on-macos-arm64.patch` makes
+  `PAGE_EXECUTE_READWRITE` memory work. macOS will not map ordinary memory writable and
+  executable at once, so such a page is switched between the two on demand. Programs that
+  generate code at run time, which includes any x64 emulator, need this.
+- `0004-ntdll-emulate-reads-of-the-shared-data-page-on-macos.patch` handles code that still
+  reads the Windows shared data page at `0x7ffe0000` (third-party ARM64 programs, and x64
+  programs under FEX): the fault handler performs the read from the page's real location.
+- `0005-ntdll-repair-teb-accesses-made-through-x18-on-macos.patch` repairs TEB accesses made
+  through x18 by code not built from this tree: prebuilt toolchain start-up code linked into
+  DLLs, compiler-generated thread-local accesses, and third-party ARM64 programs.
+- `0006-ntdll-search-winedllpath-before-the-built-in-directory.patch` lets a DLL folder named in
+  `WINEDLLPATH` replace Wine's built-in DLLs, which is how a prefix selects DXMT.
+- `0007-d3d12-winedxgi-keep-direct3d-12-working-with-another-dxgi.patch` keeps Direct3D 12
+  (vkd3d on MoltenVK) working in a prefix that has DXMT selected. It builds Wine's DXGI a second
+  time as `winedxgi.dll`, which DXMT never replaces, and has Direct3D 12 use it.
+- `0008-wined3d-report-an-apple-gpu-as-what-it-is.patch` makes Wine's built-in Direct3D report
+  an Apple GPU by its real name ("Apple M3"), Apple's vendor id and half the shared memory,
+  instead of a placeholder NVIDIA card. These are the values DXMT reports.
+
+## `moltenvk/` (top level) — FineWine's additions to MoltenVK
+
+Applied by `MVK_FLAVOR=finewine scripts/build-moltenvk.sh` after `patches/x64/moltenvk`, to the
+MoltenVK that goes into the FineWine runtime only (`build/moltenvk-out-finewine`). The MoltenVK
+builds for the CrossOver payloads do not get these. Apache-2.0, like MoltenVK.
+
+- `0001-ray-queries-on-metal-acceleration-structures.patch` adds `VK_KHR_acceleration_structure`
+  and `VK_KHR_ray_query` on macOS 15 and later: acceleration structure objects, builds, updates,
+  copies, build sizes, and the descriptor type, on Metal acceleration structures.
+- `0002-acceleration-structure-host-commands-serialization-and-queries.patch` adds the rest of
+  that extension: building and copying on the host, the compacted-size and serialization-size
+  queries, and serializing a structure and reading it back. Metal cannot serialize an
+  acceleration structure, so what is written is what it was built from.
+- `0003-ray-tracing-pipelines-as-one-compute-shader.patch` adds `VK_KHR_ray_tracing_pipeline`.
+  Metal has no ray tracing shader stages, so a new SPIR-V pass in MoltenVKShaderConverter
+  merges a pipeline's shaders into one compute shader built on ray queries, and
+  `vkCmdTraceRaysKHR` dispatches it with one thread per ray.
+- `spirv-cross/0001-msl-candidate-aabb-opaque-was-inverted.patch` fixes a ray query operation
+  SPIRV-Cross translated to its opposite; the pipeline lowering depends on it.
+
+`0002` and `0003` apply as a series on `0001`. Details and limits are in
+[`docs/project-information/21-metal4-and-ray-tracing.md`](../docs/project-information/21-metal4-and-ray-tracing.md).
+
+## `fex/` — the x64 emulator
+
+Applied by `scripts/build-fex.sh` to FEX at the commit pinned in that script.
+
+- `0001-arm64ec-read-the-teb-from-thread-specific-data-on-macos.patch` replaces FEX's ten reads
+  of the TEB through x18 with the thread-specific data lookup the runtime uses. FEX's Windows
+  ARM64EC build is otherwise unchanged; it is installed in the runtime as `xtajit64.dll`.
+
+## `dxmt/` — Direct3D on Metal
+
+- `0001-dxgi-hand-direct3d-12-swap-chains-to-wine-s-dxgi.patch` is the DXMT half of runtime
+  patch 0007: DXMT's DXGI forwards swap chain creation for a Direct3D 12 command queue to
+  `winedxgi.dll`. Applied by `scripts/build-dxmt.sh` to DXMT at the commit pinned there.
+- `build-arm64ec-finewine.txt` is the meson cross file `scripts/build-dxmt.sh` builds DXMT with.
+  It is DXMT's own ARM64EC cross file plus one linker flag (see the comment in the file).

@@ -67,9 +67,12 @@ public struct Prefix: Equatable, Identifiable, Sendable {
     public var name: String { metadata.name }
     public var driveC: URL { directory.appendingPathComponent("drive_c", isDirectory: true) }
 
-    /// True once Wine has set the prefix up (wineboot has run).
+    /// True once Wine has set the prefix up (wineboot has run). Wine writes `.update-timestamp`
+    /// straight away; the registry files only appear when its server exits, so either counts.
     public var isInitialized: Bool {
-        FileManager.default.fileExists(atPath: directory.appendingPathComponent("system.reg").path)
+        [".update-timestamp", "system.reg"].contains {
+            FileManager.default.fileExists(atPath: directory.appendingPathComponent($0).path)
+        }
     }
 
     public init(metadata: PrefixMetadata, directory: URL) {

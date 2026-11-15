@@ -174,8 +174,15 @@ public struct LaunchPlanner {
     }
 
     public func plan(for action: WinebootAction) throws -> LaunchPlan {
-        LaunchPlan(executable: try wine(), arguments: ["wineboot", action.rawValue],
-                   environment: environment(), workingDirectory: prefix.directory)
+        var env = environment()
+        if action == .initialize || action == .update {
+            // Setting a prefix up makes Wine offer to download Wine Mono (.NET) and Wine Gecko
+            // (HTML) in dialogs that would sit behind FineWine's own progress display. Turning
+            // the two DLLs off for this one run skips the offer; nothing is installed or removed.
+            env["WINEDLLOVERRIDES"] = (env["WINEDLLOVERRIDES"].map { $0 + ";" } ?? "") + "mscoree=d;mshtml=d"
+        }
+        return LaunchPlan(executable: try wine(), arguments: ["wineboot", action.rawValue],
+                          environment: env, workingDirectory: prefix.directory)
     }
 
     /// Imports a `.reg` file without showing any windows.

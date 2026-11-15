@@ -1,0 +1,417 @@
+From: FineWine
+Subject: [PATCH] Run on stock macOS for Apple Silicon: no x18, no memory below 4 GB.
+
+Windows on ARM assumes two things that macOS only gives a process holding an Apple-issued
+entitlement (com.apple.developer.cross-architecture-support, which CrossOver's loader has):
+
+1. Register x18 holds the TEB and survives. macOS clears x18 whenever a thread passes through
+   the kernel: page fault, interrupt, signal, context switch. A signal handler cannot restore
+   it either.
+2. Memory below 4 GB can be mapped. Windows keeps its shared data page at 0x7ffe0000. macOS
+   kills an arm64 binary whose __PAGEZERO is smaller than 4 GB and refuses fixed mappings
+   below it.
+
+This patch makes Wine's own code work without either:
+
+- NtCurrentTeb() reads the TEB from thread-specific data slot 6, which libpthread reserves for
+  Wine. TPIDRRO_EL0 holds the slot array; its low three bits are the CPU number. The condition
+  names clang as well as GCC because PE modules are built in MSVC-compatible mode.
+- The assembly in ntdll that read TEB fields through x18 (exception and callback dispatchers on
+  the PE side; the syscall and unix-call dispatchers on the Unix side) loads the TEB the same
+  way, into the register it was about to use. call_user_mode_callback uses its TEB argument.
+- The Unix side stores the TEB in the slot when a thread starts (server_init_thread, and
+  server_init_process_done for the first thread, which does not go through server_init_thread).
+- The shared data page moves to 0x17ffe0000 in the seven places Wine refers to it.
+- The loader is linked with the default __PAGEZERO and segment alignment on aarch64.
+
+Limits: code not built from this tree still expects x18 and 0x7ffe0000. Third-party ARM64
+programs, and x64 code under an emulator, need those accesses trapped or translated. That is
+not part of this patch.
+---
+diff --git a/configure b/configure
+index 8c3c32a..d1f2653 100755
+--- a/configure
++++ b/configure
+@@ -12446,6 +12446,12 @@ else case e in #(
+ esac
+ fi
+         ;;
++      aarch64)
++        # FineWine: macOS refuses to start an arm64 binary whose __PAGEZERO is smaller than 4 GB
++        # or whose segments are not 16K-aligned, so the loader is linked with the defaults.
++        wine_use_preloader=no
++        WINELOADER_LDFLAGS="-Wl,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist"
++        ;;
+       *)    wine_use_preloader=no ;;
+     esac
+ 
+diff --git a/configure.ac b/configure.ac
+index 509522e..64f3919 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -998,6 +998,12 @@ case $host_os in
+             WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-no_pie,-image_base,0x200000000,-no_huge,-no_fixup_chains,-segalign,0x1000,-segaddr,WINE_RESERVE,0x1000"],
+            [wine_use_preloader=yes])
+         ;;
++      aarch64)
++        dnl FineWine: macOS refuses to start an arm64 binary whose __PAGEZERO is smaller than 4 GB
++        dnl or whose segments are not 16K-aligned, so the loader is linked with the defaults.
++        wine_use_preloader=no
++        WINELOADER_LDFLAGS="-Wl,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist"
++        ;;
+       *)    wine_use_preloader=no ;;
+     esac
+ 
+diff --git a/dlls/kernel32/process.c b/dlls/kernel32/process.c
+index 9bbb18d..70d2583 100644
+--- a/dlls/kernel32/process.c
++++ b/dlls/kernel32/process.c
+@@ -39,7 +39,9 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(process);
+ 
+-static const struct _KUSER_SHARED_DATA *user_shared_data = (struct _KUSER_SHARED_DATA *)0x7ffe0000;
++/* FineWine: Windows has this page at 0x7ffe0000, but macOS gives an ARM64 process no memory
++ * below 4 GB, so Wine keeps it at the same offset in the next 4 GB instead. */
++static const struct _KUSER_SHARED_DATA *user_shared_data = (struct _KUSER_SHARED_DATA *)0x17ffe0000;
+ 
+ typedef struct
+ {
+diff --git a/dlls/kernel32/sync.c b/dlls/kernel32/sync.c
+index f3ca404..d2884ed 100644
+--- a/dlls/kernel32/sync.c
++++ b/dlls/kernel32/sync.c
+@@ -42,7 +42,9 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(sync);
+ 
+-static const struct _KUSER_SHARED_DATA *user_shared_data = (struct _KUSER_SHARED_DATA *)0x7ffe0000;
++/* FineWine: Windows has this page at 0x7ffe0000, but macOS gives an ARM64 process no memory
++ * below 4 GB, so Wine keeps it at the same offset in the next 4 GB instead. */
++static const struct _KUSER_SHARED_DATA *user_shared_data = (struct _KUSER_SHARED_DATA *)0x17ffe0000;
+ 
+ 
+ static void get_create_object_attributes( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *nameW,
+diff --git a/dlls/kernelbase/memory.c b/dlls/kernelbase/memory.c
+index 2ce2dca..b5aaf3e 100644
+--- a/dlls/kernelbase/memory.c
++++ b/dlls/kernelbase/memory.c
+@@ -40,7 +40,9 @@ WINE_DEFAULT_DEBUG_CHANNEL(heap);
+ WINE_DECLARE_DEBUG_CHANNEL(virtual);
+ WINE_DECLARE_DEBUG_CHANNEL(globalmem);
+ 
+-static const struct _KUSER_SHARED_DATA *user_shared_data = (struct _KUSER_SHARED_DATA *)0x7ffe0000;
++/* FineWine: Windows has this page at 0x7ffe0000, but macOS gives an ARM64 process no memory
++ * below 4 GB, so Wine keeps it at the same offset in the next 4 GB instead. */
++static const struct _KUSER_SHARED_DATA *user_shared_data = (struct _KUSER_SHARED_DATA *)0x17ffe0000;
+ 
+ static CRITICAL_SECTION memstatus_section;
+ static CRITICAL_SECTION_DEBUG critsect_debug =
+diff --git a/dlls/kernelbase/sync.c b/dlls/kernelbase/sync.c
+index 94f846e..35fc446 100644
+--- a/dlls/kernelbase/sync.c
++++ b/dlls/kernelbase/sync.c
+@@ -39,7 +39,9 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(sync);
+ 
+-static const struct _KUSER_SHARED_DATA *user_shared_data = (struct _KUSER_SHARED_DATA *)0x7ffe0000;
++/* FineWine: Windows has this page at 0x7ffe0000, but macOS gives an ARM64 process no memory
++ * below 4 GB, so Wine keeps it at the same offset in the next 4 GB instead. */
++static const struct _KUSER_SHARED_DATA *user_shared_data = (struct _KUSER_SHARED_DATA *)0x17ffe0000;
+ 
+ /* check if current version is NT or Win95 */
+ static inline BOOL is_version_nt(void)
+diff --git a/dlls/ntdll/signal_arm64.c b/dlls/ntdll/signal_arm64.c
+index e560718..fbd67c0 100644
+--- a/dlls/ntdll/signal_arm64.c
++++ b/dlls/ntdll/signal_arm64.c
+@@ -363,7 +363,10 @@ __ASM_GLOBAL_FUNC( KiUserCallbackDispatcher,
+                    ".seh_handler user_callback_handler, @except\n\t"
+                    "ldr x0, [sp]\n\t"             /* args */
+                    "ldp w1, w2, [sp, #0x08]\n\t"  /* len, id */
+-                   "ldr x3, [x18, 0x60]\n\t"      /* peb */
++                   "mrs x3, tpidrro_el0\n\t"   /* FineWine: TEB from TSD slot 6, not x18 */
++                   "and x3, x3, #0xfffffffffffffff8\n\t"
++                   "ldr x3, [x3, #0x30]\n\t"
++                   "ldr x3, [x3, 0x60]\n\t"      /* peb */
+                    "ldr x3, [x3, 0x58]\n\t"       /* peb->KernelCallbackTable */
+                    "ldr x15, [x3, x2, lsl #3]\n\t"
+                    "blr x15\n\t"
+@@ -764,7 +767,10 @@ __ASM_GLOBAL_FUNC( RtlRaiseException,
+                    "ldr w2, [x1]\n\t"            /* context->ContextFlags */
+                    "orr w2, w2, #0x20000000\n\t" /* CONTEXT_UNWOUND_TO_CALL */
+                    "str w2, [x1]\n\t"
+-                   "ldr x3, [x18, #0x60]\n\t"    /* peb */
++                   "mrs x3, tpidrro_el0\n\t"   /* FineWine: TEB from TSD slot 6, not x18 */
++                   "and x3, x3, #0xfffffffffffffff8\n\t"
++                   "ldr x3, [x3, #0x30]\n\t"
++                   "ldr x3, [x3, #0x60]\n\t"    /* peb */
+                    "ldrb w2, [x3, #2]\n\t"       /* peb->BeingDebugged */
+                    "cbnz w2, 1f\n\t"
+                    "bl dispatch_exception\n"
+@@ -868,7 +874,10 @@ __ASM_GLOBAL_FUNC( DbgUiRemoteBreakin,
+                    ".seh_save_fplr_x 16\n\t"
+                    ".seh_endprologue\n\t"
+                    ".seh_handler DbgUiRemoteBreakin_handler, @except\n\t"
+-                   "ldr x0, [x18, #0x60]\n\t"       /* NtCurrentTeb()->Peb */
++                   "mrs x0, tpidrro_el0\n\t"   /* FineWine: TEB from TSD slot 6, not x18 */
++                   "and x0, x0, #0xfffffffffffffff8\n\t"
++                   "ldr x0, [x0, #0x30]\n\t"
++                   "ldr x0, [x0, #0x60]\n\t"       /* NtCurrentTeb()->Peb */
+                    "ldrb w0, [x0, 0x02]\n\t"        /* peb->BeingDebugged */
+                    "cbz w0, 1f\n\t"
+                    "bl DbgBreakPoint\n"
+diff --git a/dlls/ntdll/signal_arm64ec.c b/dlls/ntdll/signal_arm64ec.c
+index 1a8174e..4a7e985 100644
+--- a/dlls/ntdll/signal_arm64ec.c
++++ b/dlls/ntdll/signal_arm64ec.c
+@@ -1373,7 +1373,10 @@ __ASM_GLOBAL_FUNC( "#KiUserCallbackDispatcher",
+                    ".seh_handler user_callback_handler, @except\n\t"
+                    "ldr x0, [sp]\n\t"             /* args */
+                    "ldp w1, w2, [sp, #0x08]\n\t"  /* len, id */
+-                   "ldr x3, [x18, 0x60]\n\t"      /* peb */
++                   "mrs x3, tpidrro_el0\n\t"   /* FineWine: TEB from TSD slot 6, not x18 */
++                   "and x3, x3, #0xfffffffffffffff8\n\t"
++                   "ldr x3, [x3, #0x30]\n\t"
++                   "ldr x3, [x3, 0x60]\n\t"      /* peb */
+                    "ldr x3, [x3, 0x58]\n\t"       /* peb->KernelCallbackTable */
+                    "ldr x15, [x3, x2, lsl #3]\n\t"
+                    "blr x15\n\t"
+@@ -1899,7 +1902,10 @@ static void __attribute__((naked)) arm64x_check_call(void)
+     asm( ".seh_proc \"#arm64x_check_call\"\n\t"
+          ".seh_endprologue\n\t"
+          /* check for EC code */
+-         "ldr x16, [x18, #0x60]\n\t"        /* peb */
++         "mrs x16, tpidrro_el0\n\t"   /* FineWine: TEB from TSD slot 6, not x18 */
++         "and x16, x16, #0xfffffffffffffff8\n\t"
++         "ldr x16, [x16, #0x30]\n\t"
++         "ldr x16, [x16, #0x60]\n\t"        /* peb */
+          "lsr x17, x11, #18\n\t"            /* dest / page_size / 64 */
+          "ldr x16, [x16, #0x368]\n\t"       /* peb->EcCodeBitMap */
+          "lsr x9, x11, #12\n\t"             /* dest / page_size */
+@@ -2059,7 +2065,10 @@ void __attribute((naked)) RtlRaiseException( EXCEPTION_RECORD *rec )
+          "add x1, sp, #0x20\n\t"       /* context pointer */
+          "ldr x2, [x1, #0xf8]\n\t"     /* ctx->Rip */
+          "str x2, [x0, #0x10]\n\t"     /* rec->ExceptionAddress */
+-         "ldr x3, [x18, #0x60]\n\t"    /* peb */
++         "mrs x3, tpidrro_el0\n\t"   /* FineWine: TEB from TSD slot 6, not x18 */
++         "and x3, x3, #0xfffffffffffffff8\n\t"
++         "ldr x3, [x3, #0x30]\n\t"
++         "ldr x3, [x3, #0x60]\n\t"    /* peb */
+          "ldrb w2, [x3, #2]\n\t"       /* peb->BeingDebugged */
+          "cbnz w2, 1f\n\t"
+          "bl \"#dispatch_exception\"\n"
+@@ -2163,7 +2172,10 @@ void __attribute__((naked)) DbgUiRemoteBreakin( void *arg )
+          ".seh_save_fplr_x 16\n\t"
+          ".seh_endprologue\n\t"
+          ".seh_handler DbgUiRemoteBreakin_handler, @except\n\t"
+-         "ldr x0, [x18, #0x60]\n\t"  /* NtCurrentTeb()->Peb */
++         "mrs x0, tpidrro_el0\n\t"   /* FineWine: TEB from TSD slot 6, not x18 */
++         "and x0, x0, #0xfffffffffffffff8\n\t"
++         "ldr x0, [x0, #0x30]\n\t"
++         "ldr x0, [x0, #0x60]\n\t"  /* NtCurrentTeb()->Peb */
+          "ldrb w0, [x0, 0x02]\n\t"   /* peb->BeingDebugged */
+          "cbz w0, 1f\n\t"
+          "bl \"#DbgBreakPoint\"\n"
+diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
+index 1c25c8f..af93b26 100644
+--- a/dlls/ntdll/thread.c
++++ b/dlls/ntdll/thread.c
+@@ -35,7 +35,9 @@ WINE_DECLARE_DEBUG_CHANNEL(relay);
+ WINE_DECLARE_DEBUG_CHANNEL(pid);
+ WINE_DECLARE_DEBUG_CHANNEL(timestamp);
+ 
+-struct _KUSER_SHARED_DATA *user_shared_data = (void *)0x7ffe0000;
++/* FineWine: Windows has this page at 0x7ffe0000, but macOS gives an ARM64 process no memory
++ * below 4 GB, so Wine keeps it at the same offset in the next 4 GB instead. */
++struct _KUSER_SHARED_DATA *user_shared_data = (void *)0x17ffe0000;
+ 
+ struct debug_info
+ {
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+index fa9138d..46b9870 100644
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -1754,6 +1754,7 @@ void server_init_process_done(void)
+     /* Install signal handlers; this cannot be done earlier, since we cannot
+      * send exceptions to the debugger before the create process event that
+      * is sent by init_process_done */
++    set_current_teb( data->teb );  /* FineWine: the first thread does not go through server_init_thread */
+     signal_init_process( data->teb );
+     init_teb_data( data );
+ 
+@@ -1784,6 +1785,7 @@ void server_init_thread( struct thread_data *data )
+ 
+     data->pthread_id = pthread_self();
+     pthread_setspecific( thread_data_key, data );
++    set_current_teb( data->teb );
+ 
+     reply_pipe = init_thread_pipe( data );
+     SERVER_START_REQ( init_thread )
+diff --git a/dlls/ntdll/unix/signal_arm64.c b/dlls/ntdll/unix/signal_arm64.c
+index aa77d8a..b303e99 100644
+--- a/dlls/ntdll/unix/signal_arm64.c
++++ b/dlls/ntdll/unix/signal_arm64.c
+@@ -913,15 +913,18 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
+                    "mrs x1, fpcr\n\t"
+                    "mrs x2, fpsr\n\t"
+                    "bfi x1, x2, #0, #32\n\t"
+-                   "ldr x2, [x18]\n\t"            /* teb->Tib.ExceptionList */
++                   "ldr x2, [x4]\n\t"             /* teb->Tib.ExceptionList */
+                    "stp x1, x2, [x29, #0xb0]\n\t"
+ 
+-                   "ldr x7, [x18, #0x378]\n\t"    /* thread_data->syscall_frame */
++                   "ldr x7, [x4, #0x378]\n\t"     /* thread_data->syscall_frame */
+                    "sub x1, sp, #0x330\n\t"       /* sizeof(struct syscall_frame) */
+-                   "str x1, [x18, #0x378]\n\t"    /* thread_data->syscall_frame */
++                   "str x1, [x4, #0x378]\n\t"     /* thread_data->syscall_frame */
+                    "add x8, x29, #0xd0\n\t"
+                    "stp x7, x8, [x1, #0x110]\n\t" /* frame->prev_frame,syscall_cfa */
+-                   "ldr w11, [x18, #0x380]\n\t"   /* thread_data->syscall_trace */
++                   "mrs x11, tpidrro_el0\n\t" /* FineWine: TEB from TSD slot 6, not x18 */
++                   "and x11, x11, #0xfffffffffffffff8\n\t"
++                   "ldr x11, [x11, #0x30]\n\t"
++                   "ldr w11, [x11, #0x380]\n\t"   /* thread_data->syscall_trace */
+                    "cbnz x11, 2f\n\t"
+                    /* switch to user stack */
+                    "1:mov sp, x0\n\t"             /* user_sp */
+@@ -1726,7 +1729,10 @@ __ASM_GLOBAL_FUNC( signal_start_thread,
+  */
+ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
+                    "hint 34\n\t" /* bti c */
+-                   "ldr x10, [x18, #0x378]\n\t" /* thread_data->syscall_frame */
++                   "mrs x10, tpidrro_el0\n\t" /* FineWine: TEB from TSD slot 6, not x18 */
++                   "and x10, x10, #0xfffffffffffffff8\n\t"
++                   "ldr x10, [x10, #0x30]\n\t"
++                   "ldr x10, [x10, #0x378]\n\t" /* thread_data->syscall_frame */
+                    "stp x18, x19, [x10, #0x90]\n\t"
+                    "stp x20, x21, [x10, #0xa0]\n\t"
+                    "stp x22, x23, [x10, #0xb0]\n\t"
+@@ -1779,7 +1785,10 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
+                    __ASM_CFI_CFA_IS_AT2(x22, 0x98, 0x02) /* frame->syscall_cfa */
+                    "and x20, x8, #0xfff\n\t"    /* syscall number */
+                    "ubfx x21, x8, #12, #2\n\t"  /* syscall table number */
+-                   "ldr x16, [x18, #0x370]\n\t" /* thread_data->syscall_table */
++                   "mrs x16, tpidrro_el0\n\t" /* FineWine: TEB from TSD slot 6, not x18 */
++                   "and x16, x16, #0xfffffffffffffff8\n\t"
++                   "ldr x16, [x16, #0x30]\n\t"
++                   "ldr x16, [x16, #0x370]\n\t" /* thread_data->syscall_table */
+                    "add x21, x16, x21, lsl #5\n\t"
+                    "ldr x16, [x21, #16]\n\t"    /* table->ServiceLimit */
+                    "cmp x20, x16\n\t"
+@@ -1797,7 +1806,10 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
+                    "cbnz x9, 1b\n"
+                    "2:\tldr x16, [x21]\n\t"     /* table->ServiceTable */
+                    "ldr x23, [x16, x20, lsl 3]\n\t"
+-                   "ldr w11, [x18, #0x380]\n\t" /* thread_data->syscall_trace */
++                   "mrs x11, tpidrro_el0\n\t" /* FineWine: TEB from TSD slot 6, not x18 */
++                   "and x11, x11, #0xfffffffffffffff8\n\t"
++                   "ldr x11, [x11, #0x30]\n\t"
++                   "ldr w11, [x11, #0x380]\n\t" /* thread_data->syscall_trace */
+                    "cbnz x11, " __ASM_LOCAL_LABEL("trace_syscall") "\n\t"
+                    "blr x23\n\t"
+                    "mov sp, x22\n"
+@@ -1887,7 +1899,10 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
+                    "b " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") )
+ 
+ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher_return,
+-                   "ldr w11, [x18, #0x380]\n\t" /* thread_data->syscall_trace */
++                   "mrs x11, tpidrro_el0\n\t" /* FineWine: TEB from TSD slot 6, not x18 */
++                   "and x11, x11, #0xfffffffffffffff8\n\t"
++                   "ldr x11, [x11, #0x30]\n\t"
++                   "ldr w11, [x11, #0x380]\n\t" /* thread_data->syscall_trace */
+                    "cbnz x11, " __ASM_LOCAL_LABEL("trace_syscall_ret") "\n\t"
+                    "b " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") )
+ 
+@@ -1897,7 +1912,10 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher_return,
+  */
+ __ASM_GLOBAL_FUNC( __wine_unix_call_dispatcher,
+                    "hint 34\n\t" /* bti c */
+-                   "ldr x10, [x18, #0x378]\n\t" /* thread_data->syscall_frame */
++                   "mrs x10, tpidrro_el0\n\t" /* FineWine: TEB from TSD slot 6, not x18 */
++                   "and x10, x10, #0xfffffffffffffff8\n\t"
++                   "ldr x10, [x10, #0x30]\n\t"
++                   "ldr x10, [x10, #0x378]\n\t" /* thread_data->syscall_frame */
+                    "stp x18, x19, [x10, #0x90]\n\t"
+                    "stp x20, x21, [x10, #0xa0]\n\t"
+                    "stp x22, x23, [x10, #0xb0]\n\t"
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index 7346ed1..0447250 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -133,6 +133,17 @@ struct thread_data
+ 
+ extern pthread_key_t thread_data_key;
+ 
++/* FineWine: publish the thread's TEB in thread-specific data slot 6, where NtCurrentTeb() and
++ * the assembly entry points read it (see NtCurrentTeb in winnt.h). */
++static inline void set_current_teb( TEB *teb )
++{
++#if defined(__APPLE__) && defined(__aarch64__)
++    ULONG_PTR tsd;
++    __asm__( "mrs %0, tpidrro_el0" : "=r" (tsd) );
++    ((TEB **)(tsd & ~(ULONG_PTR)7))[6] = teb;
++#endif
++}
++
+ static inline struct thread_data *get_thread_data(void)
+ {
+     return pthread_getspecific( thread_data_key );
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index b61da59..302ef1c 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -190,7 +190,9 @@ static void *host_addr_space_limit;  /* top of the host virtual address space */
+ static struct file_view *arm64ec_view;
+ 
+ ULONG_PTR user_space_wow_limit = 0;
+-struct _KUSER_SHARED_DATA *user_shared_data = (void *)0x7ffe0000;
++/* FineWine: Windows has this page at 0x7ffe0000, but macOS gives an ARM64 process no memory
++ * below 4 GB, so Wine keeps it at the same offset in the next 4 GB instead. */
++struct _KUSER_SHARED_DATA *user_shared_data = (void *)0x17ffe0000;
+ 
+ /* TEB allocation blocks */
+ static void *teb_block;
+diff --git a/dlls/win32u/message.c b/dlls/win32u/message.c
+index de1a484..ce3f12c 100644
+--- a/dlls/win32u/message.c
++++ b/dlls/win32u/message.c
+@@ -45,7 +45,9 @@ WINE_DECLARE_DEBUG_CHANNEL(relay);
+ #define QS_HARDWARE     0x40000000
+ #define QS_INTERNAL     (QS_DRIVER | QS_HARDWARE)
+ 
+-static const struct _KUSER_SHARED_DATA *user_shared_data = (struct _KUSER_SHARED_DATA *)0x7ffe0000;
++/* FineWine: Windows has this page at 0x7ffe0000, but macOS gives an ARM64 process no memory
++ * below 4 GB, so Wine keeps it at the same offset in the next 4 GB instead. */
++static const struct _KUSER_SHARED_DATA *user_shared_data = (struct _KUSER_SHARED_DATA *)0x17ffe0000;
+ 
+ static const struct ratio no_dpi;
+ 
+diff --git a/include/winnt.h b/include/winnt.h
+index fa598bd..dd943e0 100644
+--- a/include/winnt.h
++++ b/include/winnt.h
+@@ -2719,11 +2719,19 @@ static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
+ {
+     return (struct _TEB *)__readfsdword( 0x18 );
+ }
+-#elif (defined(__aarch64__) || defined(__arm64ec__)) && defined(__GNUC__)
+-register struct _TEB *__wine_current_teb __asm__("x18");
++#elif (defined(__aarch64__) || defined(__arm64ec__)) && (defined(__GNUC__) || defined(__clang__))
++/* FineWine: Windows on ARM keeps the TEB in x18, but macOS clears x18 whenever a thread passes
++ * through the kernel (page fault, interrupt, signal, context switch) unless the process has an
++ * Apple-issued entitlement. The TEB is therefore read from thread-specific data slot 6, which
++ * libpthread reserves for Wine: TPIDRRO_EL0 holds the slot array (its low three bits are the
++ * CPU number), and the Unix side of ntdll stores the TEB there when a thread starts.
++ * clang is named as well as GCC because Wine's PE modules are built in MSVC-compatible mode,
++ * where __GNUC__ is not defined. */
+ static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
+ {
+-    return __wine_current_teb;
++    unsigned __int64 tsd;
++    __asm__("mrs %0, tpidrro_el0" : "=r" (tsd));
++    return ((struct _TEB **)(tsd & ~(unsigned __int64)7))[6];
+ }
+ #elif (defined(__aarch64__) || defined(__arm64ec__)) && defined(_MSC_VER)
+ static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)

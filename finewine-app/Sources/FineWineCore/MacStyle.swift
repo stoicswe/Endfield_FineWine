@@ -7,12 +7,24 @@ public struct MacAppearance: Codable, Equatable, Sendable {
     public var accentRed: Int
     public var accentGreen: Int
     public var accentBlue: Int
+    /// The main display's backing scale factor: 2 on a Retina display, 1 otherwise.
+    public var displayScale: Double
 
-    public init(isDark: Bool, accentRed: Int, accentGreen: Int, accentBlue: Int) {
+    public init(isDark: Bool, accentRed: Int, accentGreen: Int, accentBlue: Int, displayScale: Double = 2) {
         self.isDark = isDark
+        self.displayScale = displayScale
         self.accentRed = min(max(accentRed, 0), 255)
         self.accentGreen = min(max(accentGreen, 0), 255)
         self.accentBlue = min(max(accentBlue, 0), 255)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(isDark: try c.decode(Bool.self, forKey: .isDark),
+                  accentRed: try c.decode(Int.self, forKey: .accentRed),
+                  accentGreen: try c.decode(Int.self, forKey: .accentGreen),
+                  accentBlue: try c.decode(Int.self, forKey: .accentBlue),
+                  displayScale: try c.decodeIfPresent(Double.self, forKey: .displayScale) ?? 2)
     }
 
     /// macOS's default blue accent in light mode.

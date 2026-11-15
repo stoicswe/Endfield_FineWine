@@ -8,12 +8,11 @@ It sits beside **FineWine Patcher** (`patcher-app/`), which patches a CrossOver 
 uses no CrossOver code or files: it drives a Wine runtime of our own. The patcher is unchanged
 and will later become one function of this app.
 
-> **Status: the app is built; the runtime does not run yet.** FineWine needs a Wine runtime to
-> run anything. Upstream Wine builds for Apple Silicon (`scripts/build-finewine-runtime.sh`), but
-> it cannot start Windows programs on stock macOS: it needs memory below 4 GB and a preserved
-> x18 register, which macOS only gives to programs with an Apple-issued entitlement. See
-> `docs/project-information/20-finewine-runtime-spike.md`. Until that is solved, FineWine can be
-> pointed at any other Wine folder, which is enough to exercise the app.
+> **Status: early.** FineWine's own runtime boots on a stock Mac and, in tests, runs ARM64 and
+> x64 Windows programs (x64 through FEX) with MSync and Direct3D 11 on Metal (DXMT). No real
+> game has been run on it yet. It is built by `scripts/build-finewine-runtime.sh`,
+> `scripts/build-fex.sh` and `scripts/build-dxmt.sh`, and checked by
+> `scripts/test-finewine-runtime.sh`. See `docs/project-information/20-finewine-runtime-spike.md`.
 
 ## What it does
 
@@ -28,7 +27,7 @@ and will later become one function of this app.
   program's own icon. The app contains no Wine code; it opens a `finewine://launch` link that
   FineWine handles.
 - **Configuration.** Windows version and build number, Direct3D backend, Retina mode, DPI,
-  virtual desktop, Metal overlay, MSync, the hypervisor flag, macOS styling for Windows controls,
+  virtual desktop, Metal overlay, DLSS through MetalFX, MSync, the hypervisor flag, macOS styling for Windows controls,
   Option-as-Alt, DLL overrides,
   environment variables and Wine debug channels. Changes are written to the prefix's registry
   when applied.
@@ -53,6 +52,12 @@ Run the tests on their own with:
 
 ```bash
 swift test --package-path finewine-app
+```
+
+One test drives a real Wine runtime and is skipped unless it is told where one is:
+
+```bash
+FINEWINE_TEST_RUNTIME="$PWD/build/finewine-runtime" swift test --package-path finewine-app --filter RuntimeIntegrationTests
 ```
 
 CI builds and tests the app in `.github/workflows/build-finewine.yml` and uploads it as the

@@ -1,0 +1,36 @@
+From: FineWine
+Subject: [PATCH] ntdll: Search WINEDLLPATH before Wine's own DLL directory.
+
+Upstream looks in its own DLL directory first and in WINEDLLPATH afterwards, so a DLL there can
+add to Wine's built-in set but never replace a member of it.
+
+FineWine ships graphics layers beside the runtime (DXMT's d3d11.dll, dxgi.dll and d3d10core.dll
+under lib/dxmt) and selects one per prefix by putting its folder in WINEDLLPATH. For that to
+take effect the folder has to win over the built-in DLL of the same name, so the order is
+reversed. With WINEDLLPATH unset nothing changes.
+---
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 42b6987..9dfaa6b 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -303,8 +303,9 @@ static void set_dll_path(void)
+     dll_paths = malloc( (count + 2) * sizeof(*dll_paths) );
+     count = 0;
+ 
+-    if (!build_dir) dll_paths[count++] = dll_dir;
+-
++    /* FineWine: directories in WINEDLLPATH are searched before Wine's own, so that a graphics
++     * layer shipped beside the runtime (DXMT's d3d11.dll, for one) replaces the built-in DLL of
++     * the same name when a prefix selects it. Upstream searches Wine's own directory first. */
+     if (path)
+     {
+         path = strdup(path);
+@@ -312,6 +313,8 @@ static void set_dll_path(void)
+         free( path );
+     }
+ 
++    if (!build_dir) dll_paths[count++] = dll_dir;
++
+     for (i = 0; i < count; i++) dll_path_maxlen = max( dll_path_maxlen, strlen(dll_paths[i]) );
+     dll_paths[count] = NULL;
+ }

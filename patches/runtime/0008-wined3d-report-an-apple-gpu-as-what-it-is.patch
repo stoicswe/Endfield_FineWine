@@ -1,0 +1,52 @@
+From: FineWine
+Subject: [PATCH] wined3d: Report an Apple GPU as what it is.
+
+WineD3D identifies the GPU from the OpenGL vendor and renderer strings against a table of known
+cards. The table has no Apple entries, so on Apple Silicon it fell back to a card chosen by
+feature level and Wine's DXGI told programs the adapter was an "NVIDIA GeForce 6800", vendor
+10de. Programs use the adapter to pick settings and vendor-specific code paths, so that is
+worse than cosmetic.
+
+When the renderer string starts with "Apple " the adapter is now reported with that string as
+its name ("Apple M3"), Apple's PCI vendor id 106b, and half of the shared memory the driver
+reports as video memory. Those are the values DXMT reports, so a program sees the same adapter
+whether the prefix uses DXMT or Wine's built-in Direct3D, and for Direct3D 12 either way.
+---
+diff --git a/dlls/wined3d/adapter_gl.c b/dlls/wined3d/adapter_gl.c
+index 75c5daf..6a6416a 100644
+--- a/dlls/wined3d/adapter_gl.c
++++ b/dlls/wined3d/adapter_gl.c
+@@ -3791,7 +3791,32 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter_gl *adapter_gl,
+     gl_vendor = wined3d_guess_gl_vendor(gl_info, gl_vendor_str, gl_renderer_str, gl_version_str);
+     TRACE("Guessed GL vendor %#x.\n", gl_vendor);
+ 
+-    if (!(caps_gl_ctx->gpu_description = query_gpu_description(gl_info, &caps_gl_ctx->vram_bytes)))
++    /* FineWine: an Apple GPU is reported as what it is. Upstream has no Apple entries in its card
++     * table and falls back to a card picked by feature level, an "NVIDIA GeForce 6800" here,
++     * which misleads programs that choose settings or code paths from the adapter. The name is
++     * the one the driver reports ("Apple M3"), the vendor is Apple's PCI id, and since the
++     * memory is shared with the system, half of what the driver reports is given as video memory. These match
++     * what DXMT reports, so a program sees the same adapter whichever Direct3D layer is used. */
++    if (gl_renderer_str && !strncmp(gl_renderer_str, "Apple ", 6))
++    {
++        static struct wined3d_gpu_description apple_gpu;
++        static char apple_gpu_name[64];
++        MEMORYSTATUSEX memory = {sizeof(memory)};
++        UINT64 shared_bytes = 0;
++
++        lstrcpynA(apple_gpu_name, gl_renderer_str, sizeof(apple_gpu_name));
++        /* The driver reports the whole of the shared memory; without that, ask the system. */
++        query_gpu_description(gl_info, &shared_bytes);
++        if (!shared_bytes && GlobalMemoryStatusEx(&memory)) shared_bytes = memory.ullTotalPhys;
++        apple_gpu.vendor = (enum wined3d_pci_vendor)0x106b;
++        apple_gpu.device = (enum wined3d_pci_device)0;
++        apple_gpu.description = apple_gpu_name;
++        apple_gpu.driver = DRIVER_WINE;
++        apple_gpu.vidmem = max(shared_bytes / 2 / (1024 * 1024), 1024);
++        caps_gl_ctx->gpu_description = &apple_gpu;
++        caps_gl_ctx->vram_bytes = (UINT64)apple_gpu.vidmem * 1024 * 1024;
++    }
++    else if (!(caps_gl_ctx->gpu_description = query_gpu_description(gl_info, &caps_gl_ctx->vram_bytes)))
+     {
+         enum wined3d_feature_level feature_level;
+         struct fragment_caps fragment_caps;

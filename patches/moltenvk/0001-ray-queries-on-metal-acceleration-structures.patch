@@ -1,0 +1,1321 @@
+FineWine: ray queries on Metal acceleration structures
+
+Adds VK_KHR_acceleration_structure and VK_KHR_ray_query to MoltenVK 1.4.2, on macOS 15 and
+later with a GPU that supports ray tracing.
+
+- VkAccelerationStructureKHR is a Metal acceleration structure. Bottom-level structures take
+  triangle and bounding-box geometry straight from the application's buffers; top-level
+  structures have their instances converted to Metal's layout on the CPU, so the instance
+  data must be in host-visible memory.
+- Builds, updates (as Metal refits), copies (clone and compact), build sizes and device
+  addresses are implemented. Host builds and serialisation are not.
+- An acceleration structure descriptor is stored in the argument buffer like a texture, by
+  resource id. Only Metal 3 argument buffers are supported.
+- Ray tracing pipelines (VK_KHR_ray_tracing_pipeline) are not part of this.
+
+The new .mm files are included from MVKBuffer.mm and MVKCmdDispatch.mm so that the Xcode
+project does not change.
+
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCmdAccelerationStructure.h b/MoltenVK/MoltenVK/Commands/MVKCmdAccelerationStructure.h
+new file mode 100644
+index 0000000..ad1526b
+--- /dev/null
++++ b/MoltenVK/MoltenVK/Commands/MVKCmdAccelerationStructure.h
+@@ -0,0 +1,68 @@
++/*
++ * MVKCmdAccelerationStructure.h
++ *
++ * FineWine: commands of VK_KHR_acceleration_structure.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#pragma once
++
++#include "MVKCommand.h"
++#include "MVKSmallVector.h"
++
++#import <Metal/Metal.h>
++
++class MVKAccelerationStructure;
++
++
++#pragma mark -
++#pragma mark MVKCmdBuildAccelerationStructure
++
++/** One build or update from vkCmdBuildAccelerationStructuresKHR. Each element of that call's array is recorded as its own command. */
++class MVKCmdBuildAccelerationStructure : public MVKCommand {
++
++public:
++	VkResult setContent(MVKCommandBuffer* cmdBuff,
++						const VkAccelerationStructureBuildGeometryInfoKHR* pInfo,
++						const VkAccelerationStructureBuildRangeInfoKHR* pRangeInfos);
++
++	void encode(MVKCommandEncoder* cmdEncoder) override;
++
++protected:
++	MVKCommandTypePool<MVKCommand>* getTypePool(MVKCommandPool* cmdPool) override;
++
++	VkAccelerationStructureBuildGeometryInfoKHR _info;
++	MVKSmallVector<VkAccelerationStructureGeometryKHR, 4> _geometries;
++	MVKSmallVector<VkAccelerationStructureBuildRangeInfoKHR, 4> _ranges;
++};
++
++
++#pragma mark -
++#pragma mark MVKCmdCopyAccelerationStructure
++
++/** vkCmdCopyAccelerationStructureKHR: a copy, or a copy that compacts. */
++class MVKCmdCopyAccelerationStructure : public MVKCommand {
++
++public:
++	VkResult setContent(MVKCommandBuffer* cmdBuff, const VkCopyAccelerationStructureInfoKHR* pInfo);
++
++	void encode(MVKCommandEncoder* cmdEncoder) override;
++
++protected:
++	MVKCommandTypePool<MVKCommand>* getTypePool(MVKCommandPool* cmdPool) override;
++
++	MVKAccelerationStructure* _src;
++	MVKAccelerationStructure* _dst;
++	VkCopyAccelerationStructureModeKHR _mode;
++};
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCmdAccelerationStructure.mm b/MoltenVK/MoltenVK/Commands/MVKCmdAccelerationStructure.mm
+new file mode 100644
+index 0000000..6c094d4
+--- /dev/null
++++ b/MoltenVK/MoltenVK/Commands/MVKCmdAccelerationStructure.mm
+@@ -0,0 +1,140 @@
++/*
++ * MVKCmdAccelerationStructure.mm
++ *
++ * FineWine: commands of VK_KHR_acceleration_structure.
++ * This file is compiled as part of MVKCmdDispatch.mm, which includes it, so that the Xcode
++ * project does not have to change.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#include "MVKCmdAccelerationStructure.h"
++#include "../GPUObjects/MVKAccelerationStructure.h"
++#include "MVKCommandBuffer.h"
++#include "MVKCommandPool.h"
++#include "MVKDevice.h"
++
++
++#pragma mark -
++#pragma mark MVKCmdBuildAccelerationStructure
++
++VkResult MVKCmdBuildAccelerationStructure::setContent(MVKCommandBuffer* cmdBuff,
++													  const VkAccelerationStructureBuildGeometryInfoKHR* pInfo,
++													  const VkAccelerationStructureBuildRangeInfoKHR* pRangeInfos) {
++	// The application's arrays only live for the call, so keep copies and point at them.
++	_info = *pInfo;
++	_info.pNext = nullptr;
++	_geometries.clear();
++	_ranges.clear();
++	for (uint32_t i = 0; i < pInfo->geometryCount; i++) {
++		_geometries.push_back(pInfo->pGeometries ? pInfo->pGeometries[i] : *pInfo->ppGeometries[i]);
++		_geometries.back().pNext = nullptr;
++		_ranges.push_back(pRangeInfos[i]);
++	}
++	_info.ppGeometries = nullptr;
++	return VK_SUCCESS;
++}
++
++void MVKCmdBuildAccelerationStructure::encode(MVKCommandEncoder* cmdEncoder) {
++	MVKDevice* device = cmdEncoder->getDevice();
++	auto* dst = (MVKAccelerationStructure*)_info.dstAccelerationStructure;
++	if ( !dst || !dst->getMTLAccelerationStructure() ) { return; }
++
++	_info.pGeometries = _geometries.data();
++
++	@autoreleasepool {
++		NSArray<id<MTLAccelerationStructure>>* instanced = nil;
++		auto* mtlDesc = mvkNewMTLAccelerationStructureDescriptor(device, &_info, _ranges.data(), nullptr, &instanced);
++		if ( !mtlDesc ) { return; }
++
++		bool isUpdate = (_info.mode == VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR &&
++						 _info.srcAccelerationStructure != VK_NULL_HANDLE);
++
++		// The scratch space is the application's if its address can be resolved, else ours.
++		id<MTLDevice> mtlDev = device->getPhysicalDevice()->getMTLDevice();
++		MTLAccelerationStructureSizes sizes = [mtlDev accelerationStructureSizesWithDescriptor: mtlDesc];
++		NSUInteger scratchSize = isUpdate ? sizes.refitScratchBufferSize : sizes.buildScratchBufferSize;
++		id<MTLBuffer> mtlScratch = nil;
++		NSUInteger scratchOffset = 0;
++		if ( !device->getMTLBufferAtAddress(_info.scratchData.deviceAddress, &mtlScratch, &scratchOffset) ||
++			 mtlScratch.length < scratchOffset + scratchSize ) {
++			mtlScratch = scratchSize ? [[mtlDev newBufferWithLength: scratchSize options: MTLResourceStorageModePrivate] autorelease] : nil;
++			scratchOffset = 0;
++		}
++
++		// Acceleration structures have an encoder of their own.
++		cmdEncoder->endCurrentMetalEncoding();
++		id<MTLCommandBuffer> mtlCmdBuff = cmdEncoder->_mtlCmdBuffer;
++		id<MTLAccelerationStructureCommandEncoder> mtlEnc = [mtlCmdBuff accelerationStructureCommandEncoder];
++		mtlEnc.label = @"vkCmdBuildAccelerationStructuresKHR";
++
++		// MoltenVK's command buffers do not retain what they reference. The scratch space made
++		// above, and the converted instances of a top-level structure, belong to nobody else, so
++		// they are kept alive here until the GPU has finished with them.
++		NSMutableArray* keepAlive = [[NSMutableArray alloc] init];
++		if (mtlScratch) { [keepAlive addObject: mtlScratch]; }
++		if ([mtlDesc isKindOfClass: [MTLInstanceAccelerationStructureDescriptor class]]) {
++			id<MTLBuffer> mtlInstBuff = ((MTLInstanceAccelerationStructureDescriptor*)mtlDesc).instanceDescriptorBuffer;
++			if (mtlInstBuff) { [keepAlive addObject: mtlInstBuff]; }
++		}
++		[mtlCmdBuff addCompletedHandler: ^(id<MTLCommandBuffer>) { [keepAlive release]; }];
++		if (isUpdate) {
++			auto* src = (MVKAccelerationStructure*)_info.srcAccelerationStructure;
++			id<MTLAccelerationStructure> mtlSrc = src->getMTLAccelerationStructure();
++			id<MTLAccelerationStructure> mtlDst = dst->getMTLAccelerationStructure();
++			[mtlEnc refitAccelerationStructure: mtlSrc
++									descriptor: mtlDesc
++								   destination: (mtlDst == mtlSrc ? nil : mtlDst)
++								 scratchBuffer: mtlScratch
++						   scratchBufferOffset: scratchOffset];
++		} else {
++			[mtlEnc buildAccelerationStructure: dst->getMTLAccelerationStructure()
++									descriptor: mtlDesc
++								 scratchBuffer: mtlScratch
++						   scratchBufferOffset: scratchOffset];
++		}
++		[mtlEnc endEncoding];
++
++		if (_info.type == VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR && instanced) {
++			dst->setInstancedMTLAccelerationStructures(instanced);
++		}
++	}
++}
++
++
++#pragma mark -
++#pragma mark MVKCmdCopyAccelerationStructure
++
++VkResult MVKCmdCopyAccelerationStructure::setContent(MVKCommandBuffer* cmdBuff, const VkCopyAccelerationStructureInfoKHR* pInfo) {
++	_src = (MVKAccelerationStructure*)pInfo->src;
++	_dst = (MVKAccelerationStructure*)pInfo->dst;
++	_mode = pInfo->mode;
++	return VK_SUCCESS;
++}
++
++void MVKCmdCopyAccelerationStructure::encode(MVKCommandEncoder* cmdEncoder) {
++	if ( !_src || !_dst || !_src->getMTLAccelerationStructure() || !_dst->getMTLAccelerationStructure() ) { return; }
++
++	cmdEncoder->endCurrentMetalEncoding();
++	id<MTLAccelerationStructureCommandEncoder> mtlEnc = [cmdEncoder->_mtlCmdBuffer accelerationStructureCommandEncoder];
++	mtlEnc.label = @"vkCmdCopyAccelerationStructureKHR";
++	if (_mode == VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR) {
++		[mtlEnc copyAndCompactAccelerationStructure: _src->getMTLAccelerationStructure()
++							toAccelerationStructure: _dst->getMTLAccelerationStructure()];
++	} else {
++		[mtlEnc copyAccelerationStructure: _src->getMTLAccelerationStructure()
++				  toAccelerationStructure: _dst->getMTLAccelerationStructure()];
++	}
++	[mtlEnc endEncoding];
++	_dst->setInstancedMTLAccelerationStructures(_src->getInstancedMTLAccelerationStructures());
++}
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCmdDispatch.mm b/MoltenVK/MoltenVK/Commands/MVKCmdDispatch.mm
+index 2a7eff4..4a36d77 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCmdDispatch.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCmdDispatch.mm
+@@ -75,3 +75,7 @@
+ 																			   threadsPerThreadgroup: cmdEncoder->getComputePipeline()->getThreadgroupSize()];
+ }
+ 
++
++
++// FineWine: VK_KHR_acceleration_structure commands, built here so the Xcode project is unchanged.
++#include "MVKCmdAccelerationStructure.mm"
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.mm b/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.mm
+index 43657fb..61b29b2 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.mm
+@@ -16,6 +16,7 @@
+  * limitations under the License.
+  */
+ 
++#include "../GPUObjects/MVKAccelerationStructure.h"
+ #include "MVKCommandEncoderState.h"
+ #include "MVKCommandEncodingPool.h"
+ #include "MVKCommandBuffer.h"
+@@ -426,6 +427,7 @@ static constexpr bool isUseResource(MVKDescriptorBindOperationCode op) {
+ 	switch (op) {
+ 		case MVKDescriptorBindOperationCode::UseBufferWithLiveCheck:
+ 		case MVKDescriptorBindOperationCode::UseTextureWithLiveCheck:
++		case MVKDescriptorBindOperationCode::UseAccelerationStructure:
+ 		case MVKDescriptorBindOperationCode::UseResource:
+ 			return true;
+ 		default:
+@@ -526,6 +528,17 @@ static void executeBindOp(id<MTLCommandEncoder> encoder,
+ 					mvkEncoder.getState().mtlShared()._useResource.add(resource, useResourceStage, target);
+ 				break;
+ 
++			case MVKDescriptorBindOperationCode::UseAccelerationStructure:
++				// FineWine: tracing against a top-level structure reads the bottom-level
++				// structures it instances, and Metal needs every one of them marked as used.
++				if (resource) {
++					auto& useResource = mvkEncoder.getState().mtlShared()._useResource;
++					useResource.add(resource, useResourceStage, false);
++					for (id<MTLAccelerationStructure> instanced in mvkGetInstancedMTLAccelerationStructures(resource))
++						useResource.add(instanced, useResourceStage, false);
++				}
++				break;
++
+ 			case MVKDescriptorBindOperationCode::UseBufferWithLiveCheck:
+ 			case MVKDescriptorBindOperationCode::UseTextureWithLiveCheck:
+ 				if (resource) {
+@@ -584,6 +597,7 @@ static void executeBindOps(id<MTLCommandEncoder> encoder,
+ 			CASE(UseResource)
+ 			CASE(UseBufferWithLiveCheck)
+ 			CASE(UseTextureWithLiveCheck)
++			CASE(UseAccelerationStructure)
+ #undef CASE
+ 			case MVKDescriptorBindOperationCode::BindImmutableSampler: {
+ 				MVKSampler*const* samplers = &setLayout->immutableSamplers()[binding.immSamplerIndex];
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommandPool.h b/MoltenVK/MoltenVK/Commands/MVKCommandPool.h
+index c59466c..678fc7b 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandPool.h
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandPool.h
+@@ -29,6 +29,7 @@
+ #include "MVKCmdTransfer.h"
+ #include "MVKCmdQueries.h"
+ #include "MVKCmdDebug.h"
++#include "MVKCmdAccelerationStructure.h"
+ #include "MVKMTLBufferAllocation.h"
+ #include <unordered_set>
+ 
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommandTypePools.def b/MoltenVK/MoltenVK/Commands/MVKCommandTypePools.def
+index 423fef1..10b7e57 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandTypePools.def
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandTypePools.def
+@@ -137,6 +137,8 @@ MVK_CMD_TYPE_POOL(ResetQueryPool)
+ MVK_CMD_TYPE_POOL(CopyQueryPoolResults)
+ MVK_CMD_TYPE_POOLS_FROM_2_THRESHOLDS(PushConstants, 64, 128)
+ MVK_CMD_TYPE_POOL(Dispatch)
++MVK_CMD_TYPE_POOL(BuildAccelerationStructure)
++MVK_CMD_TYPE_POOL(CopyAccelerationStructure)
+ MVK_CMD_TYPE_POOL(DispatchIndirect)
+ MVK_CMD_TYPE_POOL(PushDescriptorSet)
+ MVK_CMD_TYPE_POOL(PushDescriptorSetWithTemplate)
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKAccelerationStructure.h b/MoltenVK/MoltenVK/GPUObjects/MVKAccelerationStructure.h
+new file mode 100644
+index 0000000..06bb4a2
+--- /dev/null
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKAccelerationStructure.h
+@@ -0,0 +1,111 @@
++/*
++ * MVKAccelerationStructure.h
++ *
++ * FineWine: VK_KHR_acceleration_structure on Metal acceleration structures.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#pragma once
++
++#include "MVKVulkanAPIObject.h"
++#include "MVKDevice.h"
++#include "MVKSmallVector.h"
++
++#import <Metal/Metal.h>
++
++class MVKBuffer;
++
++
++#pragma mark -
++#pragma mark MVKAccelerationStructure
++
++/**
++ * A Vulkan acceleration structure, backed by a Metal acceleration structure.
++ *
++ * Vulkan places an acceleration structure in a region of a buffer; Metal allocates its own
++ * storage. The buffer region is therefore only bookkeeping here, and the Metal object is created
++ * with the size the application was told to reserve by vkGetAccelerationStructureBuildSizesKHR.
++ *
++ * The device address handed to the application is a handle FineWine makes up. It is what an
++ * instance in a top-level structure uses to name the bottom-level structure it refers to.
++ */
++class MVKAccelerationStructure : public MVKVulkanAPIDeviceObject {
++
++public:
++	VkObjectType getVkObjectType() override { return VK_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR; }
++
++	VkDebugReportObjectTypeEXT getVkDebugReportObjectType() override { return VK_DEBUG_REPORT_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR_EXT; }
++
++	/** The Metal acceleration structure. Empty until it has been built. */
++	id<MTLAccelerationStructure> getMTLAccelerationStructure() { return _mtlAccelerationStructure; }
++
++	VkAccelerationStructureTypeKHR getType() { return _type; }
++
++	/** The handle returned by vkGetAccelerationStructureDeviceAddressKHR. */
++	VkDeviceAddress getDeviceAddress() { return _deviceAddress; }
++
++	/**
++	 * The bottom-level structures a top-level structure was last built from. Metal needs each of
++	 * them marked as used, as well as the top-level structure, wherever that is traced against.
++	 */
++	NSArray<id<MTLAccelerationStructure>>* getInstancedMTLAccelerationStructures() { return _instancedStructures; }
++
++	void setInstancedMTLAccelerationStructures(NSArray<id<MTLAccelerationStructure>>* structures);
++
++	MVKAccelerationStructure(MVKDevice* device, const VkAccelerationStructureCreateInfoKHR* pCreateInfo);
++
++	~MVKAccelerationStructure() override;
++
++protected:
++	void propagateDebugName() override;
++
++	id<MTLAccelerationStructure> _mtlAccelerationStructure = nil;
++	NSArray<id<MTLAccelerationStructure>>* _instancedStructures = nil;
++	VkAccelerationStructureTypeKHR _type;
++	VkDeviceAddress _deviceAddress = 0;
++	VkDeviceSize _size = 0;
++};
++
++
++#pragma mark -
++#pragma mark Support functions
++
++/**
++ * Returns the bottom-level structures a Metal top-level structure was built from, or nil.
++ *
++ * Tracing against a top-level structure needs those marked as used too. The code that marks
++ * descriptor resources as used only has the Metal object, so the list travels with it, as an
++ * associated object.
++ */
++NSArray<id<MTLAccelerationStructure>>* mvkGetInstancedMTLAccelerationStructures(id mtlAccelerationStructure);
++
++/** Whether this device and OS can provide acceleration structures. */
++bool mvkSupportsAccelerationStructures(id<MTLDevice> mtlDevice);
++
++/**
++ * Builds the Metal descriptor for a Vulkan build request.
++ *
++ * With pRangeInfos the descriptor refers to the application's vertex, index and instance data
++ * and can be built. Without it (pMaxPrimitiveCounts instead) it carries only counts and formats,
++ * which is what a size query needs. Returns nil, after reporting the reason against the device,
++ * if the request uses something this implementation does not handle.
++ *
++ * For a top-level structure built from instance data, instancedStructures receives the
++ * bottom-level structures the instances refer to.
++ */
++MTLAccelerationStructureDescriptor* mvkNewMTLAccelerationStructureDescriptor(MVKDevice* device,
++																			 const VkAccelerationStructureBuildGeometryInfoKHR* pInfo,
++																			 const VkAccelerationStructureBuildRangeInfoKHR* pRangeInfos,
++																			 const uint32_t* pMaxPrimitiveCounts,
++																			 NSArray<id<MTLAccelerationStructure>>** instancedStructures);
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKAccelerationStructure.mm b/MoltenVK/MoltenVK/GPUObjects/MVKAccelerationStructure.mm
+new file mode 100644
+index 0000000..1a0a43a
+--- /dev/null
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKAccelerationStructure.mm
+@@ -0,0 +1,383 @@
++/*
++ * MVKAccelerationStructure.mm
++ *
++ * FineWine: VK_KHR_acceleration_structure on Metal acceleration structures.
++ * This file is compiled as part of MVKBuffer.mm, which includes it, so that the Xcode project
++ * does not have to change.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#include "MVKAccelerationStructure.h"
++#include "MVKBuffer.h"
++#include "MVKFoundation.h"
++#include <atomic>
++#import <objc/runtime.h>
++
++using namespace std;
++
++
++#pragma mark -
++#pragma mark Support functions
++
++static const char _mvkInstancedStructuresKey = 0;
++
++NSArray<id<MTLAccelerationStructure>>* mvkGetInstancedMTLAccelerationStructures(id mtlAccelerationStructure) {
++	return mtlAccelerationStructure ? objc_getAssociatedObject(mtlAccelerationStructure, &_mvkInstancedStructuresKey) : nil;
++}
++
++bool mvkSupportsAccelerationStructures(id<MTLDevice> mtlDevice) {
++	// Vertex formats and the row-major matrix layout used below need macOS 15.
++	if (@available(macOS 15.0, iOS 18.0, *)) {
++		return mtlDevice.supportsRaytracing;
++	}
++	return false;
++}
++
++static MTLAttributeFormat mvkMTLVertexFormat(VkFormat vkFormat) {
++	switch (vkFormat) {
++		case VK_FORMAT_R32G32B32_SFLOAT:    return MTLAttributeFormatFloat3;
++		case VK_FORMAT_R32G32B32A32_SFLOAT: return MTLAttributeFormatFloat4;	// w is ignored
++		case VK_FORMAT_R32G32_SFLOAT:       return MTLAttributeFormatFloat2;
++		case VK_FORMAT_R16G16B16_SFLOAT:    return MTLAttributeFormatHalf3;
++		case VK_FORMAT_R16G16B16A16_SFLOAT: return MTLAttributeFormatHalf4;
++		case VK_FORMAT_R16G16_SFLOAT:       return MTLAttributeFormatHalf2;
++		case VK_FORMAT_R16G16B16_SNORM:     return MTLAttributeFormatShort3Normalized;
++		case VK_FORMAT_R16G16B16A16_SNORM:  return MTLAttributeFormatShort4Normalized;
++		case VK_FORMAT_R16G16_SNORM:        return MTLAttributeFormatShort2Normalized;
++		default:                            return MTLAttributeFormatInvalid;
++	}
++}
++
++static MTLAccelerationStructureUsage mvkMTLAccelerationStructureUsage(VkBuildAccelerationStructureFlagsKHR flags) {
++	MTLAccelerationStructureUsage usage = MTLAccelerationStructureUsageNone;
++	if (flags & VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR) { usage |= MTLAccelerationStructureUsageRefit; }
++	if (flags & VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR) { usage |= MTLAccelerationStructureUsagePreferFastBuild; }
++	return usage;
++}
++
++// Fills a Metal instance from a Vulkan one. The transform changes from three rows of four to
++// four columns of three; the index of the instanced structure is filled in by the caller.
++static void mvkConvertInstance(const VkAccelerationStructureInstanceKHR& vkInst,
++							   MTLAccelerationStructureUserIDInstanceDescriptor& mtlInst) {
++	for (uint32_t col = 0; col < 4; col++) {
++		for (uint32_t row = 0; row < 3; row++) {
++			mtlInst.transformationMatrix.columns[col].elements[row] = vkInst.transform.matrix[row][col];
++		}
++	}
++	MTLAccelerationStructureInstanceOptions opts = MTLAccelerationStructureInstanceOptionNone;
++	VkGeometryInstanceFlagsKHR flags = vkInst.flags;
++	if (flags & VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR) { opts |= MTLAccelerationStructureInstanceOptionDisableTriangleCulling; }
++	if (flags & VK_GEOMETRY_INSTANCE_TRIANGLE_FLIP_FACING_BIT_KHR) { opts |= MTLAccelerationStructureInstanceOptionTriangleFrontFacingWindingCounterClockwise; }
++	if (flags & VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR) { opts |= MTLAccelerationStructureInstanceOptionOpaque; }
++	if (flags & VK_GEOMETRY_INSTANCE_FORCE_NO_OPAQUE_BIT_KHR) { opts |= MTLAccelerationStructureInstanceOptionNonOpaque; }
++	mtlInst.options = opts;
++	mtlInst.mask = vkInst.mask;
++	mtlInst.intersectionFunctionTableOffset = vkInst.instanceShaderBindingTableRecordOffset;
++	mtlInst.userID = vkInst.instanceCustomIndex;
++	mtlInst.accelerationStructureIndex = 0;
++}
++
++MTLAccelerationStructureDescriptor* mvkNewMTLAccelerationStructureDescriptor(MVKDevice* device,
++																			 const VkAccelerationStructureBuildGeometryInfoKHR* pInfo,
++																			 const VkAccelerationStructureBuildRangeInfoKHR* pRangeInfos,
++																			 const uint32_t* pMaxPrimitiveCounts,
++																			 NSArray<id<MTLAccelerationStructure>>** instancedStructures) {
++	if (instancedStructures) { *instancedStructures = nil; }
++	if ( !mvkSupportsAccelerationStructures(device->getPhysicalDevice()->getMTLDevice()) ) { return nil; }
++
++	bool isBuild = pRangeInfos != nullptr;
++	auto geometryAt = [&](uint32_t i) -> const VkAccelerationStructureGeometryKHR& {
++		return pInfo->pGeometries ? pInfo->pGeometries[i] : *pInfo->ppGeometries[i];
++	};
++	auto primitiveCountAt = [&](uint32_t i) -> uint32_t {
++		return isBuild ? pRangeInfos[i].primitiveCount : (pMaxPrimitiveCounts ? pMaxPrimitiveCounts[i] : 0);
++	};
++
++	if (@available(macOS 15.0, iOS 18.0, *)) {
++		// A top-level structure has exactly one geometry: its instances.
++		if (pInfo->geometryCount > 0 && geometryAt(0).geometryType == VK_GEOMETRY_TYPE_INSTANCES_KHR) {
++			const auto& instances = geometryAt(0).geometry.instances;
++			uint32_t instanceCount = primitiveCountAt(0);
++
++			auto* mtlDesc = [MTLInstanceAccelerationStructureDescriptor descriptor];	// autoreleased
++			mtlDesc.usage = mvkMTLAccelerationStructureUsage(pInfo->flags);
++			mtlDesc.instanceDescriptorType = MTLAccelerationStructureInstanceDescriptorTypeUserID;
++			mtlDesc.instanceDescriptorStride = sizeof(MTLAccelerationStructureUserIDInstanceDescriptor);
++			mtlDesc.instanceCount = instanceCount;
++			if ( !isBuild || instanceCount == 0 ) { return mtlDesc; }
++
++			// The Vulkan and Metal instance layouts differ, so the instances are converted into
++			// a buffer of our own. That means reading the application's instance data here, on
++			// the CPU, which needs it to be in host-visible memory.
++			id<MTLBuffer> srcBuff = nil;
++			NSUInteger srcOffset = 0;
++			if ( !device->getMTLBufferAtAddress(instances.data.deviceAddress, &srcBuff, &srcOffset) || !srcBuff.contents ) {
++				device->reportError(VK_ERROR_FEATURE_NOT_PRESENT, "vkCmdBuildAccelerationStructuresKHR(): The instance data of a top-level"
++									" acceleration structure must be in a host-visible buffer created with VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT.");
++				return nil;
++			}
++			const char* src = (const char*)srcBuff.contents + srcOffset + pRangeInfos[0].primitiveOffset;
++
++			id<MTLBuffer> mtlInstBuff = [[device->getPhysicalDevice()->getMTLDevice() newBufferWithLength: instanceCount * sizeof(MTLAccelerationStructureUserIDInstanceDescriptor)
++																			options: MTLResourceStorageModeShared] autorelease];
++			auto* mtlInsts = (MTLAccelerationStructureUserIDInstanceDescriptor*)mtlInstBuff.contents;
++			NSMutableArray<id<MTLAccelerationStructure>>* blasList = [NSMutableArray array];
++			MVKSmallVector<MVKAccelerationStructure*, 16> blasSeen;
++
++			for (uint32_t i = 0; i < instanceCount; i++) {
++				const VkAccelerationStructureInstanceKHR* vkInst;
++				if (instances.arrayOfPointers) {
++					VkDeviceAddress instAddr = ((const VkDeviceAddress*)src)[i];
++					id<MTLBuffer> instBuff = nil;
++					NSUInteger instOffset = 0;
++					if ( !device->getMTLBufferAtAddress(instAddr, &instBuff, &instOffset) || !instBuff.contents ) {
++						device->reportError(VK_ERROR_FEATURE_NOT_PRESENT, "vkCmdBuildAccelerationStructuresKHR(): An instance is not in a host-visible buffer.");
++						return nil;
++					}
++					vkInst = (const VkAccelerationStructureInstanceKHR*)((const char*)instBuff.contents + instOffset);
++				} else {
++					vkInst = (const VkAccelerationStructureInstanceKHR*)(src + i * sizeof(VkAccelerationStructureInstanceKHR));
++				}
++				mvkConvertInstance(*vkInst, mtlInsts[i]);
++
++				// A null reference is an inactive instance. Metal has no such thing, so it is
++				// given a mask of zero, which no ray can match.
++				MVKAccelerationStructure* blas = device->getAccelerationStructureAtAddress(vkInst->accelerationStructureReference);
++				id<MTLAccelerationStructure> mtlBLAS = blas ? blas->getMTLAccelerationStructure() : nil;
++				if ( !mtlBLAS ) {
++					mtlInsts[i].mask = 0;
++					continue;
++				}
++				uint32_t blasIdx = 0;
++				for (; blasIdx < blasSeen.size(); blasIdx++) { if (blasSeen[blasIdx] == blas) { break; } }
++				if (blasIdx == blasSeen.size()) {
++					blasSeen.push_back(blas);
++					[blasList addObject: mtlBLAS];
++				}
++				mtlInsts[i].accelerationStructureIndex = blasIdx;
++			}
++
++			// Metal wants a valid structure for every instance, masked out or not.
++			if (blasList.count == 0) {
++				mtlDesc.instanceCount = 0;
++				return mtlDesc;
++			}
++			mtlDesc.instancedAccelerationStructures = blasList;
++			mtlDesc.instanceDescriptorBuffer = mtlInstBuff;
++			mtlDesc.instanceDescriptorBufferOffset = 0;
++			if (instancedStructures) { *instancedStructures = blasList; }
++			return mtlDesc;
++		}
++
++		// Otherwise a bottom-level structure: any number of triangle or bounding-box geometries.
++		auto* mtlDesc = [MTLPrimitiveAccelerationStructureDescriptor descriptor];	// autoreleased
++		mtlDesc.usage = mvkMTLAccelerationStructureUsage(pInfo->flags);
++		NSMutableArray<MTLAccelerationStructureGeometryDescriptor*>* mtlGeoms = [NSMutableArray arrayWithCapacity: pInfo->geometryCount];
++
++		for (uint32_t i = 0; i < pInfo->geometryCount; i++) {
++			const auto& geom = geometryAt(i);
++			uint32_t primCount = primitiveCountAt(i);
++			bool isOpaque = mvkIsAnyFlagEnabled(geom.flags, VK_GEOMETRY_OPAQUE_BIT_KHR);
++
++			switch (geom.geometryType) {
++				case VK_GEOMETRY_TYPE_TRIANGLES_KHR: {
++					const auto& tris = geom.geometry.triangles;
++					auto* mtlGeom = [MTLAccelerationStructureTriangleGeometryDescriptor descriptor];
++					mtlGeom.opaque = isOpaque;
++					mtlGeom.triangleCount = primCount;
++					mtlGeom.vertexStride = (NSUInteger)tris.vertexStride;
++					mtlGeom.vertexFormat = mvkMTLVertexFormat(tris.vertexFormat);
++					if (mtlGeom.vertexFormat == MTLAttributeFormatInvalid) {
++						device->reportError(VK_ERROR_FORMAT_NOT_SUPPORTED, "Acceleration structure vertex format %d is not supported.", tris.vertexFormat);
++						return nil;
++					}
++					bool isIndexed = tris.indexType != VK_INDEX_TYPE_NONE_KHR;
++					if (isIndexed) {
++						if (tris.indexType != VK_INDEX_TYPE_UINT16 && tris.indexType != VK_INDEX_TYPE_UINT32) {
++							device->reportError(VK_ERROR_FORMAT_NOT_SUPPORTED, "Acceleration structure index type %d is not supported.", tris.indexType);
++							return nil;
++						}
++						mtlGeom.indexType = tris.indexType == VK_INDEX_TYPE_UINT16 ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32;
++					}
++
++					if (isBuild) {
++						const auto& range = pRangeInfos[i];
++						id<MTLBuffer> buff = nil;
++						NSUInteger offset = 0;
++						if ( !device->getMTLBufferAtAddress(tris.vertexData.deviceAddress, &buff, &offset) ) {
++							device->reportError(VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS, "vkCmdBuildAccelerationStructuresKHR(): The vertex data address is not in a buffer created with VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT.");
++							return nil;
++						}
++						// Vulkan: indices are read from indexData + primitiveOffset and each has
++						// firstVertex added to it. Without indices, vertices are read from
++						// vertexData + primitiveOffset + firstVertex * stride.
++						mtlGeom.vertexBuffer = buff;
++						mtlGeom.vertexBufferOffset = offset + (NSUInteger)range.firstVertex * (NSUInteger)tris.vertexStride + (isIndexed ? 0 : range.primitiveOffset);
++						if (isIndexed) {
++							if ( !device->getMTLBufferAtAddress(tris.indexData.deviceAddress, &buff, &offset) ) {
++								device->reportError(VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS, "vkCmdBuildAccelerationStructuresKHR(): The index data address is not in a buffer created with VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT.");
++								return nil;
++							}
++							mtlGeom.indexBuffer = buff;
++							mtlGeom.indexBufferOffset = offset + range.primitiveOffset;
++						}
++						if (tris.transformData.deviceAddress) {
++							if ( !device->getMTLBufferAtAddress(tris.transformData.deviceAddress, &buff, &offset) ) {
++								device->reportError(VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS, "vkCmdBuildAccelerationStructuresKHR(): The transform data address is not in a buffer created with VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT.");
++								return nil;
++							}
++							// VkTransformMatrixKHR is three rows of four floats.
++							mtlGeom.transformationMatrixBuffer = buff;
++							mtlGeom.transformationMatrixBufferOffset = offset + range.transformOffset;
++							mtlGeom.transformationMatrixLayout = MTLMatrixLayoutRowMajor;
++						}
++					}
++					[mtlGeoms addObject: mtlGeom];
++					break;
++				}
++				case VK_GEOMETRY_TYPE_AABBS_KHR: {
++					const auto& aabbs = geom.geometry.aabbs;
++					auto* mtlGeom = [MTLAccelerationStructureBoundingBoxGeometryDescriptor descriptor];
++					mtlGeom.opaque = isOpaque;
++					mtlGeom.boundingBoxCount = primCount;
++					mtlGeom.boundingBoxStride = (NSUInteger)aabbs.stride;
++					if (isBuild) {
++						id<MTLBuffer> buff = nil;
++						NSUInteger offset = 0;
++						if ( !device->getMTLBufferAtAddress(aabbs.data.deviceAddress, &buff, &offset) ) {
++							device->reportError(VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS, "vkCmdBuildAccelerationStructuresKHR(): The bounding box data address is not in a buffer created with VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT.");
++							return nil;
++						}
++						mtlGeom.boundingBoxBuffer = buff;
++						mtlGeom.boundingBoxBufferOffset = offset + pRangeInfos[i].primitiveOffset;
++					}
++					[mtlGeoms addObject: mtlGeom];
++					break;
++				}
++				default:
++					device->reportError(VK_ERROR_FEATURE_NOT_PRESENT, "Acceleration structure geometry type %d cannot be mixed into a bottom-level structure.", geom.geometryType);
++					return nil;
++			}
++		}
++		mtlDesc.geometryDescriptors = mtlGeoms;
++		return mtlDesc;
++	}
++	return nil;
++}
++
++
++#pragma mark -
++#pragma mark MVKAccelerationStructure
++
++static atomic<uint64_t> _mvkNextAccelerationStructureHandle { 1 };
++
++void MVKAccelerationStructure::setInstancedMTLAccelerationStructures(NSArray<id<MTLAccelerationStructure>>* structures) {
++	if (structures == _instancedStructures) { return; }
++	[_instancedStructures release];
++	_instancedStructures = [structures retain];
++	if (_mtlAccelerationStructure) {
++		objc_setAssociatedObject(_mtlAccelerationStructure, &_mvkInstancedStructuresKey, structures, OBJC_ASSOCIATION_RETAIN);
++	}
++}
++
++void MVKAccelerationStructure::propagateDebugName() {
++	_mtlAccelerationStructure.label = _debugName;
++}
++
++MVKAccelerationStructure::MVKAccelerationStructure(MVKDevice* device, const VkAccelerationStructureCreateInfoKHR* pCreateInfo)
++	: MVKVulkanAPIDeviceObject(device), _type(pCreateInfo->type), _size(pCreateInfo->size) {
++
++	// The top 16 bits mark the value as one of ours, so it can never be mistaken for a buffer address.
++	_deviceAddress = 0x4657000000000000ull | (_mvkNextAccelerationStructureHandle.fetch_add(1) << 4);
++
++	if (mvkSupportsAccelerationStructures(getMTLDevice())) {
++		_mtlAccelerationStructure = [getMTLDevice() newAccelerationStructureWithSize: (NSUInteger)max<VkDeviceSize>(_size, 16)];
++	}
++	if ( !_mtlAccelerationStructure ) {
++		setConfigurationResult(reportError(VK_ERROR_OUT_OF_DEVICE_MEMORY, "vkCreateAccelerationStructureKHR(): Metal could not allocate an acceleration structure of %llu bytes.", _size));
++	}
++	_device->addAccelerationStructure(this);
++}
++
++MVKAccelerationStructure::~MVKAccelerationStructure() {
++	_device->removeAccelerationStructure(this);
++	[_instancedStructures release];
++	[_mtlAccelerationStructure release];
++}
++
++
++#pragma mark -
++#pragma mark MVKDevice acceleration structure support
++
++MVKAccelerationStructure* MVKDevice::createAccelerationStructure(const VkAccelerationStructureCreateInfoKHR* pCreateInfo,
++																 const VkAllocationCallbacks* pAllocator) {
++	return new MVKAccelerationStructure(this, pCreateInfo);
++}
++
++void MVKDevice::destroyAccelerationStructure(MVKAccelerationStructure* mvkAS, const VkAllocationCallbacks* pAllocator) {
++	if (mvkAS) { mvkAS->destroy(); }
++}
++
++void MVKDevice::addAccelerationStructure(MVKAccelerationStructure* mvkAS) {
++	lock_guard<mutex> lock(_rezLock);
++	_accelerationStructures.push_back(mvkAS);
++}
++
++void MVKDevice::removeAccelerationStructure(MVKAccelerationStructure* mvkAS) {
++	lock_guard<mutex> lock(_rezLock);
++	mvkRemoveFirstOccurance(_accelerationStructures, mvkAS);
++}
++
++MVKAccelerationStructure* MVKDevice::getAccelerationStructureAtAddress(VkDeviceAddress address) {
++	if ( !address ) { return nullptr; }
++	lock_guard<mutex> lock(_rezLock);
++	for (auto* mvkAS : _accelerationStructures) {
++		if (mvkAS->getDeviceAddress() == address) { return mvkAS; }
++	}
++	return nullptr;
++}
++
++// Build inputs are given as device addresses. Find the buffer an address falls in.
++bool MVKDevice::getMTLBufferAtAddress(VkDeviceAddress address, id<MTLBuffer>* pMTLBuffer, NSUInteger* pOffset) {
++	if ( !address ) { return false; }
++	lock_guard<mutex> lock(_rezLock);
++	for (auto* mvkBuff : _gpuAddressableBuffers) {
++		uint64_t base = mvkBuff->getMTLBufferGPUAddress();
++		if (base && address >= base && address < base + mvkBuff->getByteCount()) {
++			*pMTLBuffer = mvkBuff->getMTLBuffer();
++			*pOffset = mvkBuff->getMTLBufferOffset() + (NSUInteger)(address - base);
++			return true;
++		}
++	}
++	return false;
++}
++
++void MVKDevice::getAccelerationStructureBuildSizes(VkAccelerationStructureBuildTypeKHR buildType,
++												   const VkAccelerationStructureBuildGeometryInfoKHR* pBuildInfo,
++												   const uint32_t* pMaxPrimitiveCounts,
++												   VkAccelerationStructureBuildSizesInfoKHR* pSizeInfo) {
++	pSizeInfo->accelerationStructureSize = 0;
++	pSizeInfo->buildScratchSize = 0;
++	pSizeInfo->updateScratchSize = 0;
++	@autoreleasepool {
++		auto* mtlDesc = mvkNewMTLAccelerationStructureDescriptor(this, pBuildInfo, nullptr, pMaxPrimitiveCounts, nullptr);
++		if ( !mtlDesc ) { return; }
++		MTLAccelerationStructureSizes sizes = [_physicalDevice->getMTLDevice() accelerationStructureSizesWithDescriptor: mtlDesc];
++		// Never report zero: an application sizes its buffers from these, and Vulkan forbids
++		// a zero-sized buffer.
++		pSizeInfo->accelerationStructureSize = max<VkDeviceSize>(sizes.accelerationStructureSize, 16);
++		pSizeInfo->buildScratchSize = max<VkDeviceSize>(sizes.buildScratchBufferSize, 16);
++		pSizeInfo->updateScratchSize = max<VkDeviceSize>(sizes.refitScratchBufferSize, 16);
++	}
++}
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKBuffer.mm b/MoltenVK/MoltenVK/GPUObjects/MVKBuffer.mm
+index a00c09b..faa97fa 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKBuffer.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKBuffer.mm
+@@ -345,3 +345,7 @@
+ 		_mtlTexture = nil;
+ 	}
+ }
++
++
++// FineWine: VK_KHR_acceleration_structure, built here so the Xcode project is unchanged.
++#include "MVKAccelerationStructure.mm"
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDescriptorSet.mm b/MoltenVK/MoltenVK/GPUObjects/MVKDescriptorSet.mm
+index 3cdc623..6027bf6 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDescriptorSet.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDescriptorSet.mm
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include "MVKDescriptorSet.h"
++#include "MVKAccelerationStructure.h"
+ #include "MVKBuffer.h"
+ #include "MVKCommandBuffer.h"
+ #include "MVKCommandEncoderState.h"
+@@ -335,6 +336,7 @@ static MVKDescriptorResourceCount perDescriptorResourceCount(VkDescriptorType ty
+ 			case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+ 			case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+ 			case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
++			case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:	// FineWine: Metal binds these in the buffer table
+ 				count.buffer = 1;
+ 				break;
+ 			default:
+@@ -376,6 +378,7 @@ static MVKDescriptorCPULayout pickCPULayout(
+ 		case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC: return MVKDescriptorCPULayout::OneID2Meta;
+ 		case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC: return MVKDescriptorCPULayout::OneID2Meta;
+ 		case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:       return MVKDescriptorCPULayout::OneID;
++		case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: return MVKDescriptorCPULayout::OneID;	// FineWine: one Metal object
+ 		case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK:   return argBuf == MVKArgumentBufferMode::Off ? MVKDescriptorCPULayout::InlineData : MVKDescriptorCPULayout::None;
+ 		default:                                        return MVKDescriptorCPULayout::None;
+ 	}
+@@ -408,6 +411,8 @@ static MVKDescriptorGPULayout pickGPULayout(
+ 		case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC: return MVKDescriptorGPULayout::BufferAuxSize;
+ 		case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC: return MVKDescriptorGPULayout::BufferAuxSize;
+ 		case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:       return MVKDescriptorGPULayout::Texture;
++		// FineWine: in an argument buffer an acceleration structure is a 64-bit resource id, the same as a texture.
++		case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: return MVKDescriptorGPULayout::Texture;
+ 		case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK:   return MVKDescriptorGPULayout::OutlinedData;
+ 		default:                                        return MVKDescriptorGPULayout::None;
+ 	}
+@@ -779,7 +784,7 @@ static uint32_t writeAuxOffsets(uint32_t* write, MVKArrayRef<const MVKDescriptor
+ #pragma mark Descriptor Set Updates
+ 
+ /** The type of data being supplied from a Vulkan descriptor update */
+-enum class MVKDescriptorUpdateSourceType { Unsupported, Image, ImageSampler, Sampler, Buffer, TexelBuffer, InlineUniform };
++enum class MVKDescriptorUpdateSourceType { Unsupported, Image, ImageSampler, Sampler, Buffer, TexelBuffer, InlineUniform, AccelerationStructure };
+ 
+ static MVKDescriptorUpdateSourceType getDescriptorUpdateSourceType(VkDescriptorType type) {
+ 	switch (type) {
+@@ -807,8 +812,10 @@ static MVKDescriptorUpdateSourceType getDescriptorUpdateSourceType(VkDescriptorT
+ 		case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK:
+ 			return MVKDescriptorUpdateSourceType::InlineUniform;
+ 
+-		case VK_DESCRIPTOR_TYPE_PARTITIONED_ACCELERATION_STRUCTURE_NV:
+ 		case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
++			return MVKDescriptorUpdateSourceType::AccelerationStructure;
++
++		case VK_DESCRIPTOR_TYPE_PARTITIONED_ACCELERATION_STRUCTURE_NV:
+ 		case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV:
+ 		case VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM:
+ 		case VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM:
+@@ -833,6 +840,11 @@ static MVKDescriptorUpdateSourceType getDescriptorUpdateSourceType(VkDescriptorT
+ 			return write.pTexelBufferView;
+ 		case MVKDescriptorUpdateSourceType::InlineUniform:
+ 			return mvkFindStructInChain<VkWriteDescriptorSetInlineUniformBlock>(&write, VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK)->pData;
++		case MVKDescriptorUpdateSourceType::AccelerationStructure: {
++			// The handles are in a structure chained to the write, as an array of VkAccelerationStructureKHR.
++			auto* asWrite = mvkFindStructInChain<VkWriteDescriptorSetAccelerationStructureKHR>(&write, VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR);
++			return asWrite ? asWrite->pAccelerationStructures : nullptr;
++		}
+ 		case MVKDescriptorUpdateSourceType::Unsupported:
+ 			return nullptr;
+ 	}
+@@ -846,6 +858,7 @@ static uint32_t getDescriptorUpdateStride(MVKDescriptorUpdateSourceType type) {
+ 		case MVKDescriptorUpdateSourceType::Buffer:        return sizeof(VkDescriptorBufferInfo);
+ 		case MVKDescriptorUpdateSourceType::TexelBuffer:   return sizeof(VkBufferView);
+ 		case MVKDescriptorUpdateSourceType::InlineUniform: return 1;
++		case MVKDescriptorUpdateSourceType::AccelerationStructure: return sizeof(VkAccelerationStructureKHR);
+ 		case MVKDescriptorUpdateSourceType::Unsupported:   return 0;
+ 	}
+ }
+@@ -882,6 +895,13 @@ static bool canUseFastPathUpdate(MVKDescriptorGPULayout layout, MVKArgumentBuffe
+ 			auto* img = *reinterpret_cast<MVKBufferView*const*>(src);
+ 			return img ? img->getMTLTexture() : nullptr;
+ 		}
++		case MVKDescriptorUpdateSourceType::AccelerationStructure: {
++			// FineWine: not a texture, but it is written the way one is: by its gpuResourceID,
++			// which acceleration structures have too. Only the Metal 3 argument buffer path
++			// does that; the argument encoder path is not supported for acceleration structures.
++			auto* mvkAS = *reinterpret_cast<MVKAccelerationStructure*const*>(src);
++			return mvkAS ? static_cast<id<MTLTexture>>(static_cast<id>(mvkAS->getMTLAccelerationStructure())) : nullptr;
++		}
+ 		default:
+ 			assert(0);
+ 			return nullptr;
+@@ -1195,6 +1215,11 @@ static void writeDescriptorSetCPUBuffer(
+ 						*desc = buf ? buf->getMTLTexture() : nil;
+ 						break;
+ 					}
++					case MVKDescriptorUpdateSourceType::AccelerationStructure: {
++						auto* mvkAS = *static_cast<MVKAccelerationStructure*const*>(src);
++						*desc = mvkAS ? mvkAS->getMTLAccelerationStructure() : nil;
++						break;
++					}
+ 					default:
+ 						assert(0);
+ 				}
+@@ -2291,6 +2316,10 @@ static VkResult pickOOMError(const MVKDescriptorPoolFreeList& free, MVKArrayRef<
+ 					entryEnd += sizeof(VkBufferView);
+ 					break;
+ 
++				case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
++					entryEnd += sizeof(VkAccelerationStructureKHR);
++					break;
++
+ 				default:
+ 					break;
+ 			}
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h
+index 7f67a00..0254cb6 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h
+@@ -61,6 +61,7 @@ class MVKPipelineLayout;
+ class MVKPipeline;
+ class MVKSampler;
+ class MVKSamplerYcbcrConversion;
++class MVKAccelerationStructure;
+ class MVKDescriptorSetLayout;
+ class MVKDescriptorPool;
+ class MVKDescriptorUpdateTemplate;
+@@ -811,6 +812,22 @@ public:
+ 	void destroySampler(MVKSampler* mvkSamp,
+ 						const VkAllocationCallbacks* pAllocator);
+ 
++	// FineWine: VK_KHR_acceleration_structure. Implemented in MVKAccelerationStructure.mm.
++	MVKAccelerationStructure* createAccelerationStructure(const VkAccelerationStructureCreateInfoKHR* pCreateInfo,
++														  const VkAllocationCallbacks* pAllocator);
++	void destroyAccelerationStructure(MVKAccelerationStructure* mvkAS,
++									  const VkAllocationCallbacks* pAllocator);
++	void addAccelerationStructure(MVKAccelerationStructure* mvkAS);
++	void removeAccelerationStructure(MVKAccelerationStructure* mvkAS);
++	/** Returns the acceleration structure with the device address, or null. */
++	MVKAccelerationStructure* getAccelerationStructureAtAddress(VkDeviceAddress address);
++	/** Finds the buffer a device address lies in, and the offset of the address within its MTLBuffer. */
++	bool getMTLBufferAtAddress(VkDeviceAddress address, id<MTLBuffer>* pMTLBuffer, NSUInteger* pOffset);
++	void getAccelerationStructureBuildSizes(VkAccelerationStructureBuildTypeKHR buildType,
++											const VkAccelerationStructureBuildGeometryInfoKHR* pBuildInfo,
++											const uint32_t* pMaxPrimitiveCounts,
++											VkAccelerationStructureBuildSizesInfoKHR* pSizeInfo);
++
+ 	MVKSamplerYcbcrConversion* createSamplerYcbcrConversion(const VkSamplerYcbcrConversionCreateInfo* pCreateInfo,
+ 										                    const VkAllocationCallbacks* pAllocator);
+ 	void destroySamplerYcbcrConversion(MVKSamplerYcbcrConversion* mvkSampConv,
+@@ -1104,6 +1121,7 @@ protected:
+ 	MVKSmallVector<MVKSmallVector<MVKQueue*, kMVKQueueCountPerQueueFamily>, kMVKQueueFamilyCount> _queuesByQueueFamilyIndex;
+ 	MVKSmallVector<MVKResource*> _resources;
+ 	MVKSmallVector<MVKBuffer*> _gpuAddressableBuffers;
++	MVKSmallVector<MVKAccelerationStructure*> _accelerationStructures;
+ 	MVKSmallVector<MVKPrivateDataSlot*> _privateDataSlots;
+ 	MVKSmallVector<bool> _privateDataSlotsAvailability;
+ 	MVKSmallVector<MVKSemaphoreImpl*> _awaitingSemaphores;
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+index 5a8f356..d650735 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+@@ -21,6 +21,7 @@
+ #include "MVKQueue.h"
+ #include "MVKSurface.h"
+ #include "MVKBuffer.h"
++#include "MVKAccelerationStructure.h"
+ #include "MVKImage.h"
+ #include "MVKSwapchain.h"
+ #include "MVKQueryPool.h"
+@@ -577,6 +578,22 @@
+ 				barycentricFeatures->fragmentShaderBarycentric = true;
+ 				break;
+ 			}
++			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR: {
++				// FineWine: builds are recorded in command buffers only. Building on the host,
++				// indirect builds and capture/replay are not provided.
++				auto* accelStructFeatures = (VkPhysicalDeviceAccelerationStructureFeaturesKHR*)next;
++				accelStructFeatures->accelerationStructure = _supportedExtensions.vk_KHR_acceleration_structure.enabled;
++				accelStructFeatures->accelerationStructureCaptureReplay = false;
++				accelStructFeatures->accelerationStructureIndirectBuild = false;
++				accelStructFeatures->accelerationStructureHostCommands = false;
++				accelStructFeatures->descriptorBindingAccelerationStructureUpdateAfterBind = _supportedExtensions.vk_KHR_acceleration_structure.enabled;
++				break;
++			}
++			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR: {
++				auto* rayQueryFeatures = (VkPhysicalDeviceRayQueryFeaturesKHR*)next;
++				rayQueryFeatures->rayQuery = _supportedExtensions.vk_KHR_ray_query.enabled;
++				break;
++			}
+ 			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_7_FEATURES_KHR: {
+ 				auto* maintenance7Features = (VkPhysicalDeviceMaintenance7FeaturesKHR*)next;
+ 				maintenance7Features->maintenance7 = true;
+@@ -1265,6 +1282,20 @@
+ 				divisorProps->supportsNonZeroFirstInstance = supportedProps14.supportsNonZeroFirstInstance;
+ 				break;
+ 			}
++			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR: {
++				// FineWine: Metal publishes no limits for acceleration structures. These are the
++				// values Vulkan implementations commonly report, kept within what 32-bit counts hold.
++				auto* accelStructProps = (VkPhysicalDeviceAccelerationStructurePropertiesKHR*)next;
++				accelStructProps->maxGeometryCount = (1u << 24) - 1;
++				accelStructProps->maxInstanceCount = (1u << 24) - 1;
++				accelStructProps->maxPrimitiveCount = (1u << 29) - 1;
++				accelStructProps->maxPerStageDescriptorAccelerationStructures = 16;
++				accelStructProps->maxPerStageDescriptorUpdateAfterBindAccelerationStructures = 16;
++				accelStructProps->maxDescriptorSetAccelerationStructures = 16;
++				accelStructProps->maxDescriptorSetUpdateAfterBindAccelerationStructures = 16;
++				accelStructProps->minAccelerationStructureScratchOffsetAlignment = 16;
++				break;
++			}
+ 			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_PROPERTIES_KHR: {
+ 				auto* portabilityProps = (VkPhysicalDevicePortabilitySubsetPropertiesKHR*)next;
+ 				portabilityProps->minVertexInputBindingStrideAlignment = (uint32_t)_metalFeatures.vertexStrideAlignment;
+@@ -3516,6 +3547,17 @@ static uint32_t mvkGetEntryProperty(io_registry_entry_t entry, CFStringRef prope
+ 	MVKExtensionList* pWritableExtns = (MVKExtensionList*)&_supportedExtensions;
+ 	pWritableExtns->disableAllButEnabledDeviceExtensions();
+ 
++	// FineWine: ray tracing needs a GPU with Metal ray tracing, and binds acceleration structures
++	// through Metal 3 argument buffers, which also carry buffer device addresses.
++	if ( !mvkSupportsAccelerationStructures(_mtlDevice) ) {
++		pWritableExtns->vk_KHR_acceleration_structure.enabled = false;
++		pWritableExtns->vk_KHR_ray_query.enabled = false;
++	}
++	if ( !pWritableExtns->vk_KHR_buffer_device_address.enabled ) {
++		pWritableExtns->vk_KHR_acceleration_structure.enabled = false;
++		pWritableExtns->vk_KHR_ray_query.enabled = false;
++	}
++
+ 	if (!_metalFeatures.subgroupUniformControlFlow) {
+ 		pWritableExtns->vk_KHR_shader_subgroup_uniform_control_flow.enabled = false;
+ 	}
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDeviceFeatureStructs.def b/MoltenVK/MoltenVK/GPUObjects/MVKDeviceFeatureStructs.def
+index e82eabf..17c0434 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDeviceFeatureStructs.def
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDeviceFeatureStructs.def
+@@ -80,7 +80,9 @@ MVK_DEVICE_FEATURE(VariablePointer,                       VARIABLE_POINTER,
+ MVK_DEVICE_FEATURE(VertexAttributeDivisor,                VERTEX_ATTRIBUTE_DIVISOR,                    2)
+ MVK_DEVICE_FEATURE(VulkanMemoryModel,                     VULKAN_MEMORY_MODEL,                         3)
+ MVK_DEVICE_FEATURE(ZeroInitializeWorkgroupMemory,         ZERO_INITIALIZE_WORKGROUP_MEMORY,            1)
++MVK_DEVICE_FEATURE_EXTN(AccelerationStructure,            ACCELERATION_STRUCTURE,               KHR,   5)
+ MVK_DEVICE_FEATURE_EXTN(FragmentShaderBarycentric,        FRAGMENT_SHADER_BARYCENTRIC,          KHR,   1)
++MVK_DEVICE_FEATURE_EXTN(RayQuery,                         RAY_QUERY,                            KHR,   1)
+ MVK_DEVICE_FEATURE_EXTN(Maintenance7,                     MAINTENANCE_7,                        KHR,   1)
+ MVK_DEVICE_FEATURE_EXTN(Maintenance8,                     MAINTENANCE_8,                        KHR,   1)
+ MVK_DEVICE_FEATURE_EXTN(Maintenance9,                     MAINTENANCE_9,                        KHR,   1)
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKInstance.mm b/MoltenVK/MoltenVK/GPUObjects/MVKInstance.mm
+index 757fe16..39778f5 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKInstance.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKInstance.mm
+@@ -759,6 +759,16 @@
+ 	// Device extension functions.
+ 	ADD_DVC_EXT_ENTRY_POINT(vkGetCalibratedTimestampsKHR, KHR_CALIBRATED_TIMESTAMPS);
+ 	ADD_DVC_EXT_ENTRY_POINT(vkGetPhysicalDeviceCalibrateableTimeDomainsKHR, KHR_CALIBRATED_TIMESTAMPS);
++	ADD_DVC_EXT_ENTRY_POINT(vkCreateAccelerationStructureKHR, KHR_ACCELERATION_STRUCTURE);
++	ADD_DVC_EXT_ENTRY_POINT(vkDestroyAccelerationStructureKHR, KHR_ACCELERATION_STRUCTURE);
++	ADD_DVC_EXT_ENTRY_POINT(vkGetAccelerationStructureBuildSizesKHR, KHR_ACCELERATION_STRUCTURE);
++	ADD_DVC_EXT_ENTRY_POINT(vkGetAccelerationStructureDeviceAddressKHR, KHR_ACCELERATION_STRUCTURE);
++	ADD_DVC_EXT_ENTRY_POINT(vkGetDeviceAccelerationStructureCompatibilityKHR, KHR_ACCELERATION_STRUCTURE);
++	ADD_DVC_EXT_ENTRY_POINT(vkCmdBuildAccelerationStructuresKHR, KHR_ACCELERATION_STRUCTURE);
++	ADD_DVC_EXT_ENTRY_POINT(vkCmdBuildAccelerationStructuresIndirectKHR, KHR_ACCELERATION_STRUCTURE);
++	ADD_DVC_EXT_ENTRY_POINT(vkCmdCopyAccelerationStructureKHR, KHR_ACCELERATION_STRUCTURE);
++	ADD_DVC_EXT_ENTRY_POINT(vkBuildAccelerationStructuresKHR, KHR_ACCELERATION_STRUCTURE);
++	ADD_DVC_EXT_ENTRY_POINT(vkCopyAccelerationStructureKHR, KHR_ACCELERATION_STRUCTURE);
+     ADD_DVC_EXT_ENTRY_POINT(vkCreateDeferredOperationKHR, KHR_DEFERRED_HOST_OPERATIONS);
+     ADD_DVC_EXT_ENTRY_POINT(vkDeferredOperationJoinKHR, KHR_DEFERRED_HOST_OPERATIONS);
+     ADD_DVC_EXT_ENTRY_POINT(vkDestroyDeferredOperationKHR, KHR_DEFERRED_HOST_OPERATIONS);
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.h b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.h
+index d3f981a..bdea785 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.h
+@@ -58,6 +58,7 @@ enum class MVKDescriptorBindOperationCode : uint8_t {
+ 	UseResource,
+ 	UseBufferWithLiveCheck,
+ 	UseTextureWithLiveCheck,
++	UseAccelerationStructure, /**< FineWine: marks an acceleration structure, and the ones it instances, as used. */
+ };
+ 
+ struct MVKDescriptorBindOperation {
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+index 844b906..0a26765 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+@@ -198,7 +198,13 @@ static void addResourceBindingToShaderConfig(SPIRVToMSLConversionConfiguration&
+ 
+ 				MVKSampler*const* immSamp = layout->getImmutableSampler(desc);
+ 				MVKDescriptorGPULayout gpuLayout = argbuf ? desc.gpuLayout : getBindingLayout(desc);
+-				addResourceBindingToShaderConfig(shaderConfig, binding.stages[stage], stage, dslIdx, desc.binding, desc.descriptorCount, gpuLayout, immSamp ? *immSamp : nullptr);
++				MVKShaderStageResourceBinding stageBinding = binding.stages[stage];
++				if (argbuf && desc.descriptorType == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR) {
++					// FineWine: an acceleration structure is stored where a texture would be, but
++					// SPIRV-Cross looks its index up as a buffer's. Give it the slot it is stored in.
++					stageBinding.bufferIndex = stageBinding.textureIndex;
++				}
++				addResourceBindingToShaderConfig(shaderConfig, stageBinding, stage, dslIdx, desc.binding, desc.descriptorCount, gpuLayout, immSamp ? *immSamp : nullptr);
+ 				if (desc.perDescriptorResourceCount.dynamicOffset != 0 && used) {
+ 					shaderConfig.dynamicBufferDescriptors.push_back(makeDescriptorBinding(stage, dslIdx, desc.binding, binding.stages[stage].dynamicOffsetBufferIndex));
+ 				}
+@@ -326,6 +332,11 @@ static bool isWriteable(VkDescriptorType type) {
+ 			MVKDescriptorBindOperationCode useBuf = partiallyBound ? MVKDescriptorBindOperationCode::UseBufferWithLiveCheck  : MVKDescriptorBindOperationCode::UseResource;
+ 			MVKDescriptorGPULayout gpuLayout = desc.gpuLayout;
+ 			uint32_t target = isWriteable(desc.descriptorType);
++			if (desc.descriptorType == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR) {
++				// FineWine: stored like a texture, but used through its own operation.
++				script.ops.push_back({ MVKDescriptorBindOperationCode::UseAccelerationStructure, set, 0, descIdx, 0 });
++				continue;
++			}
+ 			for (uint32_t i = 0, n = descriptorTextureCount(gpuLayout); i < n; i++) {
+ 				script.ops.push_back({ useTex, set, target, descIdx, sizeof(id) * i });
+ 			}
+diff --git a/MoltenVK/MoltenVK/Layers/MVKExtensions.def b/MoltenVK/MoltenVK/Layers/MVKExtensions.def
+index 6bc4186..1200387 100644
+--- a/MoltenVK/MoltenVK/Layers/MVKExtensions.def
++++ b/MoltenVK/MoltenVK/Layers/MVKExtensions.def
+@@ -41,6 +41,7 @@
+ #define MVK_EXTENSION_LAST(var, EXT, type, macos, ios, xros) MVK_EXTENSION(var, EXT, type, macos, ios, xros)
+ #endif
+ 
++MVK_EXTENSION(KHR_acceleration_structure,                KHR_ACCELERATION_STRUCTURE,               DEVICE,   15.0,  18.0,  2.0)
+ MVK_EXTENSION(KHR_16bit_storage,                        KHR_16BIT_STORAGE,                        DEVICE,   10.11,  8.0,  1.0)
+ MVK_EXTENSION(KHR_8bit_storage,                         KHR_8BIT_STORAGE,                         DEVICE,   10.11,  8.0,  1.0)
+ MVK_EXTENSION(KHR_bind_memory2,                         KHR_BIND_MEMORY_2,                        DEVICE,   10.11,  8.0,  1.0)
+@@ -93,6 +94,7 @@ MVK_EXTENSION(KHR_present_id2,                          KHR_PRESENT_ID_2,
+ MVK_EXTENSION(KHR_present_wait,                         KHR_PRESENT_WAIT,                         DEVICE,   10.11,  8.0,  1.0)
+ MVK_EXTENSION(KHR_present_wait2,                        KHR_PRESENT_WAIT_2,                       DEVICE,   10.11,  8.0,  1.0)
+ MVK_EXTENSION(KHR_push_descriptor,                      KHR_PUSH_DESCRIPTOR,                      DEVICE,   10.11,  8.0,  1.0)
++MVK_EXTENSION(KHR_ray_query,                             KHR_RAY_QUERY,                            DEVICE,   15.0,  18.0,  2.0)
+ MVK_EXTENSION(KHR_relaxed_block_layout,                 KHR_RELAXED_BLOCK_LAYOUT,                 DEVICE,   10.11,  8.0,  1.0)
+ MVK_EXTENSION(KHR_robustness2,                          KHR_ROBUSTNESS_2,                         DEVICE,   10.11,  8.0,  1.0)
+ MVK_EXTENSION(KHR_sampler_mirror_clamp_to_edge,         KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE,         DEVICE,   10.11, 14.0,  1.0)
+diff --git a/MoltenVK/MoltenVK/Vulkan/vulkan.mm b/MoltenVK/MoltenVK/Vulkan/vulkan.mm
+index b15fe5e..a0f2096 100644
+--- a/MoltenVK/MoltenVK/Vulkan/vulkan.mm
++++ b/MoltenVK/MoltenVK/Vulkan/vulkan.mm
+@@ -27,6 +27,7 @@
+ #include "MVKCmdTransfer.h"
+ #include "MVKCmdQueries.h"
+ #include "MVKImage.h"
++#include "../GPUObjects/MVKAccelerationStructure.h"
+ #include "MVKBuffer.h"
+ #include "MVKDeviceMemory.h"
+ #include "MVKDescriptorSet.h"
+@@ -3220,6 +3221,139 @@ MVK_PUBLIC_VULKAN_SYMBOL VkResult vkGetCalibratedTimestampsKHR(
+ MVK_PUBLIC_VULKAN_CORE_ALIAS(vkCmdNextSubpass2, KHR);
+ MVK_PUBLIC_VULKAN_CORE_ALIAS(vkCmdEndRenderPass2, KHR);
+ 
++#pragma mark -
++#pragma mark VK_KHR_acceleration_structure extension (FineWine)
++
++MVK_PUBLIC_VULKAN_SYMBOL VkResult vkCreateAccelerationStructureKHR(
++	VkDevice                                    device,
++	const VkAccelerationStructureCreateInfoKHR* pCreateInfo,
++	const VkAllocationCallbacks*                pAllocator,
++	VkAccelerationStructureKHR*                 pAccelerationStructure) {
++
++	MVKTraceVulkanCallStart();
++	MVKDevice* mvkDev = MVKDevice::getMVKDevice(device);
++	MVKAccelerationStructure* mvkAS = mvkDev->createAccelerationStructure(pCreateInfo, pAllocator);
++	*pAccelerationStructure = (VkAccelerationStructureKHR)mvkAS;
++	VkResult rslt = mvkAS->getConfigurationResult();
++	if (rslt < 0) {
++		*pAccelerationStructure = VK_NULL_HANDLE;
++		mvkDev->destroyAccelerationStructure(mvkAS, pAllocator);
++	}
++	MVKTraceVulkanCallEnd();
++	return rslt;
++}
++
++MVK_PUBLIC_VULKAN_SYMBOL void vkDestroyAccelerationStructureKHR(
++	VkDevice                                    device,
++	VkAccelerationStructureKHR                  accelerationStructure,
++	const VkAllocationCallbacks*                pAllocator) {
++
++	MVKTraceVulkanCallStart();
++	MVKDevice* mvkDev = MVKDevice::getMVKDevice(device);
++	mvkDev->destroyAccelerationStructure((MVKAccelerationStructure*)accelerationStructure, pAllocator);
++	MVKTraceVulkanCallEnd();
++}
++
++MVK_PUBLIC_VULKAN_SYMBOL void vkGetAccelerationStructureBuildSizesKHR(
++	VkDevice                                            device,
++	VkAccelerationStructureBuildTypeKHR                 buildType,
++	const VkAccelerationStructureBuildGeometryInfoKHR*  pBuildInfo,
++	const uint32_t*                                     pMaxPrimitiveCounts,
++	VkAccelerationStructureBuildSizesInfoKHR*           pSizeInfo) {
++
++	MVKTraceVulkanCallStart();
++	MVKDevice* mvkDev = MVKDevice::getMVKDevice(device);
++	mvkDev->getAccelerationStructureBuildSizes(buildType, pBuildInfo, pMaxPrimitiveCounts, pSizeInfo);
++	MVKTraceVulkanCallEnd();
++}
++
++MVK_PUBLIC_VULKAN_SYMBOL VkDeviceAddress vkGetAccelerationStructureDeviceAddressKHR(
++	VkDevice                                            device,
++	const VkAccelerationStructureDeviceAddressInfoKHR*  pInfo) {
++
++	MVKTraceVulkanCallStart();
++	auto* mvkAS = (MVKAccelerationStructure*)pInfo->accelerationStructure;
++	VkDeviceAddress addr = mvkAS ? mvkAS->getDeviceAddress() : 0;
++	MVKTraceVulkanCallEnd();
++	return addr;
++}
++
++MVK_PUBLIC_VULKAN_SYMBOL void vkGetDeviceAccelerationStructureCompatibilityKHR(
++	VkDevice                                        device,
++	const VkAccelerationStructureVersionInfoKHR*    pVersionInfo,
++	VkAccelerationStructureCompatibilityKHR*        pCompatibility) {
++
++	// Serialized acceleration structures are not provided, so none is ever compatible.
++	MVKTraceVulkanCallStart();
++	*pCompatibility = VK_ACCELERATION_STRUCTURE_COMPATIBILITY_INCOMPATIBLE_KHR;
++	MVKTraceVulkanCallEnd();
++}
++
++MVK_PUBLIC_VULKAN_SYMBOL void vkCmdBuildAccelerationStructuresKHR(
++	VkCommandBuffer                                         commandBuffer,
++	uint32_t                                                infoCount,
++	const VkAccelerationStructureBuildGeometryInfoKHR*      pInfos,
++	const VkAccelerationStructureBuildRangeInfoKHR* const*  ppBuildRangeInfos) {
++
++	MVKTraceVulkanCallStart();
++	for (uint32_t i = 0; i < infoCount; i++) {
++		MVKAddCmd(BuildAccelerationStructure, commandBuffer, &pInfos[i], ppBuildRangeInfos[i]);
++	}
++	MVKTraceVulkanCallEnd();
++}
++
++MVK_PUBLIC_VULKAN_SYMBOL void vkCmdBuildAccelerationStructuresIndirectKHR(
++	VkCommandBuffer                                     commandBuffer,
++	uint32_t                                            infoCount,
++	const VkAccelerationStructureBuildGeometryInfoKHR*  pInfos,
++	const VkDeviceAddress*                              pIndirectDeviceAddresses,
++	const uint32_t*                                     pIndirectStrides,
++	const uint32_t* const*                              ppMaxPrimitiveCounts) {
++
++	// accelerationStructureIndirectBuild is reported as unsupported.
++	MVKTraceVulkanCallStart();
++	MVKCommandBuffer* cmdBuff = MVKCommandBuffer::getMVKCommandBuffer(commandBuffer);
++	cmdBuff->setConfigurationResult(cmdBuff->reportError(VK_ERROR_FEATURE_NOT_PRESENT, "vkCmdBuildAccelerationStructuresIndirectKHR(): Indirect acceleration structure builds are not supported."));
++	MVKTraceVulkanCallEnd();
++}
++
++MVK_PUBLIC_VULKAN_SYMBOL void vkCmdCopyAccelerationStructureKHR(
++	VkCommandBuffer                             commandBuffer,
++	const VkCopyAccelerationStructureInfoKHR*   pInfo) {
++
++	MVKTraceVulkanCallStart();
++	MVKAddCmd(CopyAccelerationStructure, commandBuffer, pInfo);
++	MVKTraceVulkanCallEnd();
++}
++
++MVK_PUBLIC_VULKAN_SYMBOL VkResult vkBuildAccelerationStructuresKHR(
++	VkDevice                                                device,
++	VkDeferredOperationKHR                                  deferredOperation,
++	uint32_t                                                infoCount,
++	const VkAccelerationStructureBuildGeometryInfoKHR*      pInfos,
++	const VkAccelerationStructureBuildRangeInfoKHR* const*  ppBuildRangeInfos) {
++
++	// accelerationStructureHostCommands is reported as unsupported.
++	MVKTraceVulkanCallStart();
++	MVKDevice* mvkDev = MVKDevice::getMVKDevice(device);
++	VkResult rslt = mvkDev->reportError(VK_ERROR_FEATURE_NOT_PRESENT, "vkBuildAccelerationStructuresKHR(): Acceleration structures can only be built in a command buffer.");
++	MVKTraceVulkanCallEnd();
++	return rslt;
++}
++
++MVK_PUBLIC_VULKAN_SYMBOL VkResult vkCopyAccelerationStructureKHR(
++	VkDevice                                    device,
++	VkDeferredOperationKHR                      deferredOperation,
++	const VkCopyAccelerationStructureInfoKHR*   pInfo) {
++
++	MVKTraceVulkanCallStart();
++	MVKDevice* mvkDev = MVKDevice::getMVKDevice(device);
++	VkResult rslt = mvkDev->reportError(VK_ERROR_FEATURE_NOT_PRESENT, "vkCopyAccelerationStructureKHR(): Acceleration structures can only be copied in a command buffer.");
++	MVKTraceVulkanCallEnd();
++	return rslt;
++}
++
++
+ #pragma mark -
+ #pragma mark VK_KHR_deferred_host_operations extension
+ 

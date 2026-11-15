@@ -1,0 +1,25 @@
+# Meson cross file for building DXMT as ARM64X for FineWine's runtime. Same as DXMT's own
+# build-arm64ec.txt, plus one linker flag: Wine 11.21's winecrt0 and mingw-w64's libmingwex both
+# define __icall_helper_arm64ec, and winemetal.dll links both. The two are equivalent, so the
+# linker is told to take the first instead of stopping.
+[binaries]
+c = 'arm64ec-w64-mingw32-gcc'
+cpp = 'arm64ec-w64-mingw32-g++'
+ar = 'arm64ec-w64-mingw32-ar'
+strip = 'arm64ec-w64-mingw32-strip'
+windres = 'arm64ec-w64-mingw32-windres'
+
+[properties]
+needs_exe_wrapper = true
+
+[built-in options]
+c_args = ['-marm64x']
+cpp_args = ['-marm64x']
+c_link_args = ['-marm64x', '-Wl,--allow-multiple-definition']
+cpp_link_args = ['-marm64x', '-Wl,--allow-multiple-definition']
+
+[host_machine]
+system = 'windows'
+cpu_family = 'aarch64'
+cpu = 'aarch64'
+endian = 'little'

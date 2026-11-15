@@ -19,7 +19,18 @@
 #   scripts/build-finewine-runtime.sh configure
 #   scripts/build-finewine-runtime.sh build
 #   scripts/build-finewine-runtime.sh package    # install into build/finewine-runtime + runtime.json
+#   scripts/build-finewine-runtime.sh archive    # make the release archive (stripped runtime only)
 #   scripts/build-finewine-runtime.sh all        # everything above, in order
+#
+# The runtime this makes runs ARM64 Windows programs. Two more scripts complete it, and their
+# output is added by `package` whenever it exists:
+#   scripts/build-fex.sh all    x64 programs, through the FEX emulator
+#   scripts/build-dxmt.sh all   Direct3D 10 and 11, through DXMT on Metal
+# scripts/test-finewine-runtime.sh checks the result.
+#
+# The runtime is always built the same way: compiled with debug information, then stripped, with
+# the unstripped files kept in build/finewine-runtime-symbols for local debugging. Released
+# artifacts contain only the stripped runtime; `archive` refuses to run otherwise.
 #
 # Env: BUILD_DIR (default ./build), JOBS (default: all cores), WINE_TAG, RUNTIME_VERSION
 #      (default 1; part of the runtime's id), WINE_SRC_DIR (use an existing Wine checkout
@@ -105,10 +116,13 @@ cmd_configure(){
   mkdir -p "$OBJ"
   # x86_64_CC: the ARM64EC modules contain a few x86_64 objects. Left alone, configure picks
   # Homebrew's mingw gcc for them when it is installed, and its assembler rejects Wine's code.
-  ( cd "$OBJ" && x86_64_CC=clang \
-      CC="/usr/bin/clang -arch arm64" CXX="/usr/bin/clang++ -arch arm64" OBJC="/usr/bin/clang -arch arm64" \
-      PKG_CONFIG_PATH="$hb/lib/pkgconfig" CPPFLAGS="-I$hb/include" LDFLAGS="-L$hb/lib" \
-      "$SRC/configure" --build=aarch64-apple-darwin --host=aarch64-apple-darwin \
+  # Everything is passed as configure arguments, not environment variables: make re-runs
+  # configure by itself when the source's configure script changes, and only arguments are
+  # remembered for that.
+  ( cd "$OBJ" && "$SRC/configure" --build=aarch64-apple-darwin --host=aarch64-apple-darwin \
+        x86_64_CC=clang \
+        CC="/usr/bin/clang -arch arm64" CXX="/usr/bin/clang++ -arch arm64" OBJC="/usr/bin/clang -arch arm64" \
+        PKG_CONFIG_PATH="$hb/lib/pkgconfig" CPPFLAGS="-I$hb/include" LDFLAGS="-L$hb/lib" \
         --enable-archs=arm64ec,aarch64 --prefix=/ --disable-tests \
         --without-x --without-krb5 --without-gstreamer --without-gphoto --without-sane --without-pcap \
         --without-usb --without-cups --without-opencl --without-pcsclite --without-dbus --without-netapi
@@ -123,6 +137,11 @@ cmd_build(){
   log "Building Wine ($JOBS jobs)"
   [ -f "$OBJ/Makefile" ] || die "run 'configure' first"
   toolchain
+  # If make re-ran configure (see cmd_configure), the hand-set MoltenVK name is gone again.
+  fix_config(){ sed -i '' 's|/\* #undef SONAME_LIBMOLTENVK \*/|#define SONAME_LIBMOLTENVK "libMoltenVK.dylib"|' "$OBJ/include/config.h"; }
+  make -C "$OBJ" Makefile > /dev/null 2>&1 || true
+  fix_config
+  grep -q '^x86_64_CC = clang' "$OBJ/Makefile" || die "the Makefile lost clang as the x86_64 compiler; run 'configure' again"
   make -C "$OBJ" -j"$JOBS" > "$BUILD_DIR/build-runtime.log" 2>&1 \
     || { grep -n ' error: \|Error [0-9]' "$BUILD_DIR/build-runtime.log" | tail -5; die "build failed, see $BUILD_DIR/build-runtime.log"; }
   [ -x "$OBJ/loader/wine" ] && [ -x "$OBJ/server/wineserver" ] || die "the build produced no wine or wineserver"
@@ -149,13 +168,64 @@ bundle_dylib(){
   codesign --force --sign - "$OUT/lib/$name" 2>/dev/null
 }
 
+# Wine is compiled with debug information, which is most of what it builds (1.7 GB against
+# 856 MB). The runtime is always stripped; the unstripped files are kept beside it in
+# build/finewine-runtime-symbols, at the same relative paths, for anyone who builds locally and
+# wants to debug or symbolize a crash address. That folder is local only: it is never part of
+# the runtime, of the archive `archive` makes, or of a released FineWine.
+strip_runtime(){
+  local symbols="$BUILD_DIR/finewine-runtime-symbols" f rel before after
+  before="$(du -sk "$OUT" | cut -f1)"
+  rm -rf "$symbols"
+  # Windows-side modules (PE files) and Mac-side modules and programs (Mach-O files).
+  while IFS= read -r f; do
+    rel="${f#$OUT/}"
+    mkdir -p "$symbols/$(dirname "$rel")"; cp -p "$f" "$symbols/$rel"
+    case "$f" in
+      */aarch64-windows/*) llvm-strip --strip-debug "$f" 2>/dev/null || true ;;
+      *) strip -S -x "$f" 2>/dev/null || true ;;
+    esac
+  done < <(find "$OUT/lib/wine/aarch64-windows" "$OUT/lib/wine/aarch64-unix" "$OUT/bin" -type f \
+             \( -name '*.dll' -o -name '*.exe' -o -name '*.sys' -o -name '*.drv' -o -name '*.ocx' -o -name '*.cpl' \
+                -o -name '*.acm' -o -name '*.ax' -o -name '*.tlb' -o -name '*.so' -o -name '*.com' -o -name '*.ds' \
+                -o -name '*.msstyles' -o -perm -u+x \) ! -name '*.a' ! -name '*.pl')
+  after="$(du -sk "$OUT" | cut -f1)"
+  echo "stripped: $((before / 1024)) MB -> $((after / 1024)) MB; symbols kept in $symbols ($(du -sh "$symbols" | cut -f1), local only)"
+}
+
+# Lists files in the runtime that still carry debug information. Prints nothing when clean.
+find_debug_info(){
+  local f
+  while IFS= read -r f; do
+    if llvm-objdump -h "$f" 2>/dev/null | grep -qE '[[:space:]]\.debug_|[[:space:]]__debug_'; then echo "${f#$OUT/}"; fi
+  done < <(find "$OUT" -type f \( -name '*.dll' -o -name '*.exe' -o -name '*.sys' -o -name '*.drv' -o -name '*.so' -o -name '*.dylib' \))
+}
+
+# The archive that gets released: the stripped runtime folder and nothing else.
+cmd_archive(){
+  log "Archiving the runtime for release"
+  [ -f "$OUT/runtime.json" ] || die "run 'package' first"
+  toolchain
+  local id leftovers archive
+  leftovers="$(find_debug_info)"
+  [ -z "$leftovers" ] || { echo "$leftovers" | head -n 10; die "these files still carry debug information; not archiving"; }
+  id="$(sed -n 's/.*"id": *"\([^"]*\)".*/\1/p' "$OUT/runtime.json")"
+  archive="$BUILD_DIR/$id.tar.xz"
+  # Only the runtime folder goes in, under its id; the symbols folder is a sibling, not a child.
+  tar -C "$BUILD_DIR" -cf - -s "|^finewine-runtime|$id|" finewine-runtime | xz -T0 -6 > "$archive"
+  shasum -a 256 "$archive" | awk '{print $1}' > "$archive.sha256"
+  echo "archive: $archive ($(du -h "$archive" | cut -f1)), sha256 $(cat "$archive.sha256")"
+}
+
 cmd_package(){
   log "Packaging the runtime"
   [ -x "$OBJ/loader/wine" ] || die "run 'build' first"
   toolchain
-  rm -rf "$STAGE" "$OUT"
+  # Install into a staging folder first: the existing runtime is only replaced once that worked.
+  rm -rf "$STAGE"
   make -C "$OBJ" install DESTDIR="$STAGE" > "$BUILD_DIR/install-runtime.log" 2>&1 \
-    || die "install failed, see $BUILD_DIR/install-runtime.log"
+    || { rm -rf "$STAGE"; die "install failed, see $BUILD_DIR/install-runtime.log (the existing runtime was left alone)"; }
+  rm -rf "$OUT"
   mkdir -p "$OUT"
   for d in bin lib share; do [ -d "$STAGE/$d" ] && mv "$STAGE/$d" "$OUT/$d"; done
   rm -rf "$STAGE" "$OUT/share/man" "$OUT/include"
@@ -167,11 +237,18 @@ cmd_package(){
     [ -f "$lib" ] && bundle_dylib "$lib"
   done
   # MoltenVK: this repository's patched arm64 build when it exists, else Homebrew's.
-  if [ -f "$BUILD_DIR/moltenvk-out-aarch64/libMoltenVK.dylib" ]; then
+  if [ -f "$BUILD_DIR/moltenvk-out-finewine/libMoltenVK.dylib" ]; then
+    # MVK_FLAVOR=finewine scripts/build-moltenvk.sh: adds ray queries (patches/moltenvk).
+    cp "$BUILD_DIR/moltenvk-out-finewine/libMoltenVK.dylib" "$OUT/lib/libMoltenVK.dylib"
+  elif [ -f "$BUILD_DIR/moltenvk-out-aarch64/libMoltenVK.dylib" ]; then
+    echo "note: no build/moltenvk-out-finewine; using the CrossOver ARM MoltenVK, which has no ray tracing"
     cp "$BUILD_DIR/moltenvk-out-aarch64/libMoltenVK.dylib" "$OUT/lib/libMoltenVK.dylib"
   elif [ -f "$hb/lib/libMoltenVK.dylib" ]; then
     bundle_dylib "$hb/lib/libMoltenVK.dylib"
   fi
+
+  # Wine asks for the Vulkan loader by name; on macOS MoltenVK provides the same entry points.
+  [ -f "$OUT/lib/libMoltenVK.dylib" ] && ln -sf libMoltenVK.dylib "$OUT/lib/libvulkan.1.dylib"
 
   local wine_version id
   wine_version="$(sed 's/^Wine version //' "$SRC/VERSION")"
@@ -186,9 +263,31 @@ cmd_package(){
   "graphics": {}
 }
 JSON
+  # Wine opens freetype, gnutls, MoltenVK and the rest by bare name. dyld resolves a bare name
+  # through the calling library's rpaths, so each Mac-side Wine library gets one pointing at
+  # <runtime>/lib. The runtime then finds its libraries with no environment variable set.
+  for so in "$OUT"/lib/wine/aarch64-unix/*.so; do
+    otool -l "$so" | grep -A2 LC_RPATH | grep -q '@loader_path/../..' \
+      || install_name_tool -add_rpath "@loader_path/../.." "$so" 2>/dev/null || true
+  done
+
+  strip_runtime
+
   # Mach-O files are signed ad hoc; arm64 macOS refuses to run unsigned code.
   find "$OUT/bin" "$OUT/lib" -type f \( -perm -u+x -o -name '*.so' -o -name '*.dylib' \) -print0 \
     | xargs -0 -n 50 codesign --force --sign - 2>/dev/null || true
+  # Packaging starts from an empty folder, so the two add-ons built by their own scripts are
+  # put back when their builds exist: FEX (x64 programs) and DXMT (Direct3D 10 and 11 on Metal).
+  if [ -f "$BUILD_DIR/fex-arm64ec/Bin/libarm64ecfex.dll" ]; then
+    "$REPO/scripts/build-fex.sh" install | tail -n 1
+  else
+    echo "note: no FEX build; x64 programs will not run (scripts/build-fex.sh all)"
+  fi
+  if [ -f "$BUILD_DIR/dxmt-install/aarch64-unix/winemetal.so" ]; then
+    "$REPO/scripts/build-dxmt.sh" install | tail -n 1
+  else
+    echo "note: no DXMT build; Direct3D 10 and 11 will not work (scripts/build-dxmt.sh all)"
+  fi
   echo "runtime: $OUT ($id, $(du -sh "$OUT" | cut -f1))"
 }
 
@@ -199,6 +298,7 @@ case "${1:-}" in
   configure) cmd_configure ;;
   build) cmd_build ;;
   package) cmd_package ;;
+  archive) cmd_archive ;;
   all) cmd_deps; cmd_fetch; cmd_apply; cmd_configure; cmd_build; cmd_package ;;
   *) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

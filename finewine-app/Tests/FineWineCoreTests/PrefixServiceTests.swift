@@ -44,6 +44,23 @@ final class PrefixServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: prefix.directory.appendingPathComponent(".finewine-settings.reg").path))
     }
 
+    func testEveryNewPrefixHasDLSSThroughMetalFXOn() throws {
+        let f = Fixture()
+        // With no profile, with each built-in profile, and with a user profile that says nothing
+        // about it: the setting is on, and the launch environment switches DXMT's support on.
+        f.sandbox.write(#"{"id":"bare","name":"Bare","settings":{"dpi":96}}"#,
+                        to: f.sandbox.paths.profiles.appendingPathComponent("bare.json"))
+        let profiles: [GameProfile?] = [nil] + f.service.profiles.list().map(Optional.some)
+        XCTAssertTrue(profiles.contains { $0?.id == "bare" })
+        for (index, profile) in profiles.enumerated() {
+            let prefix = try f.service.createPrefix(name: "P\(index)", runtime: f.runtime, profile: profile)
+            XCTAssertTrue(prefix.metadata.settings.dlssThroughMetalFX, profile?.id ?? "no profile")
+            XCTAssertEqual(prefix.metadata.settings.graphicsBackend, .dxmt, profile?.id ?? "no profile")
+            XCTAssertEqual(try f.service.planner(for: prefix).environment()["DXMT_ENABLE_NVEXT"], "1",
+                           profile?.id ?? "no profile")
+        }
+    }
+
     func testAFailedSetupLeavesNoPrefixBehind() {
         let f = Fixture()
         f.runner.status = { $0.arguments.first == "wineboot" ? 1 : 0 }
@@ -82,6 +99,7 @@ final class PrefixServiceTests: XCTestCase {
         XCTAssertTrue(imported.contains("\"dxgi\"=-"), imported)
 
         let runsBefore = f.runner.ran.count
+        prefix.metadata.settings.automaticDPI = false
         prefix.metadata.settings.dpi = 5
         XCTAssertThrowsError(try f.service.applySettings(to: prefix))
         XCTAssertEqual(f.runner.ran.count, runsBefore, "invalid settings never reach Wine")
@@ -112,8 +130,13 @@ final class PrefixServiceTests: XCTestCase {
         prefix.metadata.settings.macAppearance = false
         prefix = try f.service.applySettings(to: prefix, appearance: dark)
         XCTAssertTrue(imported.contains("\"Hilight\"=-"))
-        XCTAssertNil(prefix.metadata.appliedAppearance)
-        XCTAssertFalse(f.service.needsAppearanceRefresh(prefix, current: light), "styling is off")
+        XCTAssertEqual(prefix.metadata.appliedAppearance, dark, "still recorded: the automatic DPI used its display scale")
+        XCTAssertFalse(f.service.needsAppearanceRefresh(prefix, current: light), "styling is off, so light or dark no longer matters")
+        var onASharperDisplay = light
+        onASharperDisplay.displayScale = 3
+        XCTAssertTrue(f.service.needsAppearanceRefresh(prefix, current: onASharperDisplay), "the automatic DPI is out of date")
+        prefix.metadata.settings.automaticDPI = false
+        XCTAssertFalse(f.service.needsAppearanceRefresh(prefix, current: onASharperDisplay))
     }
 
     func testAFailedApplyDoesNotRecordTheSettingsAsApplied() throws {

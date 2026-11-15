@@ -1,0 +1,175 @@
+From: FineWine
+Subject: [PATCH] ntdll: Emulate reads of the shared data page at 0x7ffe0000 on macOS.
+
+Windows keeps KUSER_SHARED_DATA at 0x7ffe0000 and programs read it directly. macOS gives an
+ARM64 process no memory below 4 GB, so this tree keeps the page at 0x17ffe0000 and its own code
+uses that address (patch 0002). Code that was not built from this tree still reads 0x7ffe0000:
+third-party ARM64 programs, and the ARM64 code an x64 emulator generates for x64 programs,
+which includes anything that reads the page inline rather than through an API.
+
+The fault handler now recognises a read fault inside that page, decodes the load instruction,
+performs it from the real page and steps over it. It handles the forms compilers and FEX emit:
+LDR and LDUR with their byte, halfword and signed variants in immediate, register-offset and
+pre- and post-indexed addressing; LDP; the SIMD forms of those; and the acquire loads (LDAR,
+LDAPR, LDAPUR) FEX uses to give x86 code its memory ordering. Stores are left to fault, since
+the page is read-only on Windows too.
+
+Each such read costs a trap. Reads made through Windows APIs go through this tree's DLLs and do
+not trap.
+---
+diff --git a/dlls/ntdll/unix/signal_arm64.c b/dlls/ntdll/unix/signal_arm64.c
+index b303e99..9fd6710 100644
+--- a/dlls/ntdll/unix/signal_arm64.c
++++ b/dlls/ntdll/unix/signal_arm64.c
+@@ -1131,6 +1131,139 @@ static BOOL handle_syscall_fault( struct thread_data *data, ucontext_t *context,
+ }
+ 
+ 
++#ifdef __APPLE__
++/***********************************************************************
++ *           emulate_shared_data_read
++ *
++ * FineWine: Windows has its shared data page at 0x7ffe0000 and programs read it directly, but
++ * macOS gives an ARM64 process no memory below 4 GB, so Wine keeps the page at user_shared_data
++ * instead. Code built from this tree uses that address. Code that was not (third-party ARM64
++ * programs, and the code an x64 emulator generates for x64 programs) still reads 0x7ffe0000 and
++ * faults. This performs such a read from the real page and steps over the instruction.
++ *
++ * Handles the load forms compilers and FEX emit: LDR/LDUR and the byte, halfword and signed
++ * variants with immediate, register or pre/post-indexed addressing, LDP, the SIMD forms of
++ * those, and the acquire loads (LDAR, LDAPR, LDAPUR) an emulator uses for x86 memory ordering.
++ * Returns FALSE for anything else, including every store: the page is read-only.
++ */
++static BOOL emulate_shared_data_read( ucontext_t *sigcontext, const void *fault_addr )
++{
++    static const ULONG_PTR page = 0x7ffe0000, page_size = 0x1000;
++    ULONG_PTR addr = (ULONG_PTR)fault_addr;
++    const BYTE *src;
++    DWORD insn;
++    unsigned int rt, rt2 = 32, rn, size, bytes, sign_bytes = 0, count = 1, i;
++    BOOL vector = FALSE, sign64 = TRUE;
++    LONG_PTR writeback = 0;
++    BOOL has_writeback = FALSE;
++
++    if (addr < page || addr >= page + page_size) return FALSE;
++    memcpy( &insn, (void *)PC_sig(sigcontext), sizeof(insn) );
++    rt = insn & 31;
++    rn = (insn >> 5) & 31;
++    size = insn >> 30;
++
++    if ((insn & 0x3a000000) == 0x38000000 &&                     /* load/store register */
++        ((insn & 0x01000000) ||                                   /*   unsigned immediate */
++         !(insn & 0x00200000) ||                                  /*   unscaled, pre- or post-indexed */
++         (insn & 0x00200c00) == 0x00200800))                      /*   register offset */
++    {
++        unsigned int opc = (insn >> 22) & 3;
++
++        vector = (insn >> 26) & 1;
++        if (vector)
++        {
++            if (opc == 1) bytes = 1 << size;
++            else if (opc == 3 && size == 0) bytes = 16;
++            else return FALSE;                                    /* store */
++        }
++        else
++        {
++            if (opc == 0) return FALSE;                           /* store */
++            if (opc == 2 && size == 3) goto done;                 /* prefetch: nothing to do */
++            if (opc == 3 && size >= 2) return FALSE;
++            bytes = 1 << size;
++            if (opc >= 2) { sign_bytes = bytes; sign64 = (opc == 2); }
++        }
++        if (!(insn & 0x01000000) && !(insn & 0x00200000))
++        {
++            unsigned int mode = (insn >> 10) & 3;
++            if (mode == 2) return FALSE;                          /* unprivileged load */
++            if (mode == 1 || mode == 3)
++            {
++                has_writeback = TRUE;
++                writeback = ((LONG)(insn << 11)) >> 23;           /* sign-extended imm9 */
++            }
++        }
++    }
++    else if ((insn & 0x3a400000) == 0x28400000)                   /* load pair */
++    {
++        unsigned int opc = insn >> 30, mode = (insn >> 23) & 3;
++
++        vector = (insn >> 26) & 1;
++        rt2 = (insn >> 10) & 31;
++        count = 2;
++        if (vector) { if (opc == 3) return FALSE; bytes = 4 << opc; }
++        else if (opc == 0) bytes = 4;
++        else if (opc == 2) bytes = 8;
++        else if (opc == 1) { bytes = 4; sign_bytes = 4; }         /* LDPSW */
++        else return FALSE;
++        if (mode == 0) return FALSE;                              /* non-temporal */
++        if (mode == 1 || mode == 3)
++        {
++            has_writeback = TRUE;
++            writeback = (((LONG)(insn << 10)) >> 25) * (LONG_PTR)bytes;  /* sign-extended, scaled imm7 */
++        }
++    }
++    else if ((insn & 0x3ffffc00) == 0x08dffc00 ||                 /* LDAR */
++             (insn & 0x3ffffc00) == 0x38bfc000)                   /* LDAPR */
++    {
++        bytes = 1 << size;
++    }
++    else if ((insn & 0x3f200c00) == 0x19000000)                   /* LDAPUR and signed variants */
++    {
++        unsigned int opc = (insn >> 22) & 3;
++
++        if (opc == 0) return FALSE;                               /* store */
++        if (opc == 3 && size >= 2) return FALSE;
++        bytes = 1 << size;
++        if (opc >= 2) { sign_bytes = bytes; sign64 = (opc == 2); }
++    }
++    else return FALSE;
++
++    if (addr + bytes * count > page + page_size) return FALSE;
++    src = (const BYTE *)user_shared_data + (addr - page);
++
++    for (i = 0; i < count; i++, src += bytes)
++    {
++        unsigned int reg = i ? rt2 : rt;
++
++        if (vector)
++        {
++            __uint128_t value = 0;
++            memcpy( &value, src, bytes );
++            sigcontext->uc_mcontext->__ns.__v[reg] = value;
++        }
++        else if (reg != 31)                                       /* x31 is the zero register here */
++        {
++            ULONG64 value = 0;
++            memcpy( &value, src, bytes );
++            if (sign_bytes && sign_bytes < 8 && (value >> (sign_bytes * 8 - 1)) & 1)
++            {
++                value |= ~(ULONG64)0 << (sign_bytes * 8);
++                if (!sign64) value &= 0xffffffff;
++            }
++            REGn_sig( reg, sigcontext ) = value;
++        }
++    }
++    if (has_writeback && rn != 31) REGn_sig( rn, sigcontext ) += writeback;
++done:
++    PC_sig(sigcontext) += 4;
++    return TRUE;
++}
++#endif  /* __APPLE__ */
++
++
+ /**********************************************************************
+  *		segv_handler
+  *
+@@ -1173,6 +1306,11 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *_sigcontext )
+     rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
+     rec.NumberParameters = 2;
+ 
++#ifdef __APPLE__
++    if (rec.ExceptionInformation[0] == EXCEPTION_READ_FAULT &&
++        emulate_shared_data_read( sigcontext, siginfo->si_addr )) return;
++#endif
++
+     if (!virtual_handle_fault( data, &rec, (void *)SP_sig(sigcontext) )) return;
+     if (handle_syscall_fault( data, sigcontext, &rec )) return;
+ 
