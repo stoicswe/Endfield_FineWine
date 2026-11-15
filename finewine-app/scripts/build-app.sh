@@ -8,6 +8,9 @@
 #   ICON_VARIANT  which appearance of the icon to use (default Dark)
 #   CODESIGN_ID   signing identity (default "-" = ad-hoc, for your own machine)
 #   SKIP_TESTS=1  don't run the unit tests first
+#   RUNTIME_DIR   the Wine runtime to build into the app (default ../build/finewine-runtime)
+#   BUNDLE_RUNTIME  0 = build the app without a runtime; required = fail if there is none
+#                 (default: add it when it exists, warn when it does not)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"          # finewine-app/
@@ -154,6 +157,22 @@ $ICON_PLIST
 PLIST
 plutil -lint -s "$APP/Contents/Info.plist"
 ok "bundle + Info.plist"
+
+# The Wine runtime goes inside the app, so that FineWine works as it is: it is listed first and
+# is what new prefixes use. Its files are already signed (build-finewine-runtime.sh package).
+RUNTIME_DIR="${RUNTIME_DIR:-$HERE/../build/finewine-runtime}"
+if [ "${BUNDLE_RUNTIME:-1}" = "0" ]; then
+  echo "  - no built-in runtime (BUNDLE_RUNTIME=0)"
+elif [ -f "$RUNTIME_DIR/runtime.json" ] && [ -x "$RUNTIME_DIR/bin/wine" ]; then
+  log "Adding the Wine runtime"
+  # ditto keeps symbolic links, permissions and the signatures' extended attributes.
+  ditto "$RUNTIME_DIR" "$APP/Contents/Resources/Runtime"
+  ok "runtime $(sed -n 's/.*"id": *"\([^"]*\)".*/\1/p' "$RUNTIME_DIR/runtime.json") ($(du -sh "$APP/Contents/Resources/Runtime" | cut -f1))"
+elif [ "${BUNDLE_RUNTIME:-1}" = "required" ]; then
+  echo "ERROR: no runtime at $RUNTIME_DIR (scripts/build-finewine.sh runtime)"; exit 1
+else
+  echo "  ! no runtime at $RUNTIME_DIR — building FineWine.app without one (scripts/build-finewine.sh runtime)"
+fi
 
 log "Signing ($CODESIGN_ID)"
 if [ "$CODESIGN_ID" = "-" ]; then

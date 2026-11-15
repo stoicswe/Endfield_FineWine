@@ -8,7 +8,7 @@
 #   5. DXMT (Direct3D 10 and 11 on Metal)                    scripts/build-dxmt.sh all
 #   6. the runtime checks                                    scripts/test-finewine-runtime.sh
 #   7. the runtime's release archive                         scripts/build-finewine-runtime.sh archive
-#   8. FineWine.app                                          finewine-app/scripts/build-app.sh
+#   8. FineWine.app, with the runtime inside it              finewine-app/scripts/build-app.sh
 #
 # The order matters: the runtime's packaging picks MoltenVK up and needs the compiler from
 # step 2 for the Steam stand-in; FEX and DXMT install themselves into the packaged runtime.
@@ -76,7 +76,7 @@ if [ "$TARGET" != "runtime" ]; then
   log "8/8 FineWine.app"
   # FineWine's version is its own: only an explicit FINEWINE_VERSION reaches its build.
   ( unset VERSION; [ -n "${FINEWINE_VERSION:-}" ] && export VERSION="$FINEWINE_VERSION"
-    "$REPO/finewine-app/scripts/build-app.sh" )
+    BUNDLE_RUNTIME="${BUNDLE_RUNTIME:-required}" "$REPO/finewine-app/scripts/build-app.sh" )
 fi
 
 log "Built in $(( ($(date +%s) - started) / 60 )) min"

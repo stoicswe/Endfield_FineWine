@@ -358,6 +358,7 @@ final class AppModel: ObservableObject {
             switch runtime.kind {
             case .managed: try service.runtimes.removeManaged(id: runtime.id)
             case .external: try service.runtimes.removeExternal(runtime.root)
+            case .bundled: break   // part of the app; the list offers no way to remove it
             }
             reload()
         } catch { show(error, title: "The runtime couldn't be removed") }

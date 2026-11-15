@@ -15,10 +15,10 @@ public struct PrefixService {
     public let shortcuts: ShortcutAppBuilder
     public let runner: ProcessRunning
 
-    public init(paths: FineWinePaths, runner: ProcessRunning = SystemProcessRunner()) {
+    public init(paths: FineWinePaths, runner: ProcessRunning = SystemProcessRunner(), runtimes: RuntimeStore? = nil) {
         self.paths = paths
         self.prefixes = PrefixStore(paths: paths)
-        self.runtimes = RuntimeStore(paths: paths)
+        self.runtimes = runtimes ?? RuntimeStore(paths: paths)
         self.profiles = ProfileStore(paths: paths)
         self.shortcuts = ShortcutAppBuilder(directory: paths.shortcuts)
         self.runner = runner
@@ -27,11 +27,12 @@ public struct PrefixService {
     // MARK: Planning
 
     public func runtime(for prefix: Prefix) throws -> WineRuntime {
-        guard let id = prefix.metadata.runtimeID else {
-            throw FineWineError("“\(prefix.name)” has no runtime chosen. Pick one in its settings.")
-        }
-        guard let runtime = runtimes.runtime(id: id) else {
-            throw FineWineError("The runtime “\(prefix.name)” uses is no longer installed. Pick another in its settings.")
+        // A prefix with no runtime, or whose runtime is gone, uses the one built into the app.
+        let chosen = prefix.metadata.runtimeID.flatMap { runtimes.runtime(id: $0) }
+        guard let runtime = chosen ?? runtimes.bundled else {
+            throw FineWineError(prefix.metadata.runtimeID == nil
+                ? "“\(prefix.name)” has no runtime chosen. Pick one in its settings."
+                : "The runtime “\(prefix.name)” uses is no longer installed. Pick another in its settings.")
         }
         let problems = runtime.problems()
         guard problems.isEmpty else {

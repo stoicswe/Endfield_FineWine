@@ -48,6 +48,13 @@ This runs the unit tests, builds a release binary, assembles `finewine-app/build
 and signs it ad hoc. It needs the macOS 26 SDK or later (Xcode 26+), because the interface uses
 Liquid Glass. Environment variables: `VERSION`, `CODESIGN_ID`, `ICON_VARIANT`, `SKIP_TESTS=1`.
 
+**The Wine runtime is built into the app.** If `build/finewine-runtime` exists, it is copied to
+`FineWine.app/Contents/Resources/Runtime` (about 860 MB). The app lists it first as "Built in",
+new prefixes use it, and a prefix whose own runtime is missing falls back to it; it cannot be
+removed from the list. Without a runtime in `build/` the app is built without one and says so
+(`BUNDLE_RUNTIME=required` makes that an error, `BUNDLE_RUNTIME=0` skips it, `RUNTIME_DIR`
+picks another folder). `scripts/build-finewine.sh` builds the runtime and then the app with it.
+
 Run the tests on their own with:
 
 ```bash
