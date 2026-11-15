@@ -54,6 +54,8 @@ final class AppModel: ObservableObject {
             }
         }
         accent.isDark = isDark
+        // The sharpest attached display decides: a window dragged onto it should not look soft.
+        accent.displayScale = Double(NSScreen.screens.map(\.backingScaleFactor).max() ?? 2)
         return accent
     }
 

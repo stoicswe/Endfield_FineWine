@@ -83,6 +83,14 @@ final class MacStyleTests: XCTestCase {
         XCTAssertEqual(action(removed, MacStyle.themeKey, "ThemeActive"), .setString("1"))
     }
 
+    func testAppearanceCarriesTheDisplayScaleAndReadsOlderMetadata() throws {
+        XCTAssertEqual(MacAppearance(isDark: false, accentRed: 0, accentGreen: 0, accentBlue: 0, displayScale: 1).displayScale, 1)
+        let old = try JSONDecoder().decode(MacAppearance.self,
+                                           from: Data(#"{"isDark":true,"accentRed":1,"accentGreen":2,"accentBlue":3}"#.utf8))
+        XCTAssertEqual(old.displayScale, 2)
+        XCTAssertTrue(old.isDark)
+    }
+
     func testAppearanceClampsComponents() {
         let appearance = MacAppearance(isDark: false, accentRed: 300, accentGreen: -5, accentBlue: 128)
         XCTAssertEqual([appearance.accentRed, appearance.accentGreen, appearance.accentBlue], [255, 0, 128])

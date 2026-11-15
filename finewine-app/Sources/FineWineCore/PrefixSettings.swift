@@ -34,6 +34,10 @@ public enum GraphicsBackend: String, Codable, CaseIterable, Sendable {
         case .wined3d: return "WineD3D (built in)"
         }
     }
+
+    /// What the choice covers, for showing under the picker. Direct3D 12 and Vulkan are not
+    /// part of it: a FineWine runtime always provides both through MoltenVK.
+    public static let scopeNote = "This chooses how Direct3D 9, 10 and 11 are drawn. Direct3D 12 and Vulkan are always available, through MoltenVK."
 }
 
 /// How Windows synchronisation objects (events, mutexes, semaphores) are implemented.
@@ -150,9 +154,13 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     public var syncMode: SyncMode = .standard
     public var dllOverrides: [DLLOverride] = []
     public var environment: [EnvironmentVariable] = []
-    /// Render at the display's full pixel resolution.
-    public var retinaMode: Bool = false
-    /// Screen DPI; 96 is 100% scaling.
+    /// High-resolution mode: programs render at the display's real pixel resolution instead of
+    /// being drawn at half size and scaled up. On by default.
+    public var retinaMode: Bool = true
+    /// Pick the DPI from the display, so that text and controls stay the size macOS shows them
+    /// at while high-resolution mode gives them the display's full sharpness. On by default.
+    public var automaticDPI: Bool = true
+    /// Screen DPI used when `automaticDPI` is off; 96 is 100% scaling.
     public var dpi: Int = 96
     /// Run programs inside one desktop window of this size instead of separate Mac windows.
     public var virtualDesktop: VirtualDesktop?
@@ -162,6 +170,10 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     public var metalHUD: Bool = false
     /// Hide the "running under a hypervisor" CPU flag from x64 programs (a FEX setting).
     public var hideHypervisor: Bool = false
+    /// Let games that offer NVIDIA DLSS upscale through Apple's MetalFX instead. Takes effect
+    /// with DXMT, whose nvngx.dll does the translation. FSR needs nothing: it is the game's own
+    /// shader code and runs as it is.
+    public var dlssThroughMetalFX: Bool = true
     /// Give Windows controls macOS colours, fonts and the Mac's accent colour.
     public var macAppearance: Bool = true
     /// Wine debug channels (`WINEDEBUG`). `-all` is silent and fastest.
@@ -182,6 +194,8 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         environment = try c.decodeIfPresent([EnvironmentVariable].self, forKey: .environment) ?? d.environment
         retinaMode = try c.decodeIfPresent(Bool.self, forKey: .retinaMode) ?? d.retinaMode
         dpi = try c.decodeIfPresent(Int.self, forKey: .dpi) ?? d.dpi
+        // A prefix saved before automatic scaling existed keeps the DPI its user chose.
+        automaticDPI = try c.decodeIfPresent(Bool.self, forKey: .automaticDPI) ?? (c.contains(.dpi) ? false : d.automaticDPI)
         virtualDesktop = try c.decodeIfPresent(VirtualDesktop.self, forKey: .virtualDesktop)
         leftOptionIsAlt = try c.decodeIfPresent(Bool.self, forKey: .leftOptionIsAlt) ?? d.leftOptionIsAlt
         rightOptionIsAlt = try c.decodeIfPresent(Bool.self, forKey: .rightOptionIsAlt) ?? d.rightOptionIsAlt
@@ -189,6 +203,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         hideHypervisor = try c.decodeIfPresent(Bool.self, forKey: .hideHypervisor) ?? d.hideHypervisor
         debugChannels = try c.decodeIfPresent(String.self, forKey: .debugChannels) ?? d.debugChannels
         macAppearance = try c.decodeIfPresent(Bool.self, forKey: .macAppearance) ?? d.macAppearance
+        dlssThroughMetalFX = try c.decodeIfPresent(Bool.self, forKey: .dlssThroughMetalFX) ?? d.dlssThroughMetalFX
     }
 
     // MARK: Validation
@@ -199,7 +214,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         if !windowsBuild.isEmpty, UInt32(windowsBuild) == nil {
             problems.append("The Windows build must be a number, such as 26100.")
         }
-        if !(72...480).contains(dpi) {
+        if !automaticDPI, !(72...480).contains(dpi) {
             problems.append("The DPI must be between 72 and 480.")
         }
         if let desktop = virtualDesktop, desktop.width < 640 || desktop.height < 480 {
@@ -230,10 +245,23 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
 
     /// The registry edits that bring a prefix in line with these settings. `previous` is what
     /// was applied last time; overrides it had that are gone now are deleted.
+    /// The DPI Windows programs are told about. With automatic scaling it follows the display:
+    /// in high-resolution mode a Retina display (scale 2) gives 192, so a program laid out for
+    /// 96 DPI ends up the same physical size as on macOS, drawn with four times the pixels.
+    /// Without high-resolution mode Wine already works in points, so the DPI stays at 96.
+    public func effectiveDPI(displayScale: Double) -> Int {
+        guard automaticDPI else { return dpi }
+        guard retinaMode else { return 96 }
+        let scale = min(max(displayScale, 1), 4)
+        return Int((96 * scale).rounded())
+    }
+
     /// `appearance` is the Mac's current look; with it and `macAppearance` on, the edits also
-    /// style Windows controls to match.
+    /// style Windows controls to match. `displayScale` is the main display's backing scale
+    /// factor (2 on a Retina display), used for automatic DPI.
     public func registryEdits(replacing previous: PrefixSettings? = nil,
-                              appearance: MacAppearance? = nil) -> [RegistryEdit] {
+                              appearance: MacAppearance? = nil,
+                              displayScale: Double = 1) -> [RegistryEdit] {
         var edits: [RegistryEdit] = [.string(Self.wineKey, "Version", windowsVersion.rawValue)]
 
         if !windowsBuild.isEmpty {
@@ -255,7 +283,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         edits.append(.string(Self.macDriverKey, "RetinaMode", retinaMode ? "y" : "n"))
         edits.append(.string(Self.macDriverKey, "LeftOptionIsAlt", leftOptionIsAlt ? "y" : "n"))
         edits.append(.string(Self.macDriverKey, "RightOptionIsAlt", rightOptionIsAlt ? "y" : "n"))
-        edits.append(.dword(Self.desktopKey, "LogPixels", UInt32(max(dpi, 0))))
+        edits.append(.dword(Self.desktopKey, "LogPixels", UInt32(max(effectiveDPI(displayScale: displayScale), 0))))
 
         if let desktop = virtualDesktop {
             edits.append(.string(Self.explorerKey, "Desktop", "Default"))
@@ -284,6 +312,10 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         }
         if metalHUD { out.append(("MTL_HUD_ENABLED", "1")) }
         if hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
+        // DXMT turns its NVIDIA stand-ins on with this variable: it then registers its nvngx.dll
+        // where the DLSS SDK inside a game looks for NVIDIA's, and DLSS upscaling runs as
+        // MetalFX. Without it DXMT removes that registration and games see no DLSS.
+        if dlssThroughMetalFX, graphicsBackend == .dxmt { out.append(("DXMT_ENABLE_NVEXT", "1")) }
         for variable in environment where EnvironmentVariable.isValidName(variable.name) {
             out.append((variable.name, variable.value))
         }

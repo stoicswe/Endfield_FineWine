@@ -132,6 +132,13 @@ final class LaunchPlannerTests: XCTestCase {
         let f = Fixture()
         XCTAssertEqual(try f.planner().plan(for: WinebootAction.initialize).arguments, ["wineboot", "--init"])
         XCTAssertEqual(try f.planner().plan(for: WinebootAction.restart).arguments, ["wineboot", "--restart"])
+        // Setting a prefix up must not stop on Wine's Mono and Gecko download prompts.
+        XCTAssertEqual(try f.planner().plan(for: WinebootAction.initialize).environment["WINEDLLOVERRIDES"],
+                       "winemenubuilder.exe=d;mscoree=d;mshtml=d")
+        XCTAssertEqual(try f.planner().plan(for: WinebootAction.update).environment["WINEDLLOVERRIDES"],
+                       "winemenubuilder.exe=d;mscoree=d;mshtml=d")
+        XCTAssertEqual(try f.planner().plan(for: WinebootAction.restart).environment["WINEDLLOVERRIDES"],
+                       "winemenubuilder.exe=d", "other wineboot actions are left alone")
         XCTAssertEqual(try f.planner().plan(importingRegistryFile: URL(fileURLWithPath: "/tmp/a.reg")).arguments,
                        ["regedit", "/S", "/tmp/a.reg"])
         let kill = try f.planner().killPlan()

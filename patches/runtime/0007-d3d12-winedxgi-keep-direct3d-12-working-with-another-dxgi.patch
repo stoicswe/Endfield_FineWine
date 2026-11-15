@@ -1,0 +1,158 @@
+From: FineWine
+Subject: [PATCH] d3d12, winedxgi: Keep Direct3D 12 working when another DXGI is selected.
+
+Direct3D 12 in this tree is vkd3d on Vulkan (MoltenVK on macOS). It depends on Wine's own DXGI
+for two things: the adapter it is created from, and its swap chains.
+
+A FineWine prefix can select DXMT for Direct3D 10 and 11, and then dxgi.dll is DXMT's. That DXGI
+hands out adapters Wine's Direct3D 12 does not recognise, so D3D12CreateDevice failed with
+E_NOINTERFACE, and it cannot make a swap chain for a vkd3d device.
+
+- dlls/winedxgi builds Wine's DXGI a second time, from the same sources, as winedxgi.dll. It
+  has to be a module of its own rather than a renamed copy: Wine finds a built-in DLL by the
+  name recorded inside it, so a copy of dxgi.dll resolves back to whichever dxgi.dll is loaded.
+- d3d12 creates its DXGI factory from winedxgi.dll when that exists.
+- When a program passes an adapter that is not Wine's, d3d12 uses Wine's primary adapter
+  instead of failing. A Mac has a single GPU, so this is the adapter the program meant.
+
+The other half is in DXMT (patches/dxmt/0001): its DXGI hands swap chain creation for a
+Direct3D 12 command queue to winedxgi.dll.
+
+With no other DXGI selected nothing changes in behaviour: winedxgi.dll and dxgi.dll are then
+the same code.
+---
+diff --git a/configure b/configure
+index d1f2653..4f3d993 100755
+--- a/configure
++++ b/configure
+@@ -1175,6 +1175,7 @@ enable_dx8vb
+ enable_dxcore
+ enable_dxdiagn
+ enable_dxgi
++enable_winedxgi
+ enable_dxtrans
+ enable_dxva2
+ enable_esent
+@@ -22188,6 +22189,7 @@ wine_fn_config_makefile dlls/dxcore/tests enable_tests
+ wine_fn_config_makefile dlls/dxdiagn enable_dxdiagn
+ wine_fn_config_makefile dlls/dxdiagn/tests enable_tests
+ wine_fn_config_makefile dlls/dxgi enable_dxgi
++wine_fn_config_makefile dlls/winedxgi enable_winedxgi
+ wine_fn_config_makefile dlls/dxgi/tests enable_tests
+ wine_fn_config_makefile dlls/dxtrans enable_dxtrans
+ wine_fn_config_makefile dlls/dxva2 enable_dxva2
+diff --git a/configure.ac b/configure.ac
+index 64f3919..bbc198b 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -2685,6 +2685,7 @@ WINE_CONFIG_MAKEFILE(dlls/dxcore/tests)
+ WINE_CONFIG_MAKEFILE(dlls/dxdiagn)
+ WINE_CONFIG_MAKEFILE(dlls/dxdiagn/tests)
+ WINE_CONFIG_MAKEFILE(dlls/dxgi)
++WINE_CONFIG_MAKEFILE(dlls/winedxgi)
+ WINE_CONFIG_MAKEFILE(dlls/dxgi/tests)
+ WINE_CONFIG_MAKEFILE(dlls/dxtrans)
+ WINE_CONFIG_MAKEFILE(dlls/dxva2)
+diff --git a/dlls/d3d12/d3d12_main.c b/dlls/d3d12/d3d12_main.c
+index 50632fa..4d999fe 100644
+--- a/dlls/d3d12/d3d12_main.c
++++ b/dlls/d3d12/d3d12_main.c
+@@ -89,6 +89,26 @@ static HRESULT d3d12_signal_event(HANDLE event)
+     return SetEvent(event) ? S_OK : E_FAIL;
+ }
+ 
++/* FineWine: Direct3D 12 here is vkd3d on Vulkan, and it works with Wine's own DXGI. A prefix may
++ * have another Direct3D layer selected (DXMT, for Direct3D 10 and 11 on Metal), in which case
++ * "dxgi.dll" is that layer's and knows nothing about this device. The runtime therefore ships
++ * Wine's DXGI a second time as winedxgi.dll, which is never replaced, and Direct3D 12 uses that
++ * copy. Without it (an unmodified Wine layout) this is the ordinary dxgi.dll. */
++static HRESULT d3d12_create_wine_dxgi_factory(REFIID iid, void **factory)
++{
++    static HRESULT (WINAPI *create_factory)(UINT flags, REFIID iid, void **factory);
++    HMODULE module;
++
++    if (!create_factory)
++    {
++        if ((module = LoadLibraryW(L"winedxgi.dll")))
++            create_factory = (void *)GetProcAddress(module, "CreateDXGIFactory2");
++        if (!create_factory)
++            create_factory = CreateDXGIFactory2;
++    }
++    return create_factory(0, iid, factory);
++}
++
+ static HRESULT d3d12_get_dxgi_adapter_for_dxcore_adapter(IDXCoreAdapter *adapter,
+         IDXGIAdapter **dxgi_adapter)
+ {
+@@ -102,7 +122,7 @@ static HRESULT d3d12_get_dxgi_adapter_for_dxcore_adapter(IDXCoreAdapter *adapter
+         return hr;
+     }
+ 
+-    if (FAILED(hr = CreateDXGIFactory2(0, &IID_IDXGIFactory4, (void **)&factory)))
++    if (FAILED(hr = d3d12_create_wine_dxgi_factory(&IID_IDXGIFactory4, (void **)&factory)))
+     {
+         WARN("Failed to create DXGI factory, hr %#lx.\n", hr);
+         return hr;
+@@ -128,7 +148,7 @@ static HRESULT d3d12_get_adapter(IWineDXGIAdapter **wine_adapter, IUnknown *adap
+ 
+     if (!adapter)
+     {
+-        if (FAILED(hr = CreateDXGIFactory2(0, &IID_IDXGIFactory4, (void **)&factory)))
++        if (FAILED(hr = d3d12_create_wine_dxgi_factory(&IID_IDXGIFactory4, (void **)&factory)))
+         {
+             WARN("Failed to create DXGI factory, hr %#lx.\n", hr);
+             goto done;
+@@ -155,7 +175,15 @@ static HRESULT d3d12_get_adapter(IWineDXGIAdapter **wine_adapter, IUnknown *adap
+     }
+ 
+     if (FAILED(hr = IUnknown_QueryInterface(adapter, &IID_IWineDXGIAdapter, (void **)wine_adapter)))
+-        WARN("Invalid adapter %p, hr %#lx.\n", adapter, hr);
++    {
++        /* FineWine: the program enumerated this adapter through another layer's DXGI (see
++         * d3d12_create_wine_dxgi_factory). A Mac has one GPU, so use Wine's primary adapter. */
++        WARN("Adapter %p is not Wine's, hr %#lx; using the primary adapter.\n", adapter, hr);
++        if (!factory && !dxgi_adapter
++                && SUCCEEDED(hr = d3d12_create_wine_dxgi_factory(&IID_IDXGIFactory4, (void **)&factory))
++                && SUCCEEDED(hr = IDXGIFactory4_EnumAdapters(factory, 0, &dxgi_adapter)))
++            hr = IDXGIAdapter_QueryInterface(dxgi_adapter, &IID_IWineDXGIAdapter, (void **)wine_adapter);
++    }
+ 
+ done:
+     if (dxgi_adapter)
+diff --git a/dlls/winedxgi/Makefile.in b/dlls/winedxgi/Makefile.in
+new file mode 100644
+index 0000000..336d1ff
+--- /dev/null
++++ b/dlls/winedxgi/Makefile.in
+@@ -0,0 +1,19 @@
++# FineWine: Wine's DXGI built a second time under its own name. A prefix can select another
++# Direct3D layer (DXMT) whose dxgi.dll then replaces Wine's; Direct3D 12 (vkd3d on Vulkan) still
++# needs Wine's DXGI for its adapters and swap chains, and gets it from this module.
++MODULE    = winedxgi.dll
++IMPORTS   = gdi32 dxguid uuid wined3d user32 win32u
++EXTRAINCL = $(VKD3D_PE_CFLAGS)
++PARENTSRC = ../dxgi
++
++VER_PRODUCTVERSION = 6,0,6000,16386
++
++SOURCES = \
++	adapter.c \
++	device.c \
++	dxgi_main.c \
++	factory.c \
++	output.c \
++	resource.c \
++	swapchain.c \
++	utils.c
+diff --git a/dlls/winedxgi/winedxgi.spec b/dlls/winedxgi/winedxgi.spec
+new file mode 100644
+index 0000000..67a345d
+--- /dev/null
++++ b/dlls/winedxgi/winedxgi.spec
+@@ -0,0 +1,6 @@
++@ stdcall CreateDXGIFactory(ptr ptr)
++@ stdcall CreateDXGIFactory1(ptr ptr)
++@ stdcall CreateDXGIFactory2(long ptr ptr)
++@ stdcall DXGID3D10CreateDevice(ptr ptr ptr long ptr long ptr)
++@ stdcall DXGID3D10RegisterLayers(ptr long)
++@ stdcall DXGIGetDebugInterface1(long ptr ptr)

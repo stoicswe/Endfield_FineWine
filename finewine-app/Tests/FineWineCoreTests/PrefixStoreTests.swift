@@ -123,6 +123,11 @@ final class PrefixStoreTests: XCTestCase {
         let prefix = try PrefixStore(paths: sandbox.paths).create(name: "P", runtimeID: nil)
         sandbox.write("WINE REGISTRY Version 2\n", to: prefix.directory.appendingPathComponent("system.reg"))
         XCTAssertTrue(prefix.isInitialized)
+        // Before Wine's server has exited there is no registry file yet, only its marker.
+        let fresh = try PrefixStore(paths: sandbox.paths).create(name: "Fresh", runtimeID: nil)
+        XCTAssertFalse(fresh.isInitialized)
+        sandbox.write("1763190000\n", to: fresh.directory.appendingPathComponent(".update-timestamp"))
+        XCTAssertTrue(fresh.isInitialized)
     }
 }
 

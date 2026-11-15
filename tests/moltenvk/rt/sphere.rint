@@ -1,0 +1,19 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+// A unit sphere at the origin of its bounding box.
+hitAttributeEXT vec3 normal;
+
+void main()
+{
+    vec3 o = gl_ObjectRayOriginEXT;
+    vec3 d = gl_ObjectRayDirectionEXT;
+    float a = dot(d, d);
+    float b = dot(o, d);
+    float c = dot(o, o) - 1.0;
+    float disc = b * b - a * c;
+    if (disc < 0.0) return;
+    float t = (-b - sqrt(disc)) / a;
+    normal = o + d * t;
+    reportIntersectionEXT(t, 7u);
+}

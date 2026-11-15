@@ -1,0 +1,181 @@
+From: FineWine
+Subject: [PATCH] Windows/ARM64EC: read the TEB from thread-specific data on macOS.
+
+FEX's ARM64EC build reads Windows thread state through x18, which holds the TEB on Windows on
+ARM. macOS clears x18 whenever a thread passes through the kernel (page fault, interrupt,
+signal, context switch) unless the process holds an Apple-issued entitlement, so those reads
+return garbage under Wine on a stock Mac.
+
+FineWine's Wine stores the TEB in thread-specific data slot 6, which libpthread reserves for
+Wine. This patch reads it from there in the ten places FEX used x18:
+
+- Source/Windows/ARM64EC/Module.S: the ARM64EC entry and exit thunks (LOAD_TEB_FIELD macro).
+- FEXCore: the dispatcher, the spill/fill code and the syscall and Mono callback paths, through
+  a new Arm64Emitter::LoadTEBField helper.
+
+Each site loaded a TEB field into a scratch register; the replacement uses that same register
+for the lookup, so no other register is disturbed. TPIDRRO_EL0 points at the slot array and
+its low three bits hold the CPU number.
+
+FEX's C++ code also reaches the TEB through NtCurrentTeb() from the mingw-w64 headers, which is
+defined as x18 too. scripts/build-fex.sh changes that definition in its copy of the toolchain.
+
+Against FEX commit ea43314f040633c76fb5891ff31d8a7c3dc533b8.
+---
+diff --git a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
+index 09828be..8b68aef 100644
+--- a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
++++ b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
+@@ -807,7 +807,7 @@ void Arm64Emitter::FillStaticRegs(FillStaticRegOptions Options) {
+ 
+ #ifdef ARCHITECTURE_arm64ec
+   // Load STATE in from the CPU area as x28 is not callee saved in the ARM64EC ABI.
+-  ldr(TmpReg.X(), ARMEmitter::Reg::r18, TEB_CPU_AREA_OFFSET);
++  LoadTEBField(TmpReg.X(), TEB_CPU_AREA_OFFSET);
+   ldr(STATE, TmpReg, CPU_AREA_EMULATOR_DATA_OFFSET);
+ #endif
+ 
+diff --git a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.h b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.h
+index 02d22e1..631215d 100644
+--- a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.h
++++ b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.h
+@@ -119,6 +119,24 @@ public:
+   };
+   void LoadConstant(ARMEmitter::Size s, ARMEmitter::Register Reg, uint64_t Constant, PadType Pad = PadType::NOPAD, int MaxBytes = 0);
+ 
++#ifdef ARCHITECTURE_arm64ec
++  // FineWine (macOS): Windows on ARM keeps the TEB in x18, but macOS clears x18 whenever a thread
++  // passes through the kernel unless the process holds an Apple-issued entitlement. Wine on macOS
++  // stores the TEB in thread-specific data slot 6 instead (reserved by libpthread for Wine).
++  // TPIDRRO_EL0 points at the slot array; its low three bits hold the CPU number.
++  // Loads the TEB into Dst without touching any other register.
++  void LoadTEB(ARMEmitter::XRegister Dst) {
++    mrs(Dst.R(), ARMEmitter::SystemRegister::TPIDRRO_EL0);
++    and_(ARMEmitter::Size::i64Bit, Dst.R(), Dst.R(), ~7ULL);
++    ldr(Dst, Dst.R(), 0x30);
++  }
++  // Loads a field of the TEB into Dst.
++  void LoadTEBField(ARMEmitter::XRegister Dst, size_t Offset) {
++    LoadTEB(Dst);
++    ldr(Dst, Dst.R(), Offset);
++  }
++#endif
++
+ protected:
+   FEXCore::Context::ContextImpl* EmitterCTX;
+ 
+diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
+index c903d3b..ae0a3b9 100644
+--- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
++++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
+@@ -151,7 +151,7 @@ void Dispatcher::EmitDispatcher() {
+   // Clobbers TMP1/2
+   // Check the EC code bitmap incase we need to exit the JIT to call into native code.
+   ARMEmitter::ForwardLabel l_NotECCode;
+-  ldr(TMP1, ARMEmitter::XReg::x18, TEB_PEB_OFFSET);
++  LoadTEBField(TMP1, TEB_PEB_OFFSET);
+   ldr(TMP1, TMP1, PEB_EC_CODE_BITMAP_OFFSET);
+ 
+   lsr(ARMEmitter::Size::i64Bit, TMP2, RipReg, 18);
+@@ -259,7 +259,7 @@ void Dispatcher::EmitDispatcher() {
+ #endif
+ 
+ #ifdef ARCHITECTURE_arm64ec
+-    ldr(TMP2, ARMEmitter::XReg::x18, TEB_CPU_AREA_OFFSET);
++    LoadTEBField(TMP2, TEB_CPU_AREA_OFFSET);
+     LoadConstant(ARMEmitter::Size::i32Bit, TMP1, 1);
+     strb(TMP1.W(), TMP2, CPU_AREA_IN_SYSCALL_CALLBACK_OFFSET);
+ #endif
+@@ -267,7 +267,7 @@ void Dispatcher::EmitDispatcher() {
+     Body();
+ 
+ #ifdef ARCHITECTURE_arm64ec
+-    ldr(TMP2, ARMEmitter::XReg::x18, TEB_CPU_AREA_OFFSET);
++    LoadTEBField(TMP2, TEB_CPU_AREA_OFFSET);
+     strb(ARMEmitter::WReg::zr, TMP2, CPU_AREA_IN_SYSCALL_CALLBACK_OFFSET);
+ #endif
+ 
+diff --git a/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp b/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
+index 137c99c..709a6f9 100644
+--- a/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
+@@ -377,7 +377,7 @@ DEF_OP(MonoBackpatcherWrite) {
+   }
+ 
+ #ifdef ARCHITECTURE_arm64ec
+-  ldr(TMP2, ARMEmitter::XReg::x18, TEB_CPU_AREA_OFFSET);
++  LoadTEBField(TMP2, TEB_CPU_AREA_OFFSET);
+   LoadConstant(ARMEmitter::Size::i32Bit, TMP1, 1);
+   strb(TMP1.W(), TMP2, CPU_AREA_IN_SYSCALL_CALLBACK_OFFSET);
+ #endif
+@@ -390,7 +390,7 @@ DEF_OP(MonoBackpatcherWrite) {
+   }
+ 
+ #ifdef ARCHITECTURE_arm64ec
+-  ldr(TMP2, ARMEmitter::XReg::x18, TEB_CPU_AREA_OFFSET);
++  LoadTEBField(TMP2, TEB_CPU_AREA_OFFSET);
+   strb(ARMEmitter::WReg::zr, TMP2, CPU_AREA_IN_SYSCALL_CALLBACK_OFFSET);
+ #endif
+ 
+diff --git a/Source/Windows/ARM64EC/Module.S b/Source/Windows/ARM64EC/Module.S
+index ce36c1d..9426c30 100644
+--- a/Source/Windows/ARM64EC/Module.S
++++ b/Source/Windows/ARM64EC/Module.S
+@@ -8,6 +8,15 @@ DispatchJump:
+   str lr, [sp, #-8]! // Push return address to stack, this will be popped by the x86 RET instr.
+   b check_target_ec
+ 
++// FineWine (macOS): the TEB is read from thread-specific data slot 6 rather than x18, which
++// macOS clears whenever a thread passes through the kernel. See LoadTEB in Arm64Emitter.h.
++.macro LOAD_TEB_FIELD reg, offset
++  mrs \reg, tpidrro_el0
++  and \reg, \reg, #0xfffffffffffffff8
++  ldr \reg, [\reg, #0x30]
++  ldr \reg, [\reg, \offset]
++.endm
++
+   // __os_arm64x_dispatch_ret in ARM64EC docs
+   // Expects target code address in lr
+ .globl RetToEntryThunk
+@@ -16,7 +25,7 @@ RetToEntryThunk:
+ 
+ check_target_ec:
+   // Check if target is in fact x86 code
+-  ldr x16, [x18, #0x60] // TEB->PEB
++  LOAD_TEB_FIELD x16, #0x60 // TEB->PEB
+   ldr x16, [x16, #0x368] // PEB->EcCodeBitMap
+   lsr x17, x9, #18
+   ldr x16, [x16, x17, lsl #3]
+@@ -32,7 +41,7 @@ ExitToX64:
+   str lr, [sp, #-8]! // Push return address to stack, this will be popped by the x86 RET instr.
+ 
+ enter_jit:
+-  ldr x17, [x18, #0x1788] // TEB->ChpeV2CpuAreaInfo
++  LOAD_TEB_FIELD x17, #0x1788 // TEB->ChpeV2CpuAreaInfo
+   mov w16, #1
+   strb w16, [x17, #0x0] // ChpeV2CpuAreaInfo->InSimulation
+   ldr x16, [x17, #0x40] // ChpeV2CpuAreaInfo->EmulatorData[2] - DispatcherLoopTopEnterEC
+@@ -41,12 +50,12 @@ enter_jit:
+   // Invoked by KiUserEmulationDispatcher after e.g. an NtContinue to x86 code
+ .global BeginSimulation
+ BeginSimulation:
+-  ldr x17, [x18, #0x1788] // TEB->ChpeV2CpuAreaInfo
++  LOAD_TEB_FIELD x17, #0x1788 // TEB->ChpeV2CpuAreaInfo
+   ldr x16, [x17, #0x8] // ChpeV2CpuAreaInfo->EmulatorStackBase
+   mov sp, x16
+   ldr x0, [x17, #0x18] // ChpeV2CpuAreaInfo->ContextAmd64
+   bl "#SyncThreadContext"
+-  ldr x17, [x18, #0x1788] // TEB->ChpeV2CpuAreaInfo
++  LOAD_TEB_FIELD x17, #0x1788 // TEB->ChpeV2CpuAreaInfo
+   ldr x16, [x17, #0x48] // ChpeV2CpuAreaInfo->EmulatorData[3] - DispatcherLoopTopEnterECFillSRA
+   mov x11, #0 // Zero ENTRY_FILL_SRA_SINGLE_INST_REG to avoid single step
+   br x16 // DispatcherLoopTopEnterECFillSRA(SingleInst:x10, CPUArea:x17)
+@@ -59,7 +68,7 @@ ExitFunctionEC:
+   mrs x17, fpcr
+   and x17, x17, #~6 // NEP + AH
+   msr fpcr, x17
+-  ldr x17, [x18, #0x1788] // TEB->ChpeV2CpuAreaInfo
++  LOAD_TEB_FIELD x17, #0x1788 // TEB->ChpeV2CpuAreaInfo
+   strb wzr, [x17, #0x0] // ChpeV2CpuAreaInfo->InSimulation
+   ldr x17, [x17, #0x20] // ChpeV2CpuAreaInfo->SuspendDoorbell
+   ldr w17, [x17]

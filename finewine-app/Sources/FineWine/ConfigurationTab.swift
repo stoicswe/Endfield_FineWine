@@ -63,7 +63,7 @@ struct ConfigurationTab: View {
             }
 
             Card(title: "Graphics", symbol: "display", footnote: graphicsNote) {
-                Row(label: "Direct3D") {
+                Row(label: "Direct3D", detail: GraphicsBackend.scopeNote) {
                     Picker("Direct3D", selection: $draft.graphicsBackend) {
                         ForEach(GraphicsBackend.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }
@@ -71,13 +71,21 @@ struct ConfigurationTab: View {
                 }
                 Divider()
                 Toggle(isOn: $draft.retinaMode) {
-                    Text("High resolution (Retina) mode")
-                    Text("Sharper, but programs draw four times the pixels and text gets smaller unless DPI is raised.")
+                    Text("High-resolution mode")
+                    Text("Programs draw at the display's real pixel resolution, so they are as sharp as Mac apps. Turn it off if a program runs too slowly at full resolution.")
                 }
                 Divider()
-                Row(label: "Screen DPI", detail: "96 is 100% scaling; 192 suits Retina mode.") {
-                    Stepper(value: $draft.dpi, in: 72...480, step: 12) {
-                        Text("\(draft.dpi)").monospacedDigit()
+                Toggle(isOn: $draft.automaticDPI) {
+                    Text("Scale automatically")
+                    Text(draft.retinaMode
+                         ? "Sets the Windows DPI from the display (\(draft.effectiveDPI(displayScale: model.currentAppearance.displayScale)) on this Mac), so text and controls keep their normal size."
+                         : "Keeps the Windows DPI at 96, which matches macOS when high-resolution mode is off.")
+                }
+                if !draft.automaticDPI {
+                    Row(label: "Screen DPI", detail: "96 is 100% scaling; 192 suits high-resolution mode on a Retina display.") {
+                        Stepper(value: $draft.dpi, in: 72...480, step: 12) {
+                            Text("\(draft.dpi)").monospacedDigit()
+                        }
                     }
                 }
                 Divider()
@@ -94,6 +102,14 @@ struct ConfigurationTab: View {
                             .textFieldStyle(.roundedBorder).frame(width: 80)
                     }
                 }
+                Divider()
+                Toggle(isOn: $draft.dlssThroughMetalFX) {
+                    Text("DLSS through MetalFX")
+                    Text(draft.graphicsBackend == .dxmt
+                         ? "Games that offer NVIDIA DLSS upscale with Apple's MetalFX instead. FSR is unaffected: it runs as the game ships it."
+                         : "Needs DXMT as the Direct3D layer. FSR is unaffected: it runs as the game ships it.")
+                }
+                .disabled(draft.graphicsBackend != .dxmt)
                 Divider()
                 Toggle(isOn: $draft.metalHUD) {
                     Text("Metal performance overlay")

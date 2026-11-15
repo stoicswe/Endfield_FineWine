@@ -70,7 +70,9 @@ jobs:
           set -euo pipefail
           swift test 2>&1 | tee test.log | grep -E 'error:|failed|Executed [0-9]+ tests' || true
           # The grep above only trims the log; this is what decides pass or fail.
-          grep -Eq 'Executed [1-9][0-9]* tests, with 0 failures' test.log
+          # The runtime integration test is skipped here (no Wine on the runner), which puts
+          # "1 test skipped and" between the count and the failures.
+          grep -Eq 'Executed [1-9][0-9]* tests, with ([0-9]+ tests? skipped and )?0 failures' test.log
 
       - name: Build FineWine.app
         shell: bash

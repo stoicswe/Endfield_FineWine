@@ -1,4 +1,4 @@
-# FineWine runtime spike: upstream Wine on Apple Silicon without CrossOver (2026-11-14)
+# FineWine runtime: upstream Wine on Apple Silicon without CrossOver (2026-11-14/15)
 
 FineWine (`finewine-app/`) needs a Wine runtime of its own. This is what happened when upstream
 Wine 11.21 was built for macOS ARM64 and started, and what it means for the plan.
@@ -69,8 +69,8 @@ wants. This was read from the installed app's code signature, not from any CodeW
 
 ## What this means
 
-- **"Upstream Wine + our patches" is not enough on its own.** The plan assumed the hard part was
-  FEX. The hard part comes earlier: running any Windows code at all.
+- **Upstream Wine as shipped is not enough.** The plan assumed the hard part was FEX. A hard part
+  comes earlier: running any Windows code at all. (Solved for Wine's own code; see Outcome.)
 - **Native ARM Wine runs ARM64 Windows programs only.** Without an x64 emulator it cannot run
   x64 games, Arknights: Endfield included. Wine's own tools (winecfg, regedit, notepad) are
   ARM64 and would run.
@@ -96,10 +96,175 @@ wants. This was read from the installed app's code signature, not from any CodeW
 3. **Keep CrossOver as the runtime for now.** FineWine Patcher keeps working as it does today.
    FineWine itself can already manage prefixes for any Wine folder it is pointed at.
 
+## Outcome (2026-11-15): option 2 works for Wine's own code
+
+`patches/runtime/0002-macos-arm64-run-without-x18-or-low-memory.patch` implements the in-process
+route, and with it the runtime starts on a stock Mac with an ad-hoc signature:
+
+- `wineboot --init` creates a prefix in about six seconds and exits 0.
+- Wine Configuration (winecfg) opens a window, and MoltenVK creates a Vulkan instance.
+- With `WINEMSYNC=1` the server reports `msync: up and running` and a prefix boots cleanly
+  (`patches/runtime/0001`).
+- FineWine's own code drives it: `RuntimeIntegrationTests` creates a prefix, applies settings and
+  macOS styling, switches to MSync and runs a Windows command, all against this runtime.
+
+What the patch does:
+
+| Problem | Change |
+|---|---|
+| x18 is cleared by the kernel | `NtCurrentTeb()` reads the TEB from thread-specific data slot 6 (`mrs tpidrro_el0`, clear the low three bits, load offset `0x30`). The 14 assembly sites in ntdll that read TEB fields through x18 load it the same way. The Unix side stores the TEB in the slot when a thread starts. |
+| No memory below 4 GB | The shared data page moves from `0x7ffe0000` to `0x17ffe0000` in the seven places Wine refers to it. |
+| Loader killed at `exec` | On aarch64 the loader is linked with the default `__PAGEZERO` and segment alignment. |
+
+Two things found on the way:
+
+- Wine's PE modules are compiled in MSVC-compatible mode, where `__GNUC__` is not defined, so the
+  `NtCurrentTeb()` change has to be in a branch that also matches clang.
+- The first Windows thread does not go through `server_init_thread`, so its TEB is published in
+  `server_init_process_done`.
+
+### Generated code (2026-11-15)
+
+A test program that writes ARM64 instructions into memory and calls them showed a third gap:
+memory written first and then made executable ran, but a `PAGE_EXECUTE_READWRITE` page did not.
+macOS refuses `PROT_WRITE|PROT_EXEC` on ordinary memory, and Wine's `mprotect` to that
+combination failed silently.
+
+`patches/runtime/0003` maps such a page writable and switches the host page between writable
+and executable from the fault handler as the program writes to it and runs it. All three cases
+now pass (`scripts/test-finewine-runtime.sh`): write then execute, writable and executable at
+once, and code rewritten in place. An x64 emulator's translation cache depends on this.
+
+What macOS allows, measured:
+
+| Attempt | Result |
+|---|---|
+| Ordinary memory, written, then `mprotect` to read+execute | works |
+| Ordinary memory mapped read+write+execute | refused (`EACCES`) |
+| `MAP_JIT` memory with the per-thread write toggle | works, and is the fast path |
+| `MAP_JIT` with `MAP_FIXED` | refused (`EINVAL`) |
+| `MAP_JIT` at a hint address after `munmap` | works, lands at the hint |
+| `mprotect` on a `MAP_JIT` region that is already read+write+execute | refused |
+
+### High-resolution mode
+
+New prefixes have Wine's Retina mode on and take their DPI from the display (192 on a 2x
+display), so programs draw at the display's real resolution and keep their normal size. Checked
+on Wine Configuration: a 406 x 434 point window is drawn with 812 x 868 pixels.
+
+### x64 programs: FEX (2026-11-15)
+
+FEX's Windows ARM64EC build is one DLL that Wine loads as `xtajit64.dll` for every x64 process.
+It builds on a Mac with llvm-mingw (`scripts/build-fex.sh`) and needed three things to run here:
+
+- **Its own x18 reads.** Ten places, in the entry and exit thunks and in the code the JIT emits
+  around calls, loaded TEB fields through x18. `patches/fex/0001` changes them to the
+  thread-specific data lookup. The mingw-w64 header definition of `NtCurrentTeb()` is changed
+  the same way in the script's copy of the toolchain.
+- **Writable and executable memory** for its translation cache: `patches/runtime/0003`.
+- **Reads of `0x7ffe0000` by the x64 program**, which FEX turns into plain loads:
+  `patches/runtime/0004`.
+
+FEX's Linux helper library is not built. FEX treats it as optional, and what it offers (hardware
+TSO, huge pages, naming memory regions) has no macOS equivalent without Apple's entitlement, so
+FEX runs in its software memory-ordering mode.
+
+`tests/runtime/x64-stress.c` passes under FEX: eight threads with events and locks, a
+floating-point loop checked against a natively computed value, raising and continuing an
+exception, generated x64 code rewritten in place, the performance counter, file I/O, and a
+direct read of the shared data page.
+
+Two x18 reads remain in the FEX DLL, both in the toolchain's prebuilt C++ exception support.
+
+### Code this tree does not build: x18 repair
+
+DXMT's DLLs showed the general problem: they link prebuilt mingw-w64 start-up code and C++
+runtime that read the TEB through x18, and the compiler itself emits `ldr x9, [x18, #0x58]` for
+thread-local variables. `patches/runtime/0005` repairs such accesses in the fault handler (an
+access through x18 is performed for the instruction; an access through a zeroed copy of x18 gets
+the TEB put in the register). That is also what makes third-party ARM64 programs workable.
+Each repair costs a trap.
+
+### Direct3D: DXMT works; GPTK cannot be used
+
+- **Apple's GPTK (D3DMetal) cannot be loaded.** GPTK 1, 3 and 4.0 beta 3 were all examined: the
+  framework, `libd3dshared.dylib`, the shader libraries and the Wine DLLs are x86_64 only, and
+  the README describes running through Rosetta. An arm64 process cannot load x86_64 Mac
+  libraries, and FEX translates Windows code, not Mac libraries. D3DMetal only fits a Wine that
+  itself runs under Rosetta, which is what the patcher's x64 variant uses.
+- **DXMT** (Direct3D 10 and 11 on Metal) is built as ARM64X by `scripts/build-dxmt.sh` and
+  installed in the runtime. `tests/runtime/d3d11-clear.c` creates a device (feature level 11.0,
+  adapter "Apple M3"), clears a render target on the GPU and reads the pixel back correctly,
+  both as an ARM64 program and as an x64 program under FEX.
+- A prefix selects DXMT through `WINEDLLPATH`, which needed `patches/runtime/0006`. DXMT's
+  Metal bridge (`winemetal.dll`/`.so`) lives with Wine's own DLLs, because Wine only loads a
+  built-in DLL that has a file in the prefix.
+- **WineD3D is not a usable fallback for Direct3D 11** on macOS: device creation fails.
+- **Direct3D 12 and Vulkan work in every prefix, through MoltenVK.** Direct3D 12 is Wine's own
+  (vkd3d on Vulkan). `tests/runtime/d3d12-clear.c` creates a device, clears a render target on
+  the GPU, reads the pixel back, then creates a swap chain on a hidden window and presents a
+  frame; `tests/runtime/vulkan-device.c` creates a Vulkan instance and device ("Apple M3",
+  Vulkan 1.1). Both pass as ARM64 and as x64 under FEX.
+- **Direct3D 12 alongside DXMT** needed work, because with DXMT selected `dxgi.dll` is DXMT's
+  and Wine's Direct3D 12 depends on Wine's DXGI. `patches/runtime/0007` builds Wine's DXGI a
+  second time as `winedxgi.dll` and has Direct3D 12 use it; `patches/dxmt/0001` has DXMT's DXGI
+  pass Direct3D 12 swap chains on to it. A renamed copy of `dxgi.dll` does not work: Wine finds
+  a built-in DLL by the name recorded inside it. DXMT's own Direct3D 12 (an in-progress build
+  option) is not used.
+- **The adapter is reported as the Apple GPU**: "Apple M3", vendor `106b`, 9093 MB here, from
+  DXMT and from Wine's built-in Direct3D alike. Upstream WineD3D has no Apple entries and
+  reported an "NVIDIA GeForce 6800"; `patches/runtime/0008` fixes that.
+  **One exception, found on 2026-11-15:** with "DLSS through MetalFX" on, which is the default
+  for new prefixes, DXMT (Direct3D 10 and 11) keeps the name but reports NVIDIA's vendor id,
+  `10de`. That is DXMT's own behaviour under `DXMT_ENABLE_NVEXT=1`: games offer DLSS only on an
+  NVIDIA adapter. The runtime checks do not look at the vendor id in that mode.
+
+### Upscaling, Metal 4 and ray tracing (2026-11-15)
+
+- **DLSS as MetalFX: available for Direct3D 11.** DXMT ships its own `nvngx.dll`, which answers
+  the DLSS SDK and upscales with MetalFX's temporal scaler, and an `nvapi64.dll`. Both are
+  built (`-Denable_nvngx=true -Denable_nvapi=true`) and installed with Wine's DLLs. DXMT turns
+  them on with `DXMT_ENABLE_NVEXT=1`, which FineWine sets for a prefix with "DLSS through
+  MetalFX" on (the default) and DXMT selected. `tests/runtime/dlss-metalfx.c` initialises NGX
+  on a DXMT device and fetches its capability parameters, as x64 under FEX. No frame has been
+  upscaled: that needs a game or a DLSS sample.
+- **DLSS for Direct3D 12 is not available.** Direct3D 12 here is vkd3d on MoltenVK, which has
+  no DLSS path. Apple's D3DMetal has one, but cannot be loaded (see above).
+- **FSR needs nothing.** It is shader code the game ships, and runs on any Direct3D layer.
+- **MetalFX spatial upscaling of the whole output** is a DXMT option
+  (`DXMT_METALFX_SPATIAL_SWAPCHAIN=1`), not wired into FineWine's settings yet.
+- **Metal 4: nothing to switch on yet.** Neither translation layer in the runtime uses Metal 4.
+  DXMT's Metal 4 code is compiled out in its source ("needs macOS 26 SDK, and we don't really
+  use it at the moment"), and MoltenVK has no Metal 4 code. Apple's D3DMetal does, and is the
+  one we cannot use. When DXMT or MoltenVK gain Metal 4 paths they select them at run time by
+  OS and GPU, and rebuilding picks that up; FineWine sets nothing that would hold it back.
+- **Ray tracing: Vulkan ray tracing works, DirectX Raytracing does not yet.** The runtime's
+  MoltenVK carries `patches/moltenvk`, which map `VK_KHR_acceleration_structure`,
+  `VK_KHR_ray_query` and `VK_KHR_ray_tracing_pipeline` to Metal; two tests trace rays through
+  Wine from ARM64 and x64 programs. Direct3D 12 still reports
+  `D3D12_RAYTRACING_TIER_NOT_SUPPORTED`: Wine's vkd3d has no DirectX Raytracing, and adding it
+  on top of these extensions is the next step. See
+  [21-metal4-and-ray-tracing.md](21-metal4-and-ray-tracing.md).
+- **An intermittent hang at window teardown.** Seen once on 2026-11-15 in about seven runs of
+  `tests/runtime/d3d9-clear.c` as an x64 program: the process never exits. The Mac main thread
+  takes a fault while releasing a block in `winemac.so` (`OnMainThread`), and Wine's signal
+  handler then spins in `setup_raise_exception`, because that thread has no TEB. Cause of the
+  first fault not found. Not related to MoltenVK.
+- **Direct3D 10** goes through DXMT's `d3d10core.dll`; it has not been exercised.
+
 ## State of the pieces
 
 | Piece | State |
 |---|---|
-| `scripts/build-finewine-runtime.sh` | Fetch, apply, configure, build and package all ran. The packaged runtime does not start Windows programs, for the reasons above. |
-| `patches/runtime/0001-msync-…patch` | MSync moved from the CrossOver 26.3 Wine source to Wine 11.21. Applies cleanly after `patches/ARM`. Not compiled or run yet. |
-| FineWine.app | Complete against a stand-in runtime; 157 unit tests pass. Not yet run against a working Wine of ours, because there isn't one. |
+| `scripts/build-finewine-runtime.sh` | Builds and packages a runtime that boots. The `fetch` and `apply` steps were not re-run end to end after the last patch changes; the patches were checked by applying them to a clean tree and comparing with the source that was built. |
+| `patches/runtime/0001` (MSync) | Compiles and runs on Wine 11.21. |
+| `patches/runtime/0002` (x18 and low memory) | Wine's own ARM64 programs run. |
+| `patches/runtime/0003` (writable and executable pages) | Generated code runs. |
+| `patches/runtime/0004`–`0006` | Shared-page reads, x18 repair and DLL path order: all exercised by the test script. |
+| `scripts/build-fex.sh`, `patches/fex/0001` | FEX builds and runs x64 test programs. The `fetch` and `apply` steps were not re-run from scratch. |
+| `scripts/build-dxmt.sh` | DXMT builds and renders. The `fetch` step was not re-run from scratch. |
+| `patches/runtime/0007`, `patches/dxmt/0001` | Direct3D 12 works with and without DXMT selected. |
+| `patches/runtime/0008` | Apple GPU reported by both Direct3D layers. |
+| DLSS as MetalFX | NGX and NVAPI initialise on DXMT; no frame upscaled yet. |
+| `scripts/test-finewine-runtime.sh` | All twelve checks pass on the current, stripped runtime. |
+| FineWine.app | Unit tests pass, and the core library passes an integration test against the runtime. The app's windows were not driven by hand against it. |

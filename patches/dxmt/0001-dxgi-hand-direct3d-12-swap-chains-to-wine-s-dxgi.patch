@@ -1,0 +1,51 @@
+From: FineWine
+Subject: [PATCH] dxgi: Hand Direct3D 12 swap chains to Wine's DXGI.
+
+In FineWine's runtime Direct3D 12 is Wine's own (vkd3d on Vulkan through MoltenVK), while DXMT
+provides Direct3D 10 and 11 and, with them, dxgi.dll. A Direct3D 12 program therefore asks
+DXMT's DXGI factory for a swap chain on a command queue that DXMT knows nothing about, and got
+DXGI_ERROR_UNSUPPORTED.
+
+When the device passed to CreateSwapChainForHwnd is a Direct3D 12 command queue, the request is
+now forwarded to Wine's DXGI, which the runtime ships as winedxgi.dll (patches/runtime/0007).
+CreateSwapChain reaches the same code. Direct3D 10 and 11 devices are unaffected.
+
+Against DXMT commit 0df8610.
+---
+diff --git a/src/dxgi/dxgi_factory.cpp b/src/dxgi/dxgi_factory.cpp
+index 18956a5..81e33a2 100644
+--- a/src/dxgi/dxgi_factory.cpp
++++ b/src/dxgi/dxgi_factory.cpp
+@@ -109,6 +109,32 @@ public:
+     if (!ppSwapChain || !pDesc || !hWnd || !pDevice)
+       return DXGI_ERROR_INVALID_CALL;
+ 
++    // FineWine: a Direct3D 12 command queue here comes from Wine's own Direct3D 12 (vkd3d on
++    // Vulkan), not from DXMT, and only Wine's DXGI can make a swap chain for it. The runtime
++    // ships that DXGI as winedxgi.dll for this purpose, so the request is handed to it.
++    {
++      static const GUID IID_D3D12CommandQueue = {
++          0x0ec870a6, 0x5d7e, 0x4c22, {0x8c, 0xfc, 0x5b, 0xaa, 0xe0, 0x76, 0x16, 0xed}};
++      IUnknown *d3d12_queue = nullptr;
++      if (SUCCEEDED(pDevice->QueryInterface(IID_D3D12CommandQueue, (void **)&d3d12_queue))) {
++        d3d12_queue->Release();
++        using CreateFactory2 = HRESULT(WINAPI *)(UINT, REFIID, void **);
++        HMODULE wine_dxgi = LoadLibraryW(L"winedxgi.dll");
++        auto create_factory =
++            wine_dxgi ? (CreateFactory2)GetProcAddress(wine_dxgi, "CreateDXGIFactory2") : nullptr;
++        IDXGIFactory2 *wine_factory = nullptr;
++        if (!create_factory ||
++            FAILED(create_factory(0, __uuidof(IDXGIFactory2), (void **)&wine_factory))) {
++          ERR("A Direct3D 12 swap chain needs winedxgi.dll, which is missing");
++          return DXGI_ERROR_UNSUPPORTED;
++        }
++        HRESULT hr = wine_factory->CreateSwapChainForHwnd(pDevice, hWnd, pDesc, pFullscreenDesc,
++                                                           nullptr, ppSwapChain);
++        wine_factory->Release();
++        return hr;
++      }
++    }
++
+     Com<IMTLSwapChainFactory> swapchain_factory;
+     if (FAILED(pDevice->QueryInterface(IID_PPV_ARGS(&swapchain_factory)))) {
+       ERR("Unsupported device type");

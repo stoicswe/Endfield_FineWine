@@ -1,0 +1,76 @@
+From: FineWine
+Subject: [PATCH] ntdll: Let pages be writable and executable on macOS for Apple Silicon.
+
+macOS on Apple Silicon refuses to map ordinary memory writable and executable at once: mmap
+with PROT_WRITE|PROT_EXEC fails, and Wine's mprotect to that combination fails silently, so a
+PAGE_EXECUTE_READWRITE page ended up not executable and the first jump into it crashed.
+
+A page that Windows has as both is now mapped writable only. When the program runs it, or
+writes to it while it is executable, virtual_handle_fault() switches the host page to the other
+state and the instruction is retried. Memory that is written first and made executable
+afterwards with VirtualProtect already worked and is unchanged.
+
+This is what code generators need: JIT compilers, an x64 emulator's translation cache, and
+programs that patch their own code. It costs one fault per switch. A faster path (MAP_JIT with
+the per-thread write toggle) is possible later for an emulator that can call the toggle itself.
+---
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 302ef1c..7fb6d70 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -1096,11 +1096,27 @@ static int get_unix_prot( BYTE vprot )
+         if (vprot & VPROT_WRITECOPY) prot |= PROT_WRITE | PROT_READ;
+         if (vprot & VPROT_EXEC) prot |= PROT_EXEC | PROT_READ;
+         if (vprot & VPROT_WRITEWATCH) prot &= ~PROT_WRITE;
++#if defined(__APPLE__) && defined(__aarch64__)
++        /* FineWine: macOS on Apple Silicon never maps ordinary memory writable and executable
++         * at once. Such a page starts out writable; virtual_handle_fault() switches it between
++         * writable and executable as the program writes to it and runs it. */
++        if ((prot & PROT_WRITE) && (prot & PROT_EXEC)) prot &= ~PROT_EXEC;
++#endif
+     }
+     if (!prot) prot = PROT_NONE;
+     return prot;
+ }
+ 
++#if defined(__APPLE__) && defined(__aarch64__)
++/* FineWine: whether Windows sees the page as both writable and executable (committed, not a
++ * guard page), which macOS can only provide one half of at a time. */
++static BOOL is_exec_write_toggle_page( BYTE vprot )
++{
++    if (!(vprot & VPROT_COMMITTED) || (vprot & VPROT_GUARD)) return FALSE;
++    return (vprot & VPROT_EXEC) && (vprot & (VPROT_WRITE | VPROT_WRITECOPY));
++}
++#endif
++
+ 
+ /***********************************************************************
+  *           dump_view
+@@ -4291,6 +4307,27 @@ NTSTATUS virtual_handle_fault( struct thread_data *data, EXCEPTION_RECORD *rec,
+     }
+ #endif
+ 
++#if defined(__APPLE__) && defined(__aarch64__)
++    /* FineWine: a page that Windows has as writable and executable is one or the other on the
++     * Mac side. Running it while it is writable, or writing it while it is executable, lands
++     * here; flip the host page and let the instruction run again. This is what lets programs
++     * that generate code (JIT compilers, x64 emulators, some copy protection) work. */
++    if (is_exec_write_toggle_page( vprot ))
++    {
++        int unix_prot = 0;
++
++        if (err == EXCEPTION_EXECUTE_FAULT) unix_prot = PROT_READ | PROT_EXEC;
++        else if (err == EXCEPTION_WRITE_FAULT && !(vprot & VPROT_WRITEWATCH)) unix_prot = PROT_READ | PROT_WRITE;
++
++        if (unix_prot && !mprotect( page, host_page_size, unix_prot ))
++        {
++            mutex_unlock( &virtual_mutex );
++            rec->ExceptionCode = STATUS_SUCCESS;
++            return STATUS_SUCCESS;
++        }
++    }
++#endif
++
+     if (!is_inside_signal_stack( data, stack ) && (vprot & VPROT_GUARD))
+     {
+         struct thread_stack_info stack_info;

@@ -77,7 +77,8 @@ public struct PrefixService {
         guard problems.isEmpty else { throw FineWineError(problems.joined(separator: "\n")) }
 
         let edits = prefix.metadata.settings.registryEdits(replacing: prefix.metadata.appliedSettings,
-                                                           appearance: appearance)
+                                                           appearance: appearance,
+                                                           displayScale: appearance?.displayScale ?? 2)
         let file = prefix.directory.appendingPathComponent(".finewine-settings.reg")
         try RegistryFile.data(edits).write(to: file, options: .atomic)
         defer { try? FileManager.default.removeItem(at: file) }
@@ -85,19 +86,26 @@ public struct PrefixService {
 
         var updated = prefix
         updated.metadata.appliedSettings = prefix.metadata.settings
-        if prefix.metadata.settings.macAppearance, let appearance {
-            updated.metadata.appliedAppearance = appearance
-        } else if !prefix.metadata.settings.macAppearance {
-            updated.metadata.appliedAppearance = nil
-        }
+        // Recorded whenever it was used: for the styling, or for the automatic DPI.
+        if let appearance { updated.metadata.appliedAppearance = appearance }
         try prefixes.save(updated)
         return updated
     }
 
-    /// Whether the prefix's styling was written for a different Mac appearance than the
-    /// current one and should be applied again before showing Windows controls.
+    /// Whether the prefix's styling or automatic DPI was written for a different Mac appearance
+    /// or display scale than the current one, and should be applied again.
     public func needsAppearanceRefresh(_ prefix: Prefix, current: MacAppearance) -> Bool {
-        prefix.metadata.settings.macAppearance && prefix.metadata.appliedAppearance != current
+        let settings = prefix.metadata.settings
+        guard let applied = prefix.metadata.appliedAppearance else {
+            return settings.macAppearance || (settings.automaticDPI && settings.retinaMode)
+        }
+        if settings.macAppearance {
+            var a = applied, b = current
+            a.displayScale = 1; b.displayScale = 1
+            if a != b { return true }
+        }
+        // Moved to a display with a different scale: the automatic DPI is out of date.
+        return settings.automaticDPI && settings.retinaMode && applied.displayScale != current.displayScale
     }
 
     /// Stops the prefix's processes, removes its shortcut apps, then deletes it.

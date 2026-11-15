@@ -9,11 +9,75 @@ final class PrefixSettingsTests: XCTestCase {
     func testDefaultsProduceTheBaselineEdits() {
         let edits = PrefixSettings().registryEdits()
         XCTAssertEqual(edit(edits, PrefixSettings.wineKey, "Version"), .setString("win11"))
-        XCTAssertEqual(edit(edits, PrefixSettings.macDriverKey, "RetinaMode"), .setString("n"))
+        XCTAssertEqual(edit(edits, PrefixSettings.macDriverKey, "RetinaMode"), .setString("y"), "high-resolution mode is the default")
         XCTAssertEqual(edit(edits, PrefixSettings.macDriverKey, "LeftOptionIsAlt"), .setString("y"))
         XCTAssertEqual(edit(edits, PrefixSettings.desktopKey, "LogPixels"), .setDWord(96))
         XCTAssertEqual(edit(edits, PrefixSettings.explorerKey, "Desktop"), .deleteValue)
         XCTAssertNil(edit(edits, PrefixSettings.currentVersionKey, "CurrentBuild"))
+    }
+
+    func testHighResolutionAndAutomaticScalingAreTheDefaults() {
+        let settings = PrefixSettings()
+        XCTAssertTrue(settings.retinaMode)
+        XCTAssertTrue(settings.automaticDPI)
+        // On a Retina display programs get 192 DPI, so they keep their size and gain sharpness.
+        XCTAssertEqual(settings.effectiveDPI(displayScale: 2), 192)
+        XCTAssertEqual(edit(settings.registryEdits(displayScale: 2), PrefixSettings.desktopKey, "LogPixels"), .setDWord(192))
+        XCTAssertEqual(edit(settings.registryEdits(displayScale: 1), PrefixSettings.desktopKey, "LogPixels"), .setDWord(96))
+    }
+
+    func testEffectiveDPI() {
+        var settings = PrefixSettings()
+        XCTAssertEqual(settings.effectiveDPI(displayScale: 1), 96)
+        XCTAssertEqual(settings.effectiveDPI(displayScale: 1.5), 144)
+        XCTAssertEqual(settings.effectiveDPI(displayScale: 3), 288)
+        XCTAssertEqual(settings.effectiveDPI(displayScale: 0), 96, "nonsense scales are clamped")
+        XCTAssertEqual(settings.effectiveDPI(displayScale: 99), 384)
+
+        settings.retinaMode = false
+        XCTAssertEqual(settings.effectiveDPI(displayScale: 2), 96, "without high-resolution mode Wine already works in points")
+
+        settings.automaticDPI = false
+        settings.dpi = 120
+        XCTAssertEqual(settings.effectiveDPI(displayScale: 2), 120, "a manual DPI is used as given")
+        settings.retinaMode = true
+        XCTAssertEqual(edit(settings.registryEdits(displayScale: 2), PrefixSettings.desktopKey, "LogPixels"), .setDWord(120))
+    }
+
+    func testAutomaticDPIIgnoresAnOutOfRangeManualValue() {
+        var settings = PrefixSettings()
+        settings.dpi = 5
+        XCTAssertEqual(settings.validationProblems(), [], "the manual value is not in use")
+        settings.automaticDPI = false
+        XCTAssertEqual(settings.validationProblems().count, 1)
+    }
+
+    func testPrefixesSavedBeforeAutomaticScalingKeepTheirDPI() throws {
+        let chosen = try JSONDecoder().decode(PrefixSettings.self, from: Data(#"{"dpi":144,"retinaMode":true}"#.utf8))
+        XCTAssertFalse(chosen.automaticDPI)
+        XCTAssertEqual(chosen.effectiveDPI(displayScale: 2), 144)
+        let untouched = try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8))
+        XCTAssertTrue(untouched.automaticDPI)
+        XCTAssertTrue(untouched.retinaMode)
+    }
+
+    func testDLSSThroughMetalFXIsSwitchedOnOnlyWithDXMT() {
+        func env(_ settings: PrefixSettings) -> [String: String] {
+            Dictionary(uniqueKeysWithValues: settings.environmentVariables().map { ($0.name, $0.value) })
+        }
+        var settings = PrefixSettings()
+        XCTAssertTrue(settings.dlssThroughMetalFX)
+        XCTAssertEqual(env(settings)["DXMT_ENABLE_NVEXT"], "1")
+
+        settings.dlssThroughMetalFX = false
+        XCTAssertNil(env(settings)["DXMT_ENABLE_NVEXT"])
+
+        settings.dlssThroughMetalFX = true
+        settings.graphicsBackend = .wined3d
+        XCTAssertNil(env(settings)["DXMT_ENABLE_NVEXT"], "only DXMT has the library that does the translation")
+
+        let old = try? JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8))
+        XCTAssertEqual(old?.dlssThroughMetalFX, true)
     }
 
     func testWindowsBuildWritesBothBuildValues() {
@@ -53,7 +117,7 @@ final class PrefixSettingsTests: XCTestCase {
 
     func testEnvironmentVariables() {
         var settings = PrefixSettings()
-        XCTAssertEqual(settings.environmentVariables().map(\.name), ["WINEDEBUG"])
+        XCTAssertEqual(settings.environmentVariables().map(\.name), ["WINEDEBUG", "DXMT_ENABLE_NVEXT"])
         XCTAssertEqual(settings.environmentVariables().first?.value, "-all")
 
         settings.syncMode = .msync
@@ -64,7 +128,7 @@ final class PrefixSettingsTests: XCTestCase {
                                 EnvironmentVariable(name: "bad name", value: "x")]
         let env = Dictionary(uniqueKeysWithValues: settings.environmentVariables().map { ($0.name, $0.value) })
         XCTAssertEqual(env, ["WINEDEBUG": "err+all", "WINEMSYNC": "1", "MTL_HUD_ENABLED": "1",
-                             "FEX_HIDEHYPERVISORBIT": "1", "MY_FLAG": "1"])
+                             "FEX_HIDEHYPERVISORBIT": "1", "DXMT_ENABLE_NVEXT": "1", "MY_FLAG": "1"])
     }
 
     func testEmptyDebugChannelsFallBackToSilent() {
@@ -85,6 +149,7 @@ final class PrefixSettingsTests: XCTestCase {
         XCTAssertEqual(PrefixSettings().validationProblems(), [])
         var settings = PrefixSettings()
         settings.windowsBuild = "24H2"
+        settings.automaticDPI = false
         settings.dpi = 20
         settings.virtualDesktop = VirtualDesktop(width: 100, height: 100)
         settings.environment = [EnvironmentVariable(name: "1BAD", value: "")]
