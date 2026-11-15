@@ -24,6 +24,8 @@
 #   SKIP_ARCHIVE=1  skip step 7
 #   FINEWINE_VERSION, CODESIGN_ID, ICON_VARIANT   for FineWine.app, as in its build-app.sh
 #   JOBS, WINE_TAG, RUNTIME_VERSION               for the runtime, as in its script
+#   DEVELOPER_DIR   the Xcode to use; found in /Applications when xcode-select points at the
+#                   command line tools
 #
 # From scratch this takes well over an hour (DXMT builds LLVM once, the runtime about 40 minutes).
 set -euo pipefail
@@ -36,6 +38,18 @@ esac
 
 log(){ printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 started=$(date +%s)
+
+# MoltenVK and the app need the full Xcode (xcodebuild), not just the command line tools. If
+# the selected developer directory is the command line tools, use the newest released Xcode in
+# /Applications for this run only; DEVELOPER_DIR, when set, is left alone.
+if [ -z "${DEVELOPER_DIR:-}" ] && ! xcodebuild -version >/dev/null 2>&1; then
+  # A released Xcode before a beta one.
+  xcode="$(ls -d /Applications/Xcode*.app/Contents/Developer 2>/dev/null | grep -vi beta | sort -V | tail -n 1 || true)"
+  [ -n "$xcode" ] || xcode="$(ls -d /Applications/Xcode*.app/Contents/Developer 2>/dev/null | sort -V | tail -n 1 || true)"
+  [ -n "$xcode" ] || { echo "ERROR: Xcode is needed (xcodebuild); only the command line tools are installed." >&2; exit 1; }
+  export DEVELOPER_DIR="$xcode"
+  echo "using Xcode at $DEVELOPER_DIR (xcode-select points at the command line tools)"
+fi
 
 if [ "$TARGET" != "app" ]; then
   log "1/8 MoltenVK (FineWine flavour)"
