@@ -41,6 +41,26 @@ public enum GraphicsBackend: String, Codable, CaseIterable, Sendable {
 }
 
 /// How Windows synchronisation objects (events, mutexes, semaphores) are implemented.
+/// How a program's full-screen window is presented on the Mac.
+public enum FullScreenMode: String, Codable, CaseIterable, Sendable {
+    /// A full-screen Space of its own, as a Mac game has: the menu bar appears at the top
+    /// edge, swiping goes back to the desktop, notifications show over the game.
+    case space
+    /// An ordinary window that covers the screen; the menu bar and Dock hide until the pointer
+    /// reaches the edge. The game stays on the desktop it was started on.
+    case borderless
+    /// Wine's own way: the window is raised above the menu bar and the Dock, which never appear.
+    case exclusive
+
+    public var displayName: String {
+        switch self {
+        case .space: return "Mac full screen (its own Space)"
+        case .borderless: return "Borderless window on the desktop"
+        case .exclusive: return "Exclusive (covers the menu bar)"
+        }
+    }
+}
+
 public enum SyncMode: String, Codable, CaseIterable, Sendable {
     /// Every wait goes through the Wine server.
     case standard
@@ -183,6 +203,9 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// need this to show the option; it is off by default because it is not the truth.
     public var reportNvidiaGPU: Bool = false
 
+    /// How full-screen windows are presented. A Space of their own by default, so that a game
+    /// behaves like a Mac game.
+    public var fullScreenMode: FullScreenMode = .space
     /// Run programs that use Direct3D, Vulkan or OpenGL with the loader macOS treats as a game,
     /// so that Game Mode turns on when one is full screen.
     public var gameMode: Bool = true
@@ -225,6 +248,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         dlssThroughMetalFX = try c.decodeIfPresent(Bool.self, forKey: .dlssThroughMetalFX) ?? d.dlssThroughMetalFX
         reportNvidiaGPU = try c.decodeIfPresent(Bool.self, forKey: .reportNvidiaGPU) ?? d.reportNvidiaGPU
         gameMode = try c.decodeIfPresent(Bool.self, forKey: .gameMode) ?? d.gameMode
+        fullScreenMode = try c.decodeIfPresent(FullScreenMode.self, forKey: .fullScreenMode) ?? d.fullScreenMode
     }
 
     // MARK: Validation
@@ -331,7 +355,12 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         case .standard: break
         case .msync: out.append(("WINEMSYNC", "1"))
         }
-        if metalHUD { out.append(("MTL_HUD_ENABLED", "1")) }
+        // Metal only has its performance overlay in a process started with this set, so it is
+        // always set: the overlay can then be shown and hidden while a game runs (View > Metal
+        // HUD, or Option-F12). The setting decides whether it starts out shown.
+        out.append(("MTL_HUD_ENABLED", "1"))
+        out.append(("FINEWINE_METAL_HUD", metalHUD ? "1" : "0"))
+        out.append(("FINEWINE_FULLSCREEN", fullScreenMode.rawValue))
         if hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
         if dlssThroughMetalFX {
             // Lets nvngx.dll load for Direct3D 12 and Vulkan programs, whose DLSS calls it

@@ -1,0 +1,410 @@
+From: FineWine
+Subject: [PATCH] winemac: Full-screen windows the way Mac games have them; Metal HUD toggle.
+
+Full screen. A Windows program goes full screen by making a borderless window the size of the
+screen. Wine raises such a window above the menu bar and the Dock, which keeps the menu bar
+from appearing and makes the program feel unlike a Mac app. FINEWINE_FULLSCREEN picks how such
+a window is presented instead:
+
+- "space": the window is given a full-screen Space of its own, as a Mac game's window is. The
+  menu bar appears when the pointer reaches the top edge (unless the program has captured the
+  pointer), swiping goes back to the desktop, notifications are shown over it, and Mission
+  Control shows it as an app. It leaves the Space when the program makes it smaller than the
+  screen again, and stays out if the user takes it out. One window per program.
+- "borderless": the window stays an ordinary window; the menu bar and the Dock hide and come
+  back at the screen's edges.
+- unset or "exclusive": Wine's behaviour, unchanged.
+
+Metal HUD. A View menu with Show/Hide Metal HUD, and Option-F12 for the same. Metal only has
+its overlay in a process started with MTL_HUD_ENABLED=1; each Metal layer's
+developerHUDProperties then decide whether it is drawn. FINEWINE_METAL_HUD says whether it
+starts shown or hidden. Without MTL_HUD_ENABLED the menu item is disabled.
+
+diff --git a/dlls/winemac.drv/cocoa_app.h b/dlls/winemac.drv/cocoa_app.h
+index 1132545..ce64e52 100644
+--- a/dlls/winemac.drv/cocoa_app.h
++++ b/dlls/winemac.drv/cocoa_app.h
+@@ -129,6 +129,12 @@ - (NSPoint) flippedMouseLocation:(NSPoint)point;
+ 
+     - (WineWindow*) frontWineWindow;
+     - (void) adjustWindowLevels;
++
++    /* FineWine: Metal's performance overlay. See cocoa_app.m. */
++    - (BOOL) isMetalHUDAvailable;
++    - (BOOL) isMetalHUDShown;
++    - (void) applyMetalHUD;
++    - (void) toggleMetalHUD:(id)sender;
+     - (void) updateFullscreenWindows;
+ 
+     - (BOOL) handleEvent:(NSEvent*)anEvent;
+diff --git a/dlls/winemac.drv/cocoa_app.m b/dlls/winemac.drv/cocoa_app.m
+index 0e3cbb5..a439ae3 100644
+--- a/dlls/winemac.drv/cocoa_app.m
++++ b/dlls/winemac.drv/cocoa_app.m
+@@ -299,6 +299,19 @@ - (void) transformProcessToForeground:(BOOL)activateIfTransformed
+             [item setSubmenu:submenu];
+             [mainMenu addItem:item];
+ 
++            // FineWine: a View menu with Metal's performance overlay, shown and hidden while
++            // the program runs. Option-F12 does the same from the keyboard (see -handleEvent:).
++            submenu = [[[NSMenu alloc] initWithTitle:@"View"] autorelease];
++            item = [submenu addItemWithTitle:@"Show Metal HUD"
++                                      action:@selector(toggleMetalHUD:)
++                               keyEquivalent:[NSString stringWithFormat:@"%C", (unichar)NSF12FunctionKey]];
++            [item setKeyEquivalentModifierMask:NSEventModifierFlagOption];
++            [item setTarget:self];
++            item = [[[NSMenuItem alloc] init] autorelease];
++            [item setTitle:@"View"];
++            [item setSubmenu:submenu];
++            [mainMenu addItem:item];
++
+             [NSApp setMainMenu:mainMenu];
+             [NSApp setWindowsMenu:submenu];
+ 
+@@ -700,8 +713,101 @@ - (void) adjustWindowLevels
+         [self adjustWindowLevels:[NSApp isActive]];
+     }
+ 
++    /* FineWine: Metal's performance overlay ("HUD"), shown and hidden while the program runs.
++     *
++     * Metal only has the overlay in a process that was started with MTL_HUD_ENABLED=1; in
++     * such a process each Metal layer's developerHUDProperties then decide whether it is
++     * drawn ("mode" "default" or "off"). So FineWine starts programs with the overlay
++     * available, and FINEWINE_METAL_HUD says whether it starts out shown (1) or hidden (0).
++     * Without FINEWINE_METAL_HUD the overlay is simply as MTL_HUD_ENABLED left it. */
++    static BOOL metalHUDStateKnown, metalHUDShown, metalHUDAvailable;
++
++    - (BOOL) isMetalHUDAvailable
++    {
++        [self isMetalHUDShown];
++        return metalHUDAvailable;
++    }
++
++    - (BOOL) isMetalHUDShown
++    {
++        if (!metalHUDStateKnown)
++        {
++            const char *enabled = getenv("MTL_HUD_ENABLED");
++            const char *shown = getenv("FINEWINE_METAL_HUD");
++            metalHUDAvailable = enabled && atoi(enabled) != 0;
++            metalHUDShown = metalHUDAvailable && (!shown || atoi(shown) != 0);
++            metalHUDStateKnown = TRUE;
++            /* Layers that do not come from Wine's own Metal view (a Direct3D layer may make
++             * its own) are found by looking again now and then. */
++            if (metalHUDAvailable && shown)
++                [NSTimer scheduledTimerWithTimeInterval:3.0 target:self selector:@selector(applyMetalHUD)
++                                               userInfo:nil repeats:YES];
++        }
++        return metalHUDShown;
++    }
++
++    static void apply_metal_hud(CALayer *layer, BOOL show)
++    {
++        if ([layer isKindOfClass:[CAMetalLayer class]])
++        {
++            if (@available(macOS 13.0, *))
++                ((CAMetalLayer *)layer).developerHUDProperties = show ? @{ @"mode": @"default" } : @{ @"mode": @"off" };
++        }
++        for (CALayer *sub in [[layer.sublayers copy] autorelease])
++            apply_metal_hud(sub, show);
++    }
++
++    - (void) applyMetalHUD
++    {
++        BOOL show = [self isMetalHUDShown];
++        if (!metalHUDAvailable) return;
++        for (NSWindow *window in [NSApp windows])
++            apply_metal_hud([[window contentView] layer], show);
++    }
++
++    - (void) toggleMetalHUD:(id)sender
++    {
++        if (![self isMetalHUDAvailable]) return;
++        metalHUDShown = !metalHUDShown;
++        [self applyMetalHUD];
++        /* A layer the program is about to make, or has in a view that is not attached yet,
++         * is caught by going round again shortly. */
++        [self performSelector:@selector(applyMetalHUD) withObject:nil afterDelay:1.0];
++        [self performSelector:@selector(applyMetalHUD) withObject:nil afterDelay:4.0];
++    }
++
++    - (BOOL) validateMenuItem:(NSMenuItem *)menuItem
++    {
++        if ([menuItem action] == @selector(toggleMetalHUD:))
++        {
++            [menuItem setTitle:[self isMetalHUDShown] ? @"Hide Metal HUD" : @"Show Metal HUD"];
++            return [self isMetalHUDAvailable];
++        }
++        return TRUE;
++    }
++
+     - (void) updateFullscreenWindows
+     {
++        /* FineWine: in "borderless" mode a full-screen window is an ordinary window, so the
++         * menu bar and the Dock are asked to keep out of its way until the pointer reaches
++         * them. The options only apply while this app is the active one. */
++        if (macdrv_finewine_fullscreen_mode() == FINEWINE_FULLSCREEN_BORDERLESS)
++        {
++            BOOL anyFullscreen = FALSE;
++            NSNumber* windowNumber;
++            for (windowNumber in [NSWindow windowNumbersWithOptions:0])
++            {
++                WineWindow* window = (WineWindow*)[NSApp windowWithWindowNumber:[windowNumber integerValue]];
++                if ([window isKindOfClass:[WineWindow class]] && window.fullscreen)
++                {
++                    anyFullscreen = TRUE;
++                    break;
++                }
++            }
++            [NSApp setPresentationOptions:anyFullscreen ? (NSApplicationPresentationAutoHideMenuBar | NSApplicationPresentationAutoHideDock)
++                                                        : NSApplicationPresentationDefault];
++        }
++
+         if (capture_displays_for_fullscreen && [NSApp isActive])
+         {
+             BOOL anyFullscreen = FALSE;
+@@ -1803,6 +1909,16 @@ - (BOOL) handleEvent:(NSEvent*)anEvent
+             [self handleScrollWheel:anEvent];
+             ret = mouseCaptureWindow != nil;
+         }
++        else if (type == NSEventTypeKeyDown &&
++                 [anEvent keyCode] == kVK_F12 && ![anEvent isARepeat] &&
++                 ([anEvent modifierFlags] & (NSEventModifierFlagOption | NSEventModifierFlagCommand |
++                                             NSEventModifierFlagControl | NSEventModifierFlagShift)) == NSEventModifierFlagOption)
++        {
++            /* FineWine: Option-F12 shows and hides Metal's performance overlay. Handled here,
++             * ahead of the program, because a key without Command never reaches the menu. */
++            [self toggleMetalHUD:nil];
++            ret = TRUE;
++        }
+         else if (type == NSEventTypeKeyDown)
+         {
+             // -[NSApplication sendEvent:] seems to consume presses of the Help
+diff --git a/dlls/winemac.drv/cocoa_window.h b/dlls/winemac.drv/cocoa_window.h
+index a5ee46d..e77177a 100644
+--- a/dlls/winemac.drv/cocoa_window.h
++++ b/dlls/winemac.drv/cocoa_window.h
+@@ -25,6 +25,17 @@
+ @class WineEventQueue;
+ 
+ 
++/* FineWine: how a window that covers the screen (a Windows program's full-screen window) is
++ * presented. FINEWINE_FULLSCREEN in the environment picks one:
++ *   unset, "exclusive"  Wine's own way: the window is raised above the menu bar and the Dock.
++ *   "borderless"        The window stays an ordinary window on the desktop; the menu bar and
++ *                       the Dock hide and come back when the pointer reaches the screen's edge.
++ *   "space"             The window gets a full-screen Space of its own, as a Mac game's does:
++ *                       the menu bar appears at the top edge, swiping goes back to the desktop,
++ *                       notifications are shown over it, Mission Control shows it as an app. */
++enum { FINEWINE_FULLSCREEN_EXCLUSIVE, FINEWINE_FULLSCREEN_BORDERLESS, FINEWINE_FULLSCREEN_SPACE };
++int macdrv_finewine_fullscreen_mode(void);
++
+ @interface WineWindow : NSPanel <NSWindowDelegate>
+ {
+     BOOL disabled;
+@@ -68,6 +79,11 @@ @interface WineWindow : NSPanel <NSWindowDelegate>
+     NSRect nonFullscreenFrame;
+     NSTimeInterval enteredFullScreenTime;
+ 
++    /* FineWine: full-screen windows the way a Mac game has them. See macdrv_finewine_fullscreen_mode(). */
++    BOOL autoFullScreen;            /* we put this window in a full-screen Space ourselves */
++    BOOL autoFullScreenSuppressed;  /* the user took it out again; leave it out until it stops covering the screen */
++    BOOL autoFullScreenExitPending; /* it stopped covering the screen while it was still on its way in */
++
+     int draggingPhase;
+     NSPoint dragStartPosition;
+     NSPoint dragWindowStartPosition;
+diff --git a/dlls/winemac.drv/cocoa_window.m b/dlls/winemac.drv/cocoa_window.m
+index 1ec3729..f45efcb 100644
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -85,6 +85,19 @@ static NSUInteger style_mask_for_features(const struct macdrv_window_features* w
+ }
+ 
+ 
++int macdrv_finewine_fullscreen_mode(void)
++{
++    static int mode = -1;
++    if (mode < 0)
++    {
++        const char *value = getenv("FINEWINE_FULLSCREEN");
++        if (value && !strcmp(value, "space")) mode = FINEWINE_FULLSCREEN_SPACE;
++        else if (value && !strcmp(value, "borderless")) mode = FINEWINE_FULLSCREEN_BORDERLESS;
++        else mode = FINEWINE_FULLSCREEN_EXCLUSIVE;
++    }
++    return mode;
++}
++
+ static BOOL frame_intersects_screens(NSRect frame, NSArray* screens)
+ {
+     NSScreen* screen;
+@@ -849,6 +862,13 @@ - (CALayer*) makeBackingLayer
+         layer.magnificationFilter = kCAFilterNearest;
+         layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
+         layer.contentsScale = retina_on ? 2.0 : 1.0;
++        /* FineWine: a new layer starts with Metal's overlay as the user last left it. */
++        if (@available(macOS 13.0, *))
++        {
++            WineApplicationController* controller = [WineApplicationController sharedController];
++            if ([controller isMetalHUDAvailable])
++                layer.developerHUDProperties = [controller isMetalHUDShown] ? @{ @"mode": @"default" } : @{ @"mode": @"off" };
++        }
+         return layer;
+     }
+ 
+@@ -1009,9 +1029,10 @@ - (void) adjustFullScreenBehavior:(NSWindowCollectionBehavior)behavior
+     {
+         NSUInteger style = [self styleMask];
+ 
+-        if (behavior & NSWindowCollectionBehaviorParticipatesInCycle &&
++        if (autoFullScreen ||
++            (behavior & NSWindowCollectionBehaviorParticipatesInCycle &&
+             style & NSWindowStyleMaskResizable && !(style & NSWindowStyleMaskUtilityWindow) && !maximized &&
+-            !(self.parentWindow || self.latentParentWindow))
++            !(self.parentWindow || self.latentParentWindow)))
+         {
+             behavior |= NSWindowCollectionBehaviorFullScreenPrimary;
+             behavior &= ~NSWindowCollectionBehaviorFullScreenAuxiliary;
+@@ -1111,7 +1132,9 @@ - (NSInteger) minimumLevelForActive:(BOOL)active
+ 
+             captured = (fullscreen || [self screen]) && [[WineApplicationController sharedController] areDisplaysCaptured];
+ 
+-            if (captured || fullscreen)
++            /* FineWine: only Wine's own way of going full screen raises the window above the
++             * menu bar; the other two leave it where the system can draw over it. */
++            if (captured || (fullscreen && macdrv_finewine_fullscreen_mode() == FINEWINE_FULLSCREEN_EXCLUSIVE))
+             {
+                 if (captured)
+                     level = CGShieldingWindowLevel() + 1; /* Need +1 or we don't get mouse moves */
+@@ -1679,6 +1702,11 @@ - (void) orderBelow:(WineWindow*)prev orAbove:(WineWindow*)next activate:(BOOL)a
+                 [controller adjustWindowLevels];
+             }
+ 
++            /* FineWine: a window is only given a Space once it is on screen; if it already
++             * covered the screen when it was shown, this is the moment. */
++            if (!wasVisible && macdrv_finewine_fullscreen_mode() == FINEWINE_FULLSCREEN_SPACE)
++                [self updateFullscreen];
++
+             if (pendingMinimize)
+             {
+                 [self setStyleMask:([self styleMask] | NSWindowStyleMaskMiniaturizable)];
+@@ -1761,6 +1789,21 @@ - (void) updateFullscreen
+         NSRect contentRect = [self contentRectForFrameRect:self.wine_fractionalFrame];
+         BOOL nowFullscreen = !([self styleMask] & NSWindowStyleMaskFullScreen) && screen_covered_by_rect(contentRect, [NSScreen screens]);
+ 
++        /* FineWine: in "space" mode a window that covers the screen is given a full-screen
++         * Space instead. It is then not full screen in Wine's sense: nothing is raised or hidden. */
++        if (macdrv_finewine_fullscreen_mode() == FINEWINE_FULLSCREEN_SPACE)
++        {
++            BOOL covers = screen_covered_by_rect(contentRect, [NSScreen screens]) != nil;
++            if (!covers) autoFullScreenSuppressed = FALSE;
++            if ([self wine_wantsFullScreenSpace:covers])
++            {
++                nowFullscreen = FALSE;
++                [self wine_enterFullScreenSpace];
++            }
++            else if (autoFullScreen || autoFullScreenSuppressed)
++                nowFullscreen = FALSE;
++        }
++
+         if (nowFullscreen != fullscreen)
+         {
+             WineApplicationController* controller = [WineApplicationController sharedController];
+@@ -1773,6 +1816,35 @@ - (void) updateFullscreen
+         }
+     }
+ 
++    /* FineWine: whether this window should be moved into a full-screen Space now. Only a
++     * top-level window that is on screen, and only one per program: a second window covering
++     * the screen (a backdrop behind the game, say) stays where it is. */
++    - (BOOL) wine_wantsFullScreenSpace:(BOOL)covers
++    {
++        static NSInteger spaceWindowNumber;
++        WineWindow* other = spaceWindowNumber ? (WineWindow*)[NSApp windowWithWindowNumber:spaceWindowNumber] : nil;
++
++        if (!covers || autoFullScreen || autoFullScreenSuppressed) return FALSE;
++        if ([self styleMask] & NSWindowStyleMaskFullScreen) return FALSE;
++        if (enteringFullScreen || exitingFullScreen) return FALSE;
++        if (![self isVisible] || [self parentWindow] || self.latentParentWindow || self.disabled) return FALSE;
++        if (other && other != self && [other isKindOfClass:[WineWindow class]] && other->autoFullScreen) return FALSE;
++        spaceWindowNumber = [self windowNumber];
++        return TRUE;
++    }
++
++    - (void) wine_enterFullScreenSpace
++    {
++        NSWindowCollectionBehavior behavior = [self collectionBehavior];
++
++        autoFullScreen = TRUE;
++        autoFullScreenExitPending = FALSE;
++        behavior |= NSWindowCollectionBehaviorFullScreenPrimary;
++        behavior &= ~NSWindowCollectionBehaviorFullScreenAuxiliary;
++        [self setCollectionBehavior:behavior];
++        [super toggleFullScreen:nil];
++    }
++
+     - (void) setFrameAndWineFrame:(NSRect)frame
+     {
+         [self setFrame:frame display:YES];
+@@ -1811,6 +1883,25 @@ - (void) setFrameFromWine:(NSRect)contentRect
+         [queue discardEventsMatchingMask:event_mask_for_type(WINDOW_FRAME_CHANGED)
+                                forWindow:self];
+ 
++        /* FineWine: a window we put in a full-screen Space comes out of it when the program
++         * makes it smaller than the screen again. The new frame is applied once it is out. */
++        if (autoFullScreen && !NSIsEmptyRect(contentRect) &&
++            !screen_covered_by_rect(contentRect, [NSScreen screens]))
++        {
++            nonFullscreenFrame = [self frameRectForContentRect:contentRect];
++            if (enteringFullScreen)
++                autoFullScreenExitPending = TRUE;
++            else if ([self styleMask] & NSWindowStyleMaskFullScreen)
++            {
++                autoFullScreen = FALSE;
++                [super toggleFullScreen:nil];
++            }
++            else
++                autoFullScreen = FALSE;
++            if (enteringFullScreen || exitingFullScreen || ([self styleMask] & NSWindowStyleMaskFullScreen))
++                return;
++        }
++
+         if (!NSIsEmptyRect(contentRect))
+         {
+             NSRect frame, oldFrame;
+@@ -2722,6 +2813,12 @@ - (void) windowDidEnterFullScreen:(NSNotification*)notification
+         enteredFullScreenTime = [[NSProcessInfo processInfo] systemUptime];
+         if (pendingOrderOut)
+             [self doOrderOut];
++        else if (autoFullScreen && autoFullScreenExitPending)
++        {
++            /* FineWine: the program made the window smaller while it was on its way in. */
++            autoFullScreen = autoFullScreenExitPending = FALSE;
++            [super toggleFullScreen:nil];
++        }
+     }
+ 
+     - (void) windowDidExitFullScreen:(NSNotification*)notification
+@@ -2737,6 +2834,8 @@ - (void) windowDidFailToEnterFullScreen:(NSWindow*)window
+     {
+         enteringFullScreen = FALSE;
+         enteredFullScreenTime = 0;
++        autoFullScreen = autoFullScreenExitPending = FALSE;
++        autoFullScreenSuppressed = TRUE;   /* FineWine: do not keep trying */
+         if (pendingOrderOut)
+             [self doOrderOut];
+     }
+@@ -2868,6 +2967,13 @@ - (void) windowWillEnterFullScreen:(NSNotification*)notification
+     - (void) windowWillExitFullScreen:(NSNotification*)notification
+     {
+         exitingFullScreen = TRUE;
++        if (autoFullScreen)
++        {
++            /* FineWine: not us, so the user: the green button, or the menu. Leave the window
++             * out of a Space until the program resizes it. */
++            autoFullScreen = FALSE;
++            autoFullScreenSuppressed = TRUE;
++        }
+         [self postWindowFrameChanged:nonFullscreenFrame fullscreen:FALSE resizing:FALSE skipSizeMove:FALSE];
+     }
+ 

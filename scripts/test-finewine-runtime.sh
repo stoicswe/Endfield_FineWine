@@ -266,22 +266,22 @@ fi
 "$RT/bin/wineserver" -k 2>/dev/null
 
 # Game Mode. macOS only turns it on for an app that says it is a game, which for Wine means a
-# second copy of the loader. Checked here: that copy exists and says so; a program told to use
+# second copy of the loader, in an app bundle whose Info.plist says so. Checked here: that copy exists and says so; a program told to use
 # it runs under it; and the marker by which FineWine learns that a program renders appears for
 # Vulkan and Direct3D programs and not for one that draws nothing. Whether macOS then turns
 # Game Mode on needs a game in full screen, which this script does not show.
-GAME_LOADER="$RT/lib/wine/aarch64-unix/wine-game"
+GAME_APP="$RT/lib/wine/aarch64-unix/FineWine Game.app"
+GAME_LOADER="$GAME_APP/Contents/MacOS/wine-game"
 if [ ! -x "$GAME_LOADER" ]; then
-  echo "  - Game Mode check skipped: this runtime has no wine-game loader (scripts/build-finewine-runtime.sh package)"
+  echo "  - Game Mode check skipped: this runtime has no game loader (scripts/build-finewine-runtime.sh package)"
 else
   bad=""
-  # (grep -c, not -q: with pipefail, -q closing the pipe early would count as a failure.)
-  [ "$(strings -n 8 "$GAME_LOADER" | grep -c '<string>public.app-category.games</string>')" = 1 ] || bad="$bad plist(category)"
-  [ "$(strings -n 8 "$RT/lib/wine/aarch64-unix/wine" | grep -c '<string>public.app-category.utilities</string>')" = 1 ] || bad="$bad plist(default)"
-  codesign --verify "$GAME_LOADER" 2>/dev/null || bad="$bad signature"
+  [ "$(/usr/libexec/PlistBuddy -c 'Print :LSApplicationCategoryType' "$GAME_APP/Contents/Info.plist" 2>/dev/null)" = "public.app-category.games" ] || bad="$bad plist(category)"
+  [ "$(/usr/libexec/PlistBuddy -c 'Print :GCSupportsGameMode' "$GAME_APP/Contents/Info.plist" 2>/dev/null)" = "true" ] || bad="$bad plist(game-mode)"
+  codesign --verify "$GAME_APP" 2>/dev/null || bad="$bad signature"
   # A program told to use the game loader, and what it starts, run under it.
   if [ -f "$WORK/x64-stress.exe" ]; then
-    FINEWINE_LOADER=wine-game "$RT/bin/wine" "$WORK/x64-stress.exe" </dev/null >/dev/null 2>&1 &
+    FINEWINE_LOADER="FineWine Game.app/Contents/MacOS/wine-game" "$RT/bin/wine" "$WORK/x64-stress.exe" </dev/null >/dev/null 2>&1 &
     stress_pid=$!; seen=0
     for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
       case "$(ps -axww -o command)" in *wine-game*x64-stress*) seen=1; break ;; esac
@@ -304,6 +304,55 @@ else
   fi
   if [ -z "$bad" ]; then pass "Game Mode: the game loader says it is a game and is used when asked; Vulkan, Direct3D 12 and Direct3D 11 programs are recognised as rendering, a console program is not"
   else fail "Game Mode:$bad"; fi
+fi
+"$RT/bin/wineserver" -k 2>/dev/null
+
+# Finding a prefix's processes from outside, which FineWine's Force Shut Down depends on: every
+# Wine process keeps <prefix>/.finewine-alive open, and lsof says who has it open.
+if [ -f "$WORK/x64-stress.exe" ]; then
+  MTL_HUD_ENABLED=1 FINEWINE_METAL_HUD=0 "$RT/bin/wine" "$WORK/x64-stress.exe" </dev/null >/dev/null 2>&1 &
+  held_pid=$!; holders=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    holders="$(/usr/sbin/lsof -t "$WINEPREFIX/.finewine-alive" 2>/dev/null | wc -l | tr -d ' ')"
+    [ "$holders" -gt 0 ] && break
+    kill -0 "$held_pid" 2>/dev/null || break
+    perl -e 'select(undef, undef, undef, 0.1)'
+  done
+  wait "$held_pid" 2>/dev/null
+  if [ "$holders" -gt 0 ]; then pass "a prefix's processes can be found from outside ($holders were holding its marker)"
+  else fail "no process was holding $WINEPREFIX/.finewine-alive open"; fi
+fi
+
+# Full screen the way a Mac game has it, and Game Mode with it. This one covers the display with
+# a black window for a few seconds, so it only runs when asked: FINEWINE_TEST_FULLSCREEN=1.
+if [ "${FINEWINE_TEST_FULLSCREEN:-0}" = 1 ] && [ -x "$GAME_LOADER" ]; then
+  if build_arm64 "$WORK/fullscreen.exe" "$REPO/tests/runtime/fullscreen.c" -luser32 -lgdi32; then
+    # gamepolicyctl comes with Xcode, which need not be the selected developer directory.
+    GP="$(xcrun --find gamepolicyctl 2>/dev/null || true)"
+    [ -n "$GP" ] || GP="$(ls /Applications/Xcode*.app/Contents/Developer/usr/bin/gamepolicyctl 2>/dev/null | tail -n 1 || true)"
+    FINEWINE_FULLSCREEN=space FINEWINE_LOADER="FineWine Game.app/Contents/MacOS/wine-game" \
+      "$RT/bin/wine" "$WORK/fullscreen.exe" 7 </dev/null >"$WORK/fullscreen.txt" 2>/dev/null &
+    fs_pid=$!; game_mode="unknown"
+    if [ -n "$GP" ]; then
+      game_mode="off"
+      for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+        case "$("$GP" game-mode status 2>/dev/null)" in *"Game mode is "*on*) game_mode="on"; break ;; esac
+        perl -e 'select(undef, undef, undef, 0.5)'
+      done
+    fi
+    wait "$fs_pid" 2>/dev/null
+    out="$(tr -d '\r' < "$WORK/fullscreen.txt")"
+    case "$out" in
+      *"fullscreen: ok"*)
+        if [ "$game_mode" = off ]; then fail "full screen worked but macOS did not turn Game Mode on"
+        else pass "full screen in a Space of its own, and back to a window (Game Mode: $game_mode)"; fi ;;
+      *) fail "the full-screen test program did not finish:"; echo "$out" | tail -n 2 ;;
+    esac
+  else
+    fail "could not build tests/runtime/fullscreen.c"; tail -n 3 "$WORK/gfx-build.log"
+  fi
+else
+  echo "  - full-screen and Game Mode activation not checked: they cover the display (FINEWINE_TEST_FULLSCREEN=1 to run them)"
 fi
 "$RT/bin/wineserver" -k 2>/dev/null
 

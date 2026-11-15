@@ -186,10 +186,18 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
   private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
   in a command list, to be carried out by MoltenVK as MetalFX.
+- `0013-ntdll-keep-a-file-in-the-prefix-open-so-its-processes-can-be-found.patch` makes every
+  Wine process hold `<prefix>/.finewine-alive` open, so that a frozen program can be traced to
+  its prefix and ended (Force Shut Down). `ps` cannot do it: Wine overwrites a process's
+  arguments and environment with its Windows command line.
+- `0012-winemac-full-screen-like-mac-games-and-a-metal-hud-toggle.patch` lets a full-screen
+  window live in a macOS full-screen Space of its own, or stay a borderless window on the
+  desktop, instead of being raised above the menu bar; and adds a View menu and Option-F12 to
+  show and hide Metal's performance overlay.
 - `0011-loader-ntdll-win32u-let-a-program-run-as-a-game-for-game-mode.patch` is the runtime's
-  half of macOS Game Mode: the loader's Info.plist can be changed to say it is a game, a
-  variable picks that copy of the loader for a program and its children, and using Vulkan or
-  Direct3D 12 leaves a marker by which FineWine learns that a program renders.
+  half of macOS Game Mode: the loader works from inside the app bundle that says it is a
+  game, a variable picks that copy of the loader for a program and its children, and using
+  Vulkan or Direct3D 12 leaves a marker by which FineWine learns that a program renders.
 - `0010-wined3d-win32u-report-the-gpu-a-prefix-asks-for.patch` lets a prefix have the GPU
   reported as another one, by name and PCI ids (an NVIDIA GeForce RTX 5080, for games that only offer DLSS
   on NVIDIA).

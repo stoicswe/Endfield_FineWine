@@ -113,14 +113,20 @@ struct ConfigurationTab: View {
                     Text("Report an NVIDIA GPU")
                     Text("Tells Windows programs the GPU is an \(PrefixSettings.reportedGPUName), by name and by id. Most games only show DLSS options on an NVIDIA GPU. Leave it off for games with NVIDIA-specific code paths you do not want.")
                 }
+                Row(label: "Full screen", detail: "How a game's full-screen window is shown. With its own Space the menu bar appears at the top edge, a swipe goes back to the desktop, and notifications show over the game.") {
+                    Picker("Full screen", selection: $draft.fullScreenMode) {
+                        ForEach(FullScreenMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                    }
+                    .labelsHidden().fixedSize()
+                }
                 Toggle(isOn: $draft.gameMode) {
                     Text("Game Mode")
                     Text("Programs that use Direct3D, Vulkan or OpenGL are started as games, so macOS turns Game Mode on while one is full screen. A program started by a launcher is recognised from its second run on.")
                 }
                 Divider()
                 Toggle(isOn: $draft.metalHUD) {
-                    Text("Metal performance overlay")
-                    Text("Shows frame rate and GPU statistics over the game.")
+                    Text("Start with the Metal performance overlay shown")
+                    Text("Frame rate and GPU statistics over the game. Either way it can be shown and hidden while a game runs: View > Metal HUD in the menu bar, or Option-F12.")
                 }
             }
 

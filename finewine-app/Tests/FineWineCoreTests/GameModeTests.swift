@@ -73,7 +73,7 @@ final class GameModeLaunchTests: XCTestCase {
         init(gameLoader: Bool = true, imports: [String] = ["KERNEL32.dll", "d3d11.dll"]) {
             let root = sandbox.makeRuntime()
             if gameLoader {
-                let loader = root.appendingPathComponent("lib/wine/aarch64-unix/wine-game")
+                let loader = root.appendingPathComponent("lib/wine/aarch64-unix/FineWine Game.app/Contents/MacOS/wine-game")
                 sandbox.write(Data("#!/bin/sh\nexit 0\n".utf8), to: loader)
                 try! FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: loader.path)
             }
@@ -89,7 +89,7 @@ final class GameModeLaunchTests: XCTestCase {
     func testAProgramThatImportsDirect3DRunsWithTheGameLoader() throws {
         let f = Fixture()
         let env = try f.planner.plan(for: f.program).environment
-        XCTAssertEqual(env["FINEWINE_LOADER"], "wine-game")
+        XCTAssertEqual(env["FINEWINE_LOADER"], WineRuntime.gameLoaderName)
         XCTAssertEqual(env["FINEWINE_GAME_MARKER"], f.planner.gameMarker(for: f.program).path)
         XCTAssertTrue(f.planner.gameMarker(for: f.program).path.hasPrefix(f.prefix.directory.path), "the marker belongs to the prefix")
     }
@@ -103,7 +103,7 @@ final class GameModeLaunchTests: XCTestCase {
         // The runtime creates the marker when the program, or the game it starts, first renders.
         f.sandbox.write(Data(), to: f.planner.gameMarker(for: f.program))
         env = try f.planner.plan(for: f.program).environment
-        XCTAssertEqual(env["FINEWINE_LOADER"], "wine-game", "from then on it runs as a game")
+        XCTAssertEqual(env["FINEWINE_LOADER"], WineRuntime.gameLoaderName, "from then on it runs as a game")
     }
 
     func testGameModeOffOrARuntimeWithoutTheLoaderChangesNothing() throws {

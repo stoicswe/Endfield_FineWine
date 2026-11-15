@@ -164,6 +164,22 @@ final class AppModel: ObservableObject {
         running[prefix.id] = nil
     }
 
+    /// Asks every program in the prefix to close, as shutting Windows down does.
+    func shutDown(_ prefix: Prefix) async {
+        _ = await work(on: prefix.id, "Shutting down…", failure: "The prefix couldn't be shut down") {
+            try $0.shutDown(prefix)
+        }
+        running[prefix.id] = nil
+    }
+
+    /// Ends everything in the prefix at once, frozen programs included.
+    func forceShutDown(_ prefix: Prefix) async {
+        _ = await work(on: prefix.id, "Forcing shut down…", failure: "The prefix couldn't be forced to shut down") {
+            try $0.forceShutDown(prefix)
+        }
+        running[prefix.id] = nil
+    }
+
     func wineboot(_ action: WinebootAction, in prefix: Prefix, status: String) async {
         _ = await work(on: prefix.id, status, failure: "Wine reported a problem") {
             try $0.runWineboot(action, in: prefix)

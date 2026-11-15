@@ -27,7 +27,7 @@ and will later become one function of this app.
   program's own icon. The app contains no Wine code; it opens a `finewine://launch` link that
   FineWine handles.
 - **Configuration.** Windows version and build number, Direct3D backend, Retina mode, DPI,
-  virtual desktop, Metal overlay, Game Mode (programs that use Direct3D, Vulkan or OpenGL run as games), DLSS through MetalFX, reporting an NVIDIA GPU (the ids of an RTX 5080, for games that only offer DLSS on NVIDIA), MSync, the hypervisor flag, macOS styling for Windows controls,
+  virtual desktop, Metal overlay, full-screen behaviour (a Mac full-screen Space by default), Game Mode (programs that use Direct3D, Vulkan or OpenGL run as games), DLSS through MetalFX, reporting an NVIDIA GPU (the ids of an RTX 5080, for games that only offer DLSS on NVIDIA), MSync, the hypervisor flag, macOS styling for Windows controls,
   Option-as-Alt, DLL overrides,
   environment variables and Wine debug channels. Changes are written to the prefix's registry
   when applied.

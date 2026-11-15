@@ -102,14 +102,14 @@ Existing prefixes keep the synchronisation mode they were saved with.
 ## Game Mode
 
 macOS turns Game Mode on by itself when an app that says it is a game is full screen. It reads
-that from the running executable's Info.plist, which Wine's loader carries inside the binary;
-neither upstream Wine nor CrossOver's loader says it. Because it is read from the executable,
-a program cannot become a game once it is running. So:
+that from the Info.plist of the app bundle the running executable is in, and neither upstream
+Wine nor CrossOver's loader is in one that says so. Because it is read from the executable, a
+program cannot become a game once it is running. So:
 
-- The runtime has the loader twice: `wine`, which says it is not a game, and `wine-game`,
-  which says it is (`LSApplicationCategoryType` games, `GCSupportsGameMode` and
-  `LSSupportsGameMode` true). `scripts/lib/make-game-loader.py` makes the second from the first.
-- FineWine runs a program, and everything it starts, with `wine-game` when the program is
+- The runtime has the loader twice: `wine`, and a copy inside a small app bundle,
+  `FineWine Game.app`, whose Info.plist says it is a game (`LSApplicationCategoryType` games,
+  `GCSupportsGameMode` and `LSSupportsGameMode` true). `scripts/lib/make-game-loader.sh` makes it.
+- FineWine runs a program, and everything it starts, with that copy when the program is
   known to render with a GPU API. It knows in two ways: the executable imports Direct3D,
   DXGI, Vulkan or OpenGL, which is checked before the first launch; or the runtime has left a
   marker because the program, or a game its launcher started, created a Vulkan instance
@@ -118,11 +118,12 @@ a program cannot become a game once it is running. So:
   recognised from its second run on.
 - The prefix setting "Game Mode" (on by default) turns all of it off.
 
-**Not verified:** that macOS actually turns Game Mode on. That needs a game in full screen on
-the display, which the tests deliberately never show. What is tested is every step up to it:
-the loader says it is a game, is used when asked, and rendering programs leave the marker.
-`gamepolicyctl game-mode status` (in Xcode) says whether Game Mode is on while a game runs.
-macOS decides; nothing here can force it, and it needs the game to be full screen.
+**Verified:** with the game loader and the window in a full-screen Space, macOS registers the
+program as `org.finewine.game` and `gamepolicyctl game-mode status` reports that Game Mode is
+on. A first attempt, with the Info.plist only embedded in a bare loader, did not work:
+LaunchServices gave that process no bundle identity and Game Mode stayed off. macOS decides
+when Game Mode is on; it needs the game to be full screen, which is what
+[23-behaving-like-a-mac-game.md](23-behaving-like-a-mac-game.md) is about.
 
 ## Found and left alone
 
