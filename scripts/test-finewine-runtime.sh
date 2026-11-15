@@ -89,6 +89,25 @@ else
   else
     fail "could not build the x64 test programs"; tail -n 3 "$WORK/x64-build.log"
   fi
+  # The stand-in for the Steam client: a program started through it finds Steam "running".
+  STEAM="$RT/share/finewine/steam/steam.exe"
+  if [ ! -f "$STEAM" ]; then
+    echo "  - Steam stand-in check skipped: not in this runtime (scripts/lib/build-steam-helper.sh)"
+  elif "$MINGW" -O1 -o "$WORK/steam-probe.exe" "$REPO/tests/runtime/steam-probe.c" >"$WORK/steam-build.log" 2>&1; then
+    mkdir -p "$WINEPREFIX/drive_c/Program Files (x86)/Steam"
+    cp "$STEAM" "$WINEPREFIX/drive_c/Program Files (x86)/Steam/steam.exe"
+    # In the background with a time limit: the stand-in stays until every program has gone.
+    ( SteamGameId=zenlesszonezero SteamAppId=zenlesszonezero "$RT/bin/wine" 'C:\Program Files (x86)\Steam\steam.exe' \
+        "$WORK/steam-probe.exe" "$WORK/steam-probe.txt" </dev/null >/dev/null 2>&1 ) &
+    spid=$!; n=0
+    while kill -0 "$spid" 2>/dev/null && [ "$n" -lt 60 ]; do sleep 1; n=$((n+1)); done
+    if kill -0 "$spid" 2>/dev/null; then kill "$spid" 2>/dev/null; stayed=" (the stand-in did not exit by itself)"; else stayed=""; fi
+    out="$(tr -d '\r' <"$WORK/steam-probe.txt" 2>/dev/null || true)"
+    case "$out$stayed" in *"steam-probe: ok") pass "Steam stand-in: a program started through it finds Steam's variables, objects, window and registry" ;;
+      *) fail "Steam stand-in$stayed:"; echo "$out" | grep -v ': ok$' | tail -n 6 ;; esac
+  else
+    fail "could not build tests/runtime/steam-probe.c"; tail -n 3 "$WORK/steam-build.log"
+  fi
 fi
 # Vulkan and Direct3D 12, both through MoltenVK. These must work in every prefix, so each is run
 # twice: with Wine's built-in Direct3D, and with DXMT selected the way FineWine selects it.

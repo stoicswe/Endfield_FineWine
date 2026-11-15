@@ -209,6 +209,9 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// Run programs that use Direct3D, Vulkan or OpenGL with the loader macOS treats as a game,
     /// so that Game Mode turns on when one is full screen.
     public var gameMode: Bool = true
+    /// Start HoYoverse's games and launcher through the runtime's stand-in for the Steam
+    /// client, as they are started on Linux. See `SteamStandIn`.
+    public var steamForHoYoverse: Bool = true
 
     /// The PCI ids reported when `reportNvidiaGPU` is on: NVIDIA, and its GeForce RTX 5080.
     public static let reportedGPUVendorID: UInt16 = 0x10DE
@@ -248,6 +251,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         dlssThroughMetalFX = try c.decodeIfPresent(Bool.self, forKey: .dlssThroughMetalFX) ?? d.dlssThroughMetalFX
         reportNvidiaGPU = try c.decodeIfPresent(Bool.self, forKey: .reportNvidiaGPU) ?? d.reportNvidiaGPU
         gameMode = try c.decodeIfPresent(Bool.self, forKey: .gameMode) ?? d.gameMode
+        steamForHoYoverse = try c.decodeIfPresent(Bool.self, forKey: .steamForHoYoverse) ?? d.steamForHoYoverse
         fullScreenMode = try c.decodeIfPresent(FullScreenMode.self, forKey: .fullScreenMode) ?? d.fullScreenMode
     }
 

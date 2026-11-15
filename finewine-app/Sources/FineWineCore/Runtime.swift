@@ -91,6 +91,12 @@ public struct WineRuntime: Equatable, Identifiable, Sendable {
             atPath: root.appendingPathComponent("lib/wine/aarch64-unix/\(Self.gameLoaderName)").path)
     }
 
+    /// The stand-in for the Steam client, if this runtime has it.
+    public var steamStandIn: URL? {
+        let url = root.appendingPathComponent(SteamStandIn.runtimePath)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
     public var wineserverBinary: URL? {
         Self.serverBinaryNames.map { binDirectory.appendingPathComponent($0) }
             .first { FileManager.default.isExecutableFile(atPath: $0.path) }

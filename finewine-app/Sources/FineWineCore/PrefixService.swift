@@ -238,6 +238,24 @@ public struct PrefixService {
             .appendingPathComponent("\(formatter.string(from: date)) \(safe).log")
     }
 
+    /// Puts the runtime's stand-in for Steam where Steam is in a prefix, unless that very file
+    /// is there already. A real Steam installed in the prefix is left alone and used instead.
+    func installSteamStandIn(from runtime: WineRuntime, in prefix: Prefix) throws {
+        guard let source = runtime.steamStandIn,
+              let target = WindowsPath.macURL(for: SteamStandIn.windowsPath, inPrefix: prefix.directory) else { return }
+        let fm = FileManager.default
+        let folder = target.deletingLastPathComponent()
+        if fm.fileExists(atPath: target.path) {
+            if fm.contentsEqual(atPath: source.path, andPath: target.path) { return }
+            // Only a stand-in from another runtime version is replaced; it is alone in its folder.
+            let others = (try? fm.contentsOfDirectory(atPath: folder.path))?.filter { $0 != target.lastPathComponent } ?? []
+            guard others.isEmpty else { return }
+            try fm.removeItem(at: target)
+        }
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        try fm.copyItem(at: source, to: target)
+    }
+
     /// Starts a program and returns its pid.
     @discardableResult
     public func launch(programID: UUID, in prefix: Prefix,
@@ -253,6 +271,7 @@ public struct PrefixService {
         // The folder the runtime writes its "this program rendered" marker into.
         try? FileManager.default.createDirectory(at: planner.gameMarker(for: program).deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)
+        if planner.steamAppID(for: program) != nil { try installSteamStandIn(from: planner.runtime, in: prefix) }
         return try runner.start(try planner.plan(for: program),
                                 logFile: logFile(for: prefix, name: program.name), onExit: onExit)
     }
