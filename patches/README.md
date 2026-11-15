@@ -144,3 +144,14 @@ These patches modify **Wine** (https://www.winehq.org/), which is **LGPL-2.1-or-
 [Wine](https://www.winehq.org/) patches are licensed LGPL-2.1-or-later; `moltenvk/` patches, Apache-2.0 like MoltenVK and SPIRV-Cross. `stage2-dwproton/*` retain upstream authorship (Etaash Mathamsetty, Ziia Shi / mkrsym1, NelloKudo and other dw-proton contributors).
 
 This directory does not contain Wine itself — only diffs to be applied to a Wine source tree you fetch separately.
+
+## `runtime/` — FineWine's own Wine runtime
+
+Applied by `scripts/build-finewine-runtime.sh` on top of `patches/ARM` (minus the two x86-only
+kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21.
+
+- `0001-msync-mach-semaphore-synchronization.patch` adds MSync as the macOS implementation of
+  Wine's in-process synchronisation interface. The code comes from the Wine tree CodeWeavers
+  publishes for CrossOver 26.3 (LGPL-2.1-or-later), with this project's fixes, moved from Wine
+  11.0 to 11.21. It changes the server protocol, so the script runs `tools/make_requests` after
+  applying. It applies cleanly but has not been compiled or run yet.

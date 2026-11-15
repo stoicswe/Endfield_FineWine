@@ -1,0 +1,148 @@
+# build-finewine.yml — build and test FineWine.app, the menu bar app that manages Wine prefixes.
+#
+# Separate from build.yml / build-wine.yml on purpose: FineWine.app carries no Wine modules, so
+# it builds in a few minutes and must not wait for (or trigger) the ~2h Wine build. The patcher
+# keeps its own pipeline untouched.
+#
+# What it runs:
+#   1. the FineWineCore unit tests (`swift test`)
+#   2. finewine-app/scripts/build-app.sh — release build, bundle assembly, icon, ad-hoc signing
+#   3. checks on the finished bundle (menu bar agent, finewine:// scheme, file types, icon)
+# and uploads FineWine.app, zipped, as the `finewine-app` artifact.
+
+name: build-finewine
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'finewine-app/**'
+      - '.github/workflows/build-finewine.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'finewine-app/**'
+      - '.github/workflows/build-finewine.yml'
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: macOS runner image (the app needs the macOS 26 SDK or later)
+        required: false
+        default: "xcode-27"
+        type: choice
+        options:
+          - "xcode-27"
+          - "macos-26"
+      app_version:
+        description: CFBundleShortVersionString for FineWine.app (blank = build-app.sh default)
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-finewine-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  finewine-app:
+    name: FineWine.app
+    runs-on: ${{ inputs.runner || 'xcode-27' }}
+    timeout-minutes: 30
+    env:
+      # Blank input -> build-app.sh's own default version.
+      VERSION: ${{ inputs.app_version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Short SHA
+        run: echo "SHORT_SHA=${GITHUB_SHA::8}" >> "$GITHUB_ENV"
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Unit tests
+        shell: bash
+        working-directory: finewine-app
+        run: |
+          set -euo pipefail
+          swift test 2>&1 | tee test.log | grep -E 'error:|failed|Executed [0-9]+ tests' || true
+          # The grep above only trims the log; this is what decides pass or fail.
+          grep -Eq 'Executed [1-9][0-9]* tests, with 0 failures' test.log
+
+      - name: Build FineWine.app
+        shell: bash
+        env:
+          SKIP_TESTS: "1"   # already run above, with their output in the log
+        run: |
+          set -euo pipefail
+          # An empty VERSION would be baked into Info.plist as-is; unset it to get the default.
+          if [ -z "${VERSION:-}" ]; then unset VERSION; fi
+          ./finewine-app/scripts/build-app.sh
+
+      - name: Verify the bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="finewine-app/build/FineWine.app"
+          PLIST="$APP/Contents/Info.plist"
+          fail(){ echo "::error::$*"; exit 1; }
+          plutil -lint "$PLIST"
+          codesign --verify --deep "$APP"
+          [ -x "$APP/Contents/MacOS/FineWine" ] || fail "no executable in the bundle"
+          lipo -archs "$APP/Contents/MacOS/FineWine" | grep -qw arm64 || fail "the executable is not arm64"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$PLIST")" = "true" ] \
+            || fail "LSUIElement is not set: the app would not be a menu bar app"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$PLIST")" = "finewine" ] \
+            || fail "the finewine:// scheme is not registered: shortcut apps would do nothing"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDocumentTypes:0:LSItemContentTypes' "$PLIST" \
+            | grep -q 'com.microsoft.windows-executable' || fail ".exe is not a declared document type"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDocumentTypes:0:LSHandlerRank' "$PLIST")" = "Alternate" ] \
+            || fail "the handler rank must stay Alternate, so FineWine never takes over .exe files unasked"
+          ICON="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$PLIST")"
+          [ -f "$APP/Contents/Resources/$ICON.icns" ] || fail "the app icon is missing"
+          # The icon is fixed to its dark appearance: an asset catalog or icon name would let
+          # macOS switch to the light one.
+          [ ! -e "$APP/Contents/Resources/Assets.car" ] || fail "an asset catalog is bundled, so the icon would follow the system appearance"
+          ! /usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$PLIST" >/dev/null 2>&1 \
+            || fail "CFBundleIconName is set, so the icon would follow the system appearance"
+          [ -f "$APP/Contents/Resources/MenuBarIcon.svg" ] || fail "the menu bar icon is missing"
+          echo "bundle OK"
+
+      - name: Zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' finewine-app/build/FineWine.app/Contents/Info.plist)"
+          echo "APP_VER=$VER" >> "$GITHUB_ENV"
+          ditto -c -k --keepParent finewine-app/build/FineWine.app "dist/finewine-$VER-$SHORT_SHA.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: finewine-app
+          path: dist/finewine-${{ env.APP_VER }}-${{ env.SHORT_SHA }}.zip
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: finewine-app-logs
+          path: |
+            finewine-app/test.log
+          if-no-files-found: ignore
+
+      - name: Write job summary
+        shell: bash
+        run: |
+          {
+            echo "## FineWine.app"
+            echo
+            echo "- Version: \`$APP_VER\` (\`$SHORT_SHA\`)"
+            echo "- Tests: $(grep -E 'Executed [0-9]+ tests' finewine-app/test.log | tail -n 1 | sed 's/^[[:space:]]*//')"
+            echo "- Ad-hoc signed; no Wine runtime is bundled."
+          } >> "$GITHUB_STEP_SUMMARY"
