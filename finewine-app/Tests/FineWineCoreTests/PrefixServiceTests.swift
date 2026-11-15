@@ -313,4 +313,82 @@ final class PrefixServiceTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: prefix.directory.appendingPathComponent(".finewine-games").path, isDirectory: &isDir))
         XCTAssertTrue(isDir.boolValue)
     }
+
+    func testShutDownAsksProgramsToCloseAndDoesNotWait() throws {
+        let f = Fixture()
+        let prefix = try f.service.createPrefix(name: "Down", runtime: f.runtime, profile: nil)
+        f.runner.ran.removeAll()
+        try f.service.shutDown(prefix)
+        XCTAssertEqual(f.runner.started.last?.plan.arguments, ["wineboot", "--shutdown"])
+        XCTAssertTrue(f.runner.ran.isEmpty, "nothing is waited for: a frozen program would never answer")
+    }
+
+    func testForceShutDownKillsWhatTheServerLeftBehind() throws {
+        var f = Fixture()
+        let prefix = try f.service.createPrefix(name: "Stuck", runtime: f.runtime, profile: nil)
+        let other = try f.service.createPrefix(name: "Stuck 2", runtime: f.runtime, profile: nil)
+        f.runner.ran.removeAll()
+
+        let killed = Killed()
+        var service = f.service
+        let directory = prefix.directory
+        service.findProcesses = { asked in asked == directory ? [101, 102] : [103] }
+        service.killProcess = { killed.add($0) }
+        XCTAssertEqual(try service.forceShutDown(prefix), 2)
+        XCTAssertEqual(f.runner.ran.first?.arguments, ["-k"], "the server is told first")
+        XCTAssertEqual(killed.pids, [101, 102], "then what is still there is killed; another prefix's programs are left alone")
+        _ = other
+        _ = f
+    }
+}
+
+private final class Killed: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _pids: [Int32] = []
+    func add(_ pid: Int32) { lock.lock(); _pids.append(pid); lock.unlock() }
+    var pids: [Int32] { lock.lock(); defer { lock.unlock() }; return _pids }
+}
+
+final class PrefixProcessesTests: XCTestCase {
+    func testFindsProcessesByTheirPrefix() {
+        let ps = """
+            11 /rt/wine a.exe USER=me WINEPREFIX=/Users/me/Library/Application Support/FineWine/Prefixes/Games WINEDEBUG=-all
+            12 /rt/wine b.exe WINEPREFIX=/Users/me/Library/Application Support/FineWine/Prefixes/Games
+            13 /rt/wine c.exe WINEPREFIX=/Users/me/Library/Application Support/FineWine/Prefixes/Games 2 LANG=C
+            14 /rt/wine d.exe WINEPREFIX=/Users/me/Library/Application Support/FineWine/Prefixes/Games2
+          15 /bin/zsh -c echo WINEPREFIX= HOME=/Users/me
+          notapid /rt/wine WINEPREFIX=/Users/me/Library/Application Support/FineWine/Prefixes/Games
+        """
+        let path = "/Users/me/Library/Application Support/FineWine/Prefixes/Games"
+        XCTAssertEqual(PrefixProcesses.pids(inPSOutput: ps, prefixPath: path), [11, 12])
+        XCTAssertEqual(PrefixProcesses.pids(inPSOutput: ps, prefixPath: path + " 2"), [13])
+        XCTAssertEqual(PrefixProcesses.pids(inPSOutput: "", prefixPath: path), [])
+    }
+
+    func testLsofOutputIsOnePidPerLine() {
+        XCTAssertEqual(PrefixProcesses.pids(inLsofOutput: "101\n 202 \n\nnot a pid\n303\n"), [101, 202, 303])
+        XCTAssertEqual(PrefixProcesses.pids(inLsofOutput: ""), [])
+    }
+
+    func testTheRealSearchFindsWhoHoldsThePrefixMarkerOpen() throws {
+        let sandbox = Sandbox()
+        let prefix = sandbox.root.appendingPathComponent("held prefix")
+        try FileManager.default.createDirectory(at: prefix, withIntermediateDirectories: true)
+        XCTAssertEqual(PrefixProcesses.systemPIDs(prefixDirectory: prefix), [], "nothing runs in a prefix that was never used")
+
+        // A stand-in for a Wine program: something that keeps the marker open.
+        let marker = prefix.appendingPathComponent(PrefixProcesses.aliveMarkerName)
+        FileManager.default.createFile(atPath: marker.path, contents: nil)
+        let holder = Process()
+        holder.executableURL = URL(fileURLWithPath: "/bin/sh")
+        holder.arguments = ["-c", "exec 3< \"$0\"; exec /bin/sleep 30", marker.path]
+        try holder.run()
+        defer { holder.terminate() }
+        var found: [Int32] = []
+        for _ in 0..<40 where found.isEmpty {
+            found = PrefixProcesses.systemPIDs(prefixDirectory: prefix)
+            if found.isEmpty { Thread.sleep(forTimeInterval: 0.1) }
+        }
+        XCTAssertEqual(found, [holder.processIdentifier])
+    }
 }

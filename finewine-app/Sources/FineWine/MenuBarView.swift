@@ -93,10 +93,15 @@ private struct MenuPrefixCard: View {
                 if let status = model.busy[prefix.id] {
                     Text(status).font(.caption).foregroundStyle(.secondary)
                 } else if model.isRunning(prefix) {
-                    Button("Stop") { Task { await model.stopAll(in: prefix) } }
-                        .buttonStyle(.glass)
-                        .controlSize(.small)
-                        .help("Stop every program in this prefix")
+                    Menu("Shut Down") {
+                        Button("Shut Down") { Task { await model.shutDown(prefix) } }
+                        Button("Force Shut Down", role: .destructive) { Task { await model.forceShutDown(prefix) } }
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+                    .fixedSize()
+                    .help("Shut Down asks every program to close. Force Shut Down also ends a program that has frozen.")
                 }
                 Button {
                     model.show(prefixID: prefix.id, section: "configuration")

@@ -1,36 +1,42 @@
 From: FineWine
 Subject: [PATCH] loader, ntdll, win32u: Let a program run as a game for macOS Game Mode.
 
-macOS turns Game Mode on for a full-screen app whose Info.plist says it is a game. It reads
-that from the running executable, and Wine's loader carries its Info.plist inside the binary,
-so whether a Wine program counts as a game cannot be decided once the program is running.
+macOS turns Game Mode on for a full-screen app that says it is a game. It reads that from the
+Info.plist of the app bundle the running executable is in; the Info.plist Wine embeds in its
+loader is not consulted (LaunchServices registers a bare loader with no bundle identity at
+all), and nothing can be changed once the program is running.
 
-- loader/wine_info.plist.in gains the three keys that matter, saying "not a game", written so
-  that a copy of the loader can be changed to say "a game" without changing its length
-  (scripts/lib/make-game-loader.py makes that copy, wine-game, when the runtime is packaged).
-- ntdll: FINEWINE_LOADER names the copy of the loader, beside the usual one, that a program
-  and every process it starts are run with.
+The runtime therefore gets a second copy of the loader inside a small app bundle, "FineWine
+Game.app", whose Info.plist says it is a game (scripts/lib/make-game-loader.sh makes it when
+the runtime is packaged). This patch is what lets that copy work:
+
+- loader: an executable in <dir>/X.app/Contents/MacOS finds ntdll.so in <dir>.
+- ntdll: FINEWINE_LOADER is the path, relative to the loader's directory, of the loader that
+  a program and every process it starts are run with.
 - win32u: creating a Vulkan instance, which Direct3D 12 does too through vkd3d, creates the
   file named in FINEWINE_GAME_MARKER. That is how FineWine learns that a program renders with
   a GPU API, including one that only does so through a game its launcher starts; it then runs
   that program with the game loader. DXMT does the same for Direct3D 10 and 11.
 
-Without those two variables nothing changes.
+Without those two variables nothing changes. Checked on macOS 27: a full-screen window of a
+program run this way is registered as org.finewine.game and Game Mode turns on.
 
 diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
-index 9dfaa6b..0a688a6 100644
+index 9dfaa6b..9e44f8a 100644
 --- a/dlls/ntdll/unix/loader.c
 +++ b/dlls/ntdll/unix/loader.c
-@@ -402,6 +402,18 @@ static void init_paths(void)
+@@ -402,6 +402,20 @@ static void init_paths(void)
          bin_dir = build_relative_path( dll_dir, LIBDIR "/wine", BINDIR );
          data_dir = build_relative_path( dll_dir, LIBDIR "/wine", DATADIR "/wine" );
          wineloader = build_path( ntdll_dir, "wine" );
-+        /* FineWine: a second copy of the loader, beside this one, tells macOS it is a game
-+         * (see loader/wine_info.plist.in). FINEWINE_LOADER names the copy to run a program
-+         * and everything it starts with. */
++        /* FineWine: macOS turns Game Mode on for an app that says it is a game, and reads
++         * that from the app bundle the running executable is in. The runtime therefore has
++         * a second copy of the loader, inside a small app bundle beside this one.
++         * FINEWINE_LOADER is its path, relative to this directory; a program started with
++         * it, and everything that program starts, runs under that copy. */
 +        {
 +            const char *name = getenv( "FINEWINE_LOADER" );
-+            if (name && *name && !strchr( name, '/' ))
++            if (name && *name && name[0] != '/' && !strstr( name, ".." ))
 +            {
 +                char *alt = build_path( ntdll_dir, name );
 +                if (!access( alt, X_OK )) wineloader = alt;
@@ -78,23 +84,22 @@ index b94c922..dbb733c 100644
      VkInstanceCreateInfo *create_info = (VkInstanceCreateInfo *)client_create_info; /* cast away const, chain has been copied in the thunks */
      VkInstance host_instance = VK_NULL_HANDLE, client_instance = *client_instance_ptr;
      struct vulkan_physical_device *physical_devices;
-diff --git a/loader/wine_info.plist.in b/loader/wine_info.plist.in
-index 6495b8f..a65149e 100644
---- a/loader/wine_info.plist.in
-+++ b/loader/wine_info.plist.in
-@@ -26,5 +26,15 @@
-     <string>WineApplication</string>
-     <key>LSUIElement</key>
-     <string>1</string>
-+    <!-- FineWine: macOS turns Game Mode on for a full-screen app that says it is a game. The
-+         loader is installed twice: as it is here, and as "wine-game" with the three values
-+         below changed to public.app-category.games, true and true. The values are written so
-+         that the change does not alter the length of the file; see make-game-loader.py. -->
-+    <key>LSApplicationCategoryType</key>
-+    <string>public.app-category.utilities</string>
-+    <key>GCSupportsGameMode</key>
-+    <false/>
-+    <key>LSSupportsGameMode</key>
-+    <false/>
- </dict>
- </plist>
+diff --git a/loader/main.c b/loader/main.c
+index 71ba308..586da88 100644
+--- a/loader/main.c
++++ b/loader/main.c
+@@ -153,6 +153,14 @@ static void *try_dlopen( const char *argv0 )
+ 
+     if ((p = remove_tail( dir, "/loader" )))
+         path = build_path( p, "dlls/ntdll/ntdll.so" );
++    /* FineWine: the copy of the loader that macOS treats as a game is inside an app bundle
++     * beside the usual loader; ntdll is three directories up from the bundle's executable. */
++    else if ((p = remove_tail( dir, ".app/Contents/MacOS" )))
++    {
++        char *slash = strrchr( p, '/' );
++        if (slash) *slash = 0;
++        path = build_path( p, "ntdll.so" );
++    }
+     else
+         path = build_path( dir, "ntdll.so" );
+ 

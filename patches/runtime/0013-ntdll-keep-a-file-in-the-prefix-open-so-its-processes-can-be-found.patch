@@ -1,0 +1,36 @@
+From: FineWine
+Subject: [PATCH] ntdll: Keep a file in the prefix open, so its processes can be found.
+
+Wine replaces a process's arguments with its Windows command line, which also overwrites the
+environment that "ps" would show, so nothing tells the outside world which prefix a Wine
+process belongs to. Wine's server knows, and normally ends a prefix's processes itself, but
+that is no help when the server is the one that is stuck or gone.
+
+Every process now opens <prefix>/.finewine-alive and keeps it open for as long as it lives.
+"lsof -t" on that file lists the prefix's processes, which is how FineWine's Force Shut Down
+finds a program that has frozen. The descriptor is closed on exec, so only Wine processes
+hold it.
+
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 9e44f8a..4821ca1 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -422,6 +422,18 @@ static void init_paths(void)
+     set_system_dll_path();
+     set_home_dir();
+     set_config_dir();
++
++    /* FineWine: every process of a prefix keeps this file open for as long as it lives. Wine
++     * replaces a process's arguments with its Windows command line, so nothing else tells
++     * the outside world which prefix a process belongs to; with this, "lsof" does, and a
++     * program that has frozen can be found and ended (FineWine's Force Shut Down). */
++    if (config_dir)
++    {
++        char *alive = build_path( config_dir, ".finewine-alive" );
++        int fd = open( alive, O_RDONLY | O_CREAT, 0644 );
++        if (fd != -1) fcntl( fd, F_SETFD, FD_CLOEXEC );
++        free( alive );
++    }
+ }
+ 
+ 

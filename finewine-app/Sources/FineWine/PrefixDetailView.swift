@@ -74,12 +74,18 @@ struct PrefixDetailView: View {
                     ProgressView().controlSize(.small)
                     Text(status).foregroundStyle(.secondary)
                 } else if model.isRunning(prefix) {
-                    Button {
-                        Task { await model.stopAll(in: prefix) }
+                    Menu {
+                        Button("Shut Down") { Task { await model.shutDown(prefix) } }
+                        Button("Force Shut Down", role: .destructive) { Task { await model.forceShutDown(prefix) } }
                     } label: {
-                        Label("Stop All", systemImage: "stop.fill")
+                        Label("Shut Down", systemImage: "power")
+                    } primaryAction: {
+                        Task { await model.shutDown(prefix) }
                     }
+                    .menuStyle(.button)
                     .buttonStyle(.glass)
+                    .fixedSize()
+                    .help("Shut Down asks every program to close. Force Shut Down ends everything at once, including a program that has frozen.")
                     .help("Stop every program running in this prefix")
                 }
             }
@@ -360,8 +366,12 @@ private struct ToolsTab: View {
                         .buttonStyle(.glass)
                 }
                 Divider()
-                Row(label: "Stop everything", detail: "Ends every Windows process in this prefix at once.") {
-                    Button("Stop All") { Task { await model.stopAll(in: prefix) } }.buttonStyle(.glass)
+                Row(label: "Shut down", detail: "Asks every program in this prefix to close, the way shutting Windows down does. Programs may ask to save.") {
+                    Button("Shut Down") { Task { await model.shutDown(prefix) } }.buttonStyle(.glass)
+                }
+                Divider()
+                Row(label: "Force shut down", detail: "Ends everything in this prefix at once, without asking, including a program that has frozen. Unsaved work is lost.") {
+                    Button("Force Shut Down", role: .destructive) { Task { await model.forceShutDown(prefix) } }.buttonStyle(.glass)
                 }
             }
 

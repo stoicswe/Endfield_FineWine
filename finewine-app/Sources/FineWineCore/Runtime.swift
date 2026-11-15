@@ -81,8 +81,9 @@ public struct WineRuntime: Equatable, Identifiable, Sendable {
             .first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
-    /// The name of the copy of Wine's loader that tells macOS it is a game, beside the loader.
-    public static let gameLoaderName = "wine-game"
+    /// The copy of Wine's loader that macOS treats as a game: it is inside an app bundle whose
+    /// Info.plist says so, beside the usual loader. The path is relative to the loader's folder.
+    public static let gameLoaderName = "FineWine Game.app/Contents/MacOS/wine-game"
 
     /// Whether this runtime has that copy. Without it programs still run, just never in Game Mode.
     public var hasGameLoader: Bool {

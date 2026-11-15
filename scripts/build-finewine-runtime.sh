@@ -281,14 +281,13 @@ JSON
 
   strip_runtime
 
-  # The loader a second time, as the copy macOS treats as a game (Game Mode); FineWine runs
-  # programs that use Direct3D or Vulkan with it. See scripts/lib/make-game-loader.py.
-  "$REPO/scripts/lib/make-game-loader.py" "$OUT/lib/wine/aarch64-unix/wine" "$OUT/lib/wine/aarch64-unix/wine-game" \
-    && chmod 755 "$OUT/lib/wine/aarch64-unix/wine-game" || die "could not make the game loader"
-
   # Mach-O files are signed ad hoc; arm64 macOS refuses to run unsigned code.
   find "$OUT/bin" "$OUT/lib" -type f \( -perm -u+x -o -name '*.so' -o -name '*.dylib' \) -print0 \
     | xargs -0 -n 50 codesign --force --sign - 2>/dev/null || true
+  # The loader a second time, inside the app bundle that tells macOS it is a game (Game Mode);
+  # FineWine runs programs that use Direct3D or Vulkan with it. Made after everything is
+  # signed, so that the bundle is sealed with its final contents.
+  "$REPO/scripts/lib/make-game-loader.sh" "$OUT/lib/wine/aarch64-unix" || die "could not make the game loader"
   # Packaging starts from an empty folder, so the two add-ons built by their own scripts are
   # put back when their builds exist: FEX (x64 programs) and DXMT (Direct3D 10 and 11 on Metal).
   if [ -f "$BUILD_DIR/fex-arm64ec/Bin/libarm64ecfex.dll" ]; then

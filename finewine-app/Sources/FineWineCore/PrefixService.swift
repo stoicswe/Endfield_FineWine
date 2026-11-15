@@ -4,6 +4,10 @@ import Foundation
 /// process runner. Calls that run Wine block until it finishes, so the app makes them off the
 /// main thread.
 public struct PrefixService {
+    /// How processes are listed and killed for `forceShutDown`. Replaced in tests.
+    public var findProcesses: @Sendable (URL) -> [Int32] = { PrefixProcesses.systemPIDs(prefixDirectory: $0) }
+    public var killProcess: @Sendable (Int32) -> Void = { _ = kill($0, SIGKILL) }
+
     public let paths: FineWinePaths
     public let prefixes: PrefixStore
     public let runtimes: RuntimeStore
@@ -125,6 +129,26 @@ public struct PrefixService {
 
     public func stopAll(in prefix: Prefix) throws {
         _ = try runner.run(try planner(for: prefix).killPlan())
+    }
+
+    /// Shuts the prefix down the way Windows shuts down: every program is asked to close
+    /// (and may ask to save), then Wine's own processes end. Returns once that has been
+    /// started; a program that does not answer is not waited for. See `forceShutDown`.
+    public func shutDown(_ prefix: Prefix) throws {
+        _ = try runner.start(try planner(for: prefix).plan(for: .shutdown),
+                             logFile: logFile(for: prefix, name: "Shut down"), onExit: { _ in })
+    }
+
+    /// Ends everything in the prefix at once, without asking: Wine's server is told to end
+    /// its processes, and whatever is still there afterwards, which is what a frozen program
+    /// looks like, is killed directly. Unsaved work in those programs is lost.
+    /// Returns how many processes had to be killed directly.
+    @discardableResult
+    public func forceShutDown(_ prefix: Prefix) throws -> Int {
+        if let plan = try? planner(for: prefix).killPlan() { _ = try? runner.run(plan) }
+        let left = findProcesses(prefix.directory)
+        left.forEach(killProcess)
+        return left.count
     }
 
     // MARK: Programs

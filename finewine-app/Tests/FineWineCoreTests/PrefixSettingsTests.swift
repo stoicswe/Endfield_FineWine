@@ -168,7 +168,8 @@ final class PrefixSettingsTests: XCTestCase {
 
     func testEnvironmentVariables() {
         var settings = PrefixSettings()
-        XCTAssertEqual(settings.environmentVariables().map(\.name), ["WINEDEBUG", "WINEMSYNC", "FINEWINE_DLSS", "DXMT_ENABLE_NVEXT", "DXMT_CONFIG"])
+        XCTAssertEqual(settings.environmentVariables().map(\.name), ["WINEDEBUG", "WINEMSYNC", "MTL_HUD_ENABLED", "FINEWINE_METAL_HUD", "FINEWINE_FULLSCREEN",
+                        "FINEWINE_DLSS", "DXMT_ENABLE_NVEXT", "DXMT_CONFIG"])
         XCTAssertEqual(settings.environmentVariables().first?.value, "-all")
 
         settings.metalHUD = true
@@ -178,6 +179,7 @@ final class PrefixSettingsTests: XCTestCase {
                                 EnvironmentVariable(name: "bad name", value: "x")]
         let env = Dictionary(uniqueKeysWithValues: settings.environmentVariables().map { ($0.name, $0.value) })
         XCTAssertEqual(env, ["WINEDEBUG": "err+all", "WINEMSYNC": "1", "MTL_HUD_ENABLED": "1",
+                             "FINEWINE_METAL_HUD": "1", "FINEWINE_FULLSCREEN": "space",
                              "FEX_HIDEHYPERVISORBIT": "1", "FINEWINE_DLSS": "1", "DXMT_ENABLE_NVEXT": "1",
                              "DXMT_CONFIG": "dxgi.customVendorId=106b", "MY_FLAG": "1"])
     }
@@ -198,6 +200,30 @@ final class PrefixSettingsTests: XCTestCase {
         // A prefix saved with the old default keeps what it was saved with.
         let saved = try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(settings))
         XCTAssertEqual(saved.syncMode, .standard)
+    }
+
+    func testFullScreenIsAMacSpaceByDefault() throws {
+        var settings = PrefixSettings()
+        XCTAssertEqual(settings.fullScreenMode, .space)
+        XCTAssertEqual(env(settings)["FINEWINE_FULLSCREEN"], "space")
+        settings.fullScreenMode = .borderless
+        XCTAssertEqual(env(settings)["FINEWINE_FULLSCREEN"], "borderless")
+        settings.fullScreenMode = .exclusive
+        XCTAssertEqual(env(settings)["FINEWINE_FULLSCREEN"], "exclusive")
+        let saved = try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(saved.fullScreenMode, .exclusive)
+        XCTAssertEqual(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).fullScreenMode, .space)
+    }
+
+    func testTheMetalOverlayIsAlwaysAvailableAndStartsAsTheSettingSays() {
+        var settings = PrefixSettings()
+        // Metal only has the overlay in a process started with MTL_HUD_ENABLED, so it is always
+        // set; whether the overlay is drawn at the start is a separate variable.
+        XCTAssertEqual(env(settings)["MTL_HUD_ENABLED"], "1")
+        XCTAssertEqual(env(settings)["FINEWINE_METAL_HUD"], "0")
+        settings.metalHUD = true
+        XCTAssertEqual(env(settings)["MTL_HUD_ENABLED"], "1")
+        XCTAssertEqual(env(settings)["FINEWINE_METAL_HUD"], "1")
     }
 
     func testGameModeIsOnByDefault() throws {
