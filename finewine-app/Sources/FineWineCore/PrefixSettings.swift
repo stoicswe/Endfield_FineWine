@@ -151,7 +151,10 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// Overrides the build number Windows reports (e.g. `26100`); empty leaves Wine's own.
     public var windowsBuild: String = ""
     public var graphicsBackend: GraphicsBackend = .dxmt
-    public var syncMode: SyncMode = .standard
+    /// MSync by default: Windows events, mutexes and semaphores are Mach semaphores inside the
+    /// program instead of requests to Wine's server, which measured 4 to 23 times faster
+    /// (docs/project-information/22-performance.md).
+    public var syncMode: SyncMode = .msync
     public var dllOverrides: [DLLOverride] = []
     public var environment: [EnvironmentVariable] = []
     /// High-resolution mode: programs render at the display's real pixel resolution instead of
@@ -170,10 +173,26 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     public var metalHUD: Bool = false
     /// Hide the "running under a hypervisor" CPU flag from x64 programs (a FEX setting).
     public var hideHypervisor: Bool = false
-    /// Let games that offer NVIDIA DLSS upscale through Apple's MetalFX instead. Takes effect
-    /// with DXMT, whose nvngx.dll does the translation. FSR needs nothing: it is the game's own
-    /// shader code and runs as it is.
+    /// Let games that offer NVIDIA DLSS use Apple's MetalFX instead: super resolution as
+    /// MetalFX upscaling, frame generation as MetalFX frame interpolation. Direct3D 10 and 11
+    /// games get it from DXMT; Direct3D 12 and Vulkan games from the runtime's MoltenVK. FSR
+    /// needs nothing: it is the game's own shader code and runs as it is.
     public var dlssThroughMetalFX: Bool = true
+    /// Report the GPU to Windows programs as an NVIDIA GeForce RTX 5080: its name and its PCI
+    /// ids. The memory stays what it is. Games only offer DLSS on an NVIDIA adapter, so they
+    /// need this to show the option; it is off by default because it is not the truth.
+    public var reportNvidiaGPU: Bool = false
+
+    /// Run programs that use Direct3D, Vulkan or OpenGL with the loader macOS treats as a game,
+    /// so that Game Mode turns on when one is full screen.
+    public var gameMode: Bool = true
+
+    /// The PCI ids reported when `reportNvidiaGPU` is on: NVIDIA, and its GeForce RTX 5080.
+    public static let reportedGPUVendorID: UInt16 = 0x10DE
+    public static let reportedGPUDeviceID: UInt16 = 0x2C02
+    public static let reportedGPUName = "NVIDIA GeForce RTX 5080"
+    /// Apple's PCI vendor id, which is what the GPU really is.
+    public static let appleGPUVendorID: UInt16 = 0x106B
     /// Give Windows controls macOS colours, fonts and the Mac's accent colour.
     public var macAppearance: Bool = true
     /// Wine debug channels (`WINEDEBUG`). `-all` is silent and fastest.
@@ -204,6 +223,8 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         debugChannels = try c.decodeIfPresent(String.self, forKey: .debugChannels) ?? d.debugChannels
         macAppearance = try c.decodeIfPresent(Bool.self, forKey: .macAppearance) ?? d.macAppearance
         dlssThroughMetalFX = try c.decodeIfPresent(Bool.self, forKey: .dlssThroughMetalFX) ?? d.dlssThroughMetalFX
+        reportNvidiaGPU = try c.decodeIfPresent(Bool.self, forKey: .reportNvidiaGPU) ?? d.reportNvidiaGPU
+        gameMode = try c.decodeIfPresent(Bool.self, forKey: .gameMode) ?? d.gameMode
     }
 
     // MARK: Validation
@@ -312,10 +333,31 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         }
         if metalHUD { out.append(("MTL_HUD_ENABLED", "1")) }
         if hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
-        // DXMT turns its NVIDIA stand-ins on with this variable: it then registers its nvngx.dll
-        // where the DLSS SDK inside a game looks for NVIDIA's, and DLSS upscaling runs as
-        // MetalFX. Without it DXMT removes that registration and games see no DLSS.
-        if dlssThroughMetalFX, graphicsBackend == .dxmt { out.append(("DXMT_ENABLE_NVEXT", "1")) }
+        if dlssThroughMetalFX {
+            // Lets nvngx.dll load for Direct3D 12 and Vulkan programs, whose DLSS calls it
+            // turns into MetalFX work in MoltenVK.
+            out.append(("FINEWINE_DLSS", "1"))
+            // DXMT turns its NVIDIA stand-ins on with this variable: it then registers its
+            // nvngx.dll where the DLSS SDK inside a game looks for NVIDIA's, and Direct3D 11
+            // DLSS runs as MetalFX. Without it DXMT removes that registration.
+            if graphicsBackend == .dxmt { out.append(("DXMT_ENABLE_NVEXT", "1")) }
+        }
+        // The ids the GPU is reported under, to each layer a program can ask: Vulkan
+        // (MoltenVK), Wine's Direct3D (which Direct3D 12 also reports through), and DXMT.
+        let vendor = String(Self.reportedGPUVendorID, radix: 16), device = String(Self.reportedGPUDeviceID, radix: 16)
+        if reportNvidiaGPU {
+            out.append(("FINEWINE_GPU_VENDOR_ID", vendor))
+            out.append(("FINEWINE_GPU_DEVICE_ID", device))
+            out.append(("FINEWINE_GPU_NAME", Self.reportedGPUName))
+            out.append(("WINE_D3D_CONFIG", "VideoPciVendorID=0x\(vendor),VideoPciDeviceID=0x\(device)"))
+            if graphicsBackend == .dxmt {
+                out.append(("DXMT_CONFIG", "dxgi.customVendorId=\(vendor);dxgi.customDeviceId=\(device);dxgi.customDeviceDesc=\"\(Self.reportedGPUName)\""))
+            }
+        } else if dlssThroughMetalFX, graphicsBackend == .dxmt {
+            // With its NVIDIA stand-ins on, DXMT reports NVIDIA's vendor id by itself. Whether
+            // the GPU is reported as NVIDIA is this prefix's other setting, so say Apple's.
+            out.append(("DXMT_CONFIG", "dxgi.customVendorId=\(String(Self.appleGPUVendorID, radix: 16))"))
+        }
         for variable in environment where EnvironmentVariable.isValidName(variable.name) {
             out.append((variable.name, variable.value))
         }

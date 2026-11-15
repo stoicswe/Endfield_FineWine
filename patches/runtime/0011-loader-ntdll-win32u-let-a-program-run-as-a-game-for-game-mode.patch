@@ -1,0 +1,100 @@
+From: FineWine
+Subject: [PATCH] loader, ntdll, win32u: Let a program run as a game for macOS Game Mode.
+
+macOS turns Game Mode on for a full-screen app whose Info.plist says it is a game. It reads
+that from the running executable, and Wine's loader carries its Info.plist inside the binary,
+so whether a Wine program counts as a game cannot be decided once the program is running.
+
+- loader/wine_info.plist.in gains the three keys that matter, saying "not a game", written so
+  that a copy of the loader can be changed to say "a game" without changing its length
+  (scripts/lib/make-game-loader.py makes that copy, wine-game, when the runtime is packaged).
+- ntdll: FINEWINE_LOADER names the copy of the loader, beside the usual one, that a program
+  and every process it starts are run with.
+- win32u: creating a Vulkan instance, which Direct3D 12 does too through vkd3d, creates the
+  file named in FINEWINE_GAME_MARKER. That is how FineWine learns that a program renders with
+  a GPU API, including one that only does so through a game its launcher starts; it then runs
+  that program with the game loader. DXMT does the same for Direct3D 10 and 11.
+
+Without those two variables nothing changes.
+
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 9dfaa6b..0a688a6 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -402,6 +402,18 @@ static void init_paths(void)
+         bin_dir = build_relative_path( dll_dir, LIBDIR "/wine", BINDIR );
+         data_dir = build_relative_path( dll_dir, LIBDIR "/wine", DATADIR "/wine" );
+         wineloader = build_path( ntdll_dir, "wine" );
++        /* FineWine: a second copy of the loader, beside this one, tells macOS it is a game
++         * (see loader/wine_info.plist.in). FINEWINE_LOADER names the copy to run a program
++         * and everything it starts with. */
++        {
++            const char *name = getenv( "FINEWINE_LOADER" );
++            if (name && *name && !strchr( name, '/' ))
++            {
++                char *alt = build_path( ntdll_dir, name );
++                if (!access( alt, X_OK )) wineloader = alt;
++                else free( alt );
++            }
++        }
+     }
+ 
+     set_dll_path();
+diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
+index b94c922..dbb733c 100644
+--- a/dlls/win32u/vulkan.c
++++ b/dlls/win32u/vulkan.c
+@@ -33,6 +33,7 @@
+ #include <dlfcn.h>
+ #include <pthread.h>
+ #include <unistd.h>
++#include <fcntl.h>
+ 
+ #include "ntstatus.h"
+ #include "win32u_private.h"
+@@ -596,9 +597,25 @@ failed:
+     return res;
+ }
+ 
++/* FineWine: a program that starts using a rendering API is a game as far as macOS Game Mode is
++ * concerned. FineWine names a file in FINEWINE_GAME_MARKER; creating it is how the runtime
++ * tells FineWine, which then runs the program with the loader that says so (see
++ * FINEWINE_LOADER in ntdll). Vulkan and, through vkd3d, Direct3D 12 come through here. */
++static void finewine_mark_as_game(void)
++{
++    static LONG marked;
++    const char *marker = getenv( "FINEWINE_GAME_MARKER" );
++    int fd;
++
++    if (!marker || !*marker || InterlockedExchange( &marked, 1 )) return;
++    if ((fd = open( marker, O_WRONLY | O_CREAT, 0644 )) >= 0) close( fd );
++}
++
+ static VkResult win32u_vkCreateInstance( const VkInstanceCreateInfo *client_create_info, const VkAllocationCallbacks *allocator,
+                                          VkInstance *client_instance_ptr )
+ {
++    finewine_mark_as_game();
++
+     VkInstanceCreateInfo *create_info = (VkInstanceCreateInfo *)client_create_info; /* cast away const, chain has been copied in the thunks */
+     VkInstance host_instance = VK_NULL_HANDLE, client_instance = *client_instance_ptr;
+     struct vulkan_physical_device *physical_devices;
+diff --git a/loader/wine_info.plist.in b/loader/wine_info.plist.in
+index 6495b8f..a65149e 100644
+--- a/loader/wine_info.plist.in
++++ b/loader/wine_info.plist.in
+@@ -26,5 +26,15 @@
+     <string>WineApplication</string>
+     <key>LSUIElement</key>
+     <string>1</string>
++    <!-- FineWine: macOS turns Game Mode on for a full-screen app that says it is a game. The
++         loader is installed twice: as it is here, and as "wine-game" with the three values
++         below changed to public.app-category.games, true and true. The values are written so
++         that the change does not alter the length of the file; see make-game-loader.py. -->
++    <key>LSApplicationCategoryType</key>
++    <string>public.app-category.utilities</string>
++    <key>GCSupportsGameMode</key>
++    <false/>
++    <key>LSSupportsGameMode</key>
++    <false/>
+ </dict>
+ </plist>

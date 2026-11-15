@@ -1,0 +1,37 @@
+From: FineWine
+Subject: [PATCH] winemetal: Tell FineWine when a program starts rendering.
+
+macOS Game Mode is for games, and FineWine decides whether a program is one by whether it
+renders with a GPU API. A program that asks DXMT for the GPUs is about to use Direct3D 10 or
+11: at that point the file named in FINEWINE_GAME_MARKER is created, as Wine's win32u does for
+Vulkan and Direct3D 12. Without the variable nothing happens.
+
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+index 2776e47..218f9e4 100644
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -52,8 +52,24 @@ _NSArray_count(void *obj) {
+   return STATUS_SUCCESS;
+ }
+ 
++// FineWine: a program that asks for the GPUs is about to render with Direct3D 10 or 11, which
++// makes it a game as far as macOS Game Mode is concerned. FineWine names a file in
++// FINEWINE_GAME_MARKER; creating it is how the runtime tells FineWine (the same is done for
++// Vulkan and Direct3D 12 in Wine's win32u).
++static void
++finewine_mark_as_game(void) {
++  static _Atomic int marked;
++  const char *marker = getenv("FINEWINE_GAME_MARKER");
++  if (!marker || !*marker || atomic_exchange(&marked, 1))
++    return;
++  int fd = open(marker, O_WRONLY | O_CREAT, 0644);
++  if (fd >= 0)
++    close(fd);
++}
++
+ static NTSTATUS
+ _MTLCopyAllDevices(void *obj) {
++  finewine_mark_as_game();
+   struct unixcall_generic_obj_ret *params = obj;
+   params->ret = (obj_handle_t)MTLCopyAllDevices();
+   return STATUS_SUCCESS;

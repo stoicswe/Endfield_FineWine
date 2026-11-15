@@ -1,0 +1,460 @@
+From: FineWine
+Subject: [PATCH] nvngx: NGX for Direct3D 12 and Vulkan, with frame generation.
+
+DXMT's nvngx.dll implements NGX for Direct3D 11 only, and only DLSS super resolution. In
+FineWine's runtime Direct3D 12 is Wine's vkd3d and Vulkan is Wine's Vulkan layer, both on
+MoltenVK, and programs on those paths found no DLSS at all.
+
+nvngx_moltenvk.cpp adds the NVSDK_NGX_D3D12_* and NVSDK_NGX_VULKAN_* entry points. An
+evaluation becomes a request that FineWine's MoltenVK records in the program's command buffer
+as MetalFX work: super resolution (feature 1) as a temporal upscale, frame generation
+(feature 11, the DLSSG.* parameters) as a frame interpolation. A Vulkan program's request goes
+out through vkCmdPushConstants(); a Direct3D 12 program's goes through two private data GUIDs
+of FineWine's vkd3d.
+
+The module now also loads when FINEWINE_DLSS=1 is set, not only when DXMT's DXGI has its
+NVIDIA extension on: a Direct3D 12 or Vulkan program may not be using DXMT's DXGI.
+
+diff --git a/src/nvngx/meson.build b/src/nvngx/meson.build
+index b94ad4b..0dc9a20 100644
+--- a/src/nvngx/meson.build
++++ b/src/nvngx/meson.build
+@@ -1,5 +1,6 @@
+ nvngx_src = [
+   'nvngx.cpp',
++  'nvngx_moltenvk.cpp',
+ ]
+ 
+ nvngx_ld_args      = []
+diff --git a/src/nvngx/nvngx.cpp b/src/nvngx/nvngx.cpp
+index 1b353e8..25ac170 100644
+--- a/src/nvngx/nvngx.cpp
++++ b/src/nvngx/nvngx.cpp
+@@ -333,8 +333,12 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason,
+ 
+   DisableThreadLibraryCalls(instance);
+ 
++  // FineWine: Direct3D 12 and Vulkan programs use this module without DXMT's DXGI being the
++  // one loaded (nvngx_moltenvk.cpp), so its vendor extension is not the only way in.
+   if (FAILED(DXGIGetDebugInterface1(0, DXMT_NVEXT_GUID, nullptr))) {
+-    return FALSE;
++    char enabled[8] = {};
++    if (!GetEnvironmentVariableA("FINEWINE_DLSS", enabled, sizeof(enabled)) || enabled[0] != '1')
++      return FALSE;
+   }
+ 
+   return TRUE;
+diff --git a/src/nvngx/nvngx_moltenvk.cpp b/src/nvngx/nvngx_moltenvk.cpp
+new file mode 100644
+index 0000000..f7b05d9
+--- /dev/null
++++ b/src/nvngx/nvngx_moltenvk.cpp
+@@ -0,0 +1,408 @@
++/*
++ * FineWine: NGX for Direct3D 12 and Vulkan programs.
++ *
++ * DXMT is Direct3D 10 and 11, and its NGX entry points (nvngx.cpp) are for Direct3D 11. In the
++ * FineWine runtime Direct3D 12 is Wine's vkd3d and Vulkan is Wine's Vulkan layer, both on
++ * MoltenVK. This file adds the NVSDK_NGX_D3D12_* and NVSDK_NGX_VULKAN_* entry points for
++ * them. They do no work themselves: an evaluation is turned into a request that FineWine's
++ * MoltenVK records in the program's command buffer as a MetalFX upscale (DLSS super
++ * resolution) or frame interpolation (DLSS frame generation).
++ *
++ *  - Vulkan: the request goes out through vkCmdPushConstants() with a null layout.
++ *  - Direct3D 12: Wine's vkd3d, as patched for FineWine, hands out a texture's VkImage and
++ *    records the request, both through private data (see vkd3d_private.h there).
++ */
++#include "nvngx.hpp"
++#include "log/log.hpp"
++#include "nvngx_feature.hpp"
++#include "nvngx_parameter.hpp"
++#include <atomic>
++#include <cmath>
++#include <cstring>
++#include <d3d12.h>
++
++namespace dxmt {
++
++// The same request FineWine's MoltenVK declares as MVKMetalFXRequest.
++static const uint32_t FW_METALFX_MAGIC = 0x584D5746u;
++enum { FW_METALFX_TEMPORAL_UPSCALE = 1, FW_METALFX_FRAME_INTERPOLATE = 2, FW_METALFX_RELEASE = 3 };
++enum { FW_METALFX_DEPTH_REVERSED = 1, FW_METALFX_AUTO_EXPOSURE = 2, FW_METALFX_RESET_HISTORY = 4, FW_METALFX_MOTION_AT_OUTPUT_SIZE = 8 };
++struct FWMetalFXRequest {
++  uint32_t size, operation, flags, reserved;
++  uint64_t feature;
++  uint64_t color, depth, motion, exposure, output;
++  uint32_t inputWidth, inputHeight;
++  float jitterX, jitterY, motionScaleX, motionScaleY, preExposure;
++  float deltaTime, nearPlane, farPlane, fieldOfView, aspectRatio;
++};
++
++static const GUID FINEWINE_GUID_VK_IMAGE = {0x46570001, 0x4d58, 0x4657, {0x8a, 0x01, 0x76, 0x6b, 0x69, 0x6d, 0x61, 0x67}};
++static const GUID FINEWINE_GUID_METALFX_REQUEST = {0x46570002, 0x4d58, 0x4657, {0x8a, 0x02, 0x6d, 0x74, 0x6c, 0x66, 0x78, 0x72}};
++
++static const unsigned int NVNGX_FEATURE_FRAME_GENERATION = 11;
++
++struct MoltenVKFeature : CommonFeature {
++  uint64_t id;
++  int flag;
++  uint32_t width, height, target_width, target_height;
++};
++
++static std::atomic<uint64_t> next_feature_id{1};
++
++// What a Vulkan program passes as a resource (NVSDK_NGX_Resource_VK): an image view, then its image.
++struct NGXVulkanResource {
++  uint64_t image_view;
++  uint64_t image;
++};
++
++typedef void(WINAPI *PFN_vkCmdPushConstants)(
++    void *command_buffer, uint64_t layout, uint32_t stage_flags, uint32_t offset, uint32_t size, const void *values
++);
++
++static PFN_vkCmdPushConstants
++GetPushConstants() {
++  static PFN_vkCmdPushConstants fn = nullptr;
++  if (!fn) {
++    if (HMODULE vulkan = LoadLibraryA("vulkan-1.dll"))
++      fn = (PFN_vkCmdPushConstants)GetProcAddress(vulkan, "vkCmdPushConstants");
++  }
++  return fn;
++}
++
++// Where a request is recorded, and how the program's resources become VkImages.
++struct Target {
++  ID3D12GraphicsCommandList *d3d12 = nullptr;
++  void *vulkan = nullptr;
++
++  uint64_t
++  image(const ParametersImpl *params, const char *name) const {
++    if (d3d12) {
++      ID3D12Resource *resource = nullptr;
++      if (NVNGX_FAILED(params->Get(name, &resource)) || !resource)
++        return 0;
++      uint64_t vk_image = 0;
++      UINT size = sizeof(vk_image);
++      if (FAILED(resource->GetPrivateData(FINEWINE_GUID_VK_IMAGE, &size, &vk_image)))
++        return 0;
++      return vk_image;
++    }
++    void *resource = nullptr;
++    if (NVNGX_FAILED(params->Get(name, &resource)) || !resource)
++      return 0;
++    return static_cast<NGXVulkanResource *>(resource)->image;
++  }
++
++  bool
++  record(const FWMetalFXRequest &request) const {
++    if (d3d12)
++      return SUCCEEDED(d3d12->SetPrivateData(FINEWINE_GUID_METALFX_REQUEST, sizeof(request), &request));
++    PFN_vkCmdPushConstants push = GetPushConstants();
++    if (!push || !vulkan)
++      return false;
++    push(vulkan, 0, FW_METALFX_MAGIC, 0, sizeof(request), &request);
++    return true;
++  }
++};
++
++static NVNGX_RESULT
++CreateFeature(unsigned int feature, NVNGXParameter *params, unsigned int **out_handle) {
++  auto parameters = static_cast<ParametersImpl *>(params);
++  if (feature != NVNGX_FEATURE_SUPERSAMPLING && feature != NVNGX_FEATURE_FRAME_GENERATION) {
++    ERR("NGX CreateFeature: feature ", feature, " not handled");
++    return NVNGX_RESULT_FEATURE_NOT_SUPPORTED;
++  }
++  auto f = new MoltenVKFeature();
++  f->feature = (NVNGX_FEATURE)feature;
++  f->id = next_feature_id++;
++  f->width = f->height = f->target_width = f->target_height = 0;
++  f->flag = 0;
++  if (parameters) {
++    parameters->Get(NVNGX_Parameter_Width, &f->width);
++    parameters->Get(NVNGX_Parameter_Height, &f->height);
++    parameters->Get(NVNGX_Parameter_OutWidth, &f->target_width);
++    parameters->Get(NVNGX_Parameter_OutHeight, &f->target_height);
++    parameters->Get(NVNGX_Parameter_DLSS_Feature_Create_Flags, &f->flag);
++  }
++  *out_handle = &f->handle;
++  return NVNGX_RESULT_OK;
++}
++
++static NVNGX_RESULT
++EvaluateFeature(const Target &target, const unsigned int *handle, NVNGXParameter *params) {
++  auto parameters = static_cast<ParametersImpl *>(params);
++  auto f = static_cast<MoltenVKFeature *>(static_cast<CommonFeature *>((void *)handle));
++  if (!f || !parameters)
++    return NVNGX_RESULT_INVALID_PARAMETER;
++
++  FWMetalFXRequest rq = {};
++  rq.size = sizeof(rq);
++  rq.feature = f->id;
++  int reset = 0;
++
++  if (f->feature == NVNGX_FEATURE_SUPERSAMPLING) {
++    rq.operation = FW_METALFX_TEMPORAL_UPSCALE;
++    rq.color = target.image(parameters, NVNGX_Parameter_Color);
++    rq.output = target.image(parameters, NVNGX_Parameter_Output);
++    rq.depth = target.image(parameters, NVNGX_Parameter_Depth);
++    rq.motion = target.image(parameters, NVNGX_Parameter_MotionVectors);
++    rq.exposure = target.image(parameters, NVNGX_Parameter_ExposureTexture);
++    if (!rq.color || !rq.output || !rq.depth || !rq.motion)
++      return NVNGX_RESULT_INVALID_PARAMETER;
++    parameters->Get(NVNGX_Parameter_DLSS_Render_Subrect_Dimensions_Width, &rq.inputWidth);
++    parameters->Get(NVNGX_Parameter_DLSS_Render_Subrect_Dimensions_Height, &rq.inputHeight);
++    if (!rq.inputWidth || !rq.inputHeight) {
++      rq.inputWidth = f->width;
++      rq.inputHeight = f->height;
++    }
++    if (f->flag & NVNGX_DLSS_FLAG_DEPTH_INVERTED)
++      rq.flags |= FW_METALFX_DEPTH_REVERSED;
++    if (f->flag & NVNGX_DLSS_FLAG_AUTO_EXPOSURE)
++      rq.flags |= FW_METALFX_AUTO_EXPOSURE;
++    if (!(f->flag & NVNGX_DLSS_FLAG_MV_LOWRES))
++      rq.flags |= FW_METALFX_MOTION_AT_OUTPUT_SIZE;
++    parameters->Get(NVNGX_Parameter_Jitter_Offset_X, &rq.jitterX);
++    parameters->Get(NVNGX_Parameter_Jitter_Offset_Y, &rq.jitterY);
++    if (NVNGX_FAILED(parameters->Get(NVNGX_Parameter_MV_Scale_X, &rq.motionScaleX)))
++      rq.motionScaleX = 1.0f;
++    if (NVNGX_FAILED(parameters->Get(NVNGX_Parameter_MV_Scale_Y, &rq.motionScaleY)))
++      rq.motionScaleY = 1.0f;
++    if (NVNGX_FAILED(parameters->Get(NVNGX_Parameter_DLSS_Pre_Exposure, &rq.preExposure)))
++      rq.preExposure = 1.0f;
++    parameters->Get(NVNGX_Parameter_Reset, &reset);
++  } else {
++    // Frame generation: the finished frame goes in, the frame between it and the last comes out.
++    rq.operation = FW_METALFX_FRAME_INTERPOLATE;
++    rq.color = target.image(parameters, "DLSSG.Backbuffer");
++    rq.output = target.image(parameters, "DLSSG.OutputInterpolated");
++    rq.depth = target.image(parameters, "DLSSG.Depth");
++    rq.motion = target.image(parameters, "DLSSG.MVecs");
++    if (!rq.color || !rq.output)
++      return NVNGX_RESULT_INVALID_PARAMETER;
++    int enable = 1, depth_inverted = 0;
++    parameters->Get("DLSSG.EnableInterp", &enable);
++    if (!enable) {
++      // Asked not to interpolate: without depth and motion MoltenVK copies the frame across.
++      rq.depth = 0;
++      rq.motion = 0;
++    }
++    parameters->Get("DLSSG.DepthInverted", &depth_inverted);
++    if (depth_inverted)
++      rq.flags |= FW_METALFX_DEPTH_REVERSED;
++    if (NVNGX_FAILED(parameters->Get("DLSSG.MvecScaleX", &rq.motionScaleX)))
++      rq.motionScaleX = 1.0f;
++    if (NVNGX_FAILED(parameters->Get("DLSSG.MvecScaleY", &rq.motionScaleY)))
++      rq.motionScaleY = 1.0f;
++    parameters->Get("DLSSG.JitterOffsetX", &rq.jitterX);
++    parameters->Get("DLSSG.JitterOffsetY", &rq.jitterY);
++    parameters->Get("DLSSG.CameraNear", &rq.nearPlane);
++    parameters->Get("DLSSG.CameraFar", &rq.farPlane);
++    parameters->Get("DLSSG.CameraAspectRatio", &rq.aspectRatio);
++    // The field of view arrives in radians; MetalFX takes degrees.
++    float fov = 0.0f;
++    parameters->Get("DLSSG.CameraFOV", &fov);
++    rq.fieldOfView = fov > 0.0f && fov < 3.2f ? fov * 57.29578f : fov;
++    parameters->Get("DLSSG.Reset", &reset);
++  }
++  if (reset)
++    rq.flags |= FW_METALFX_RESET_HISTORY;
++
++  if (!target.record(rq)) {
++    ERR("NGX EvaluateFeature: the request could not be recorded; this needs FineWine's vkd3d and MoltenVK");
++    return NVNGX_RESULT_FAIL;
++  }
++  return NVNGX_RESULT_OK;
++}
++
++// The capabilities nvngx.cpp reports, plus frame generation.
++NVNGX_API NVNGX_RESULT NVSDK_NGX_D3D11_GetCapabilityParameters(NVNGXParameter **out_params);
++
++static NVNGX_RESULT
++GetCapabilityParameters(NVNGXParameter **out_params) {
++  NVNGX_RESULT r = NVSDK_NGX_D3D11_GetCapabilityParameters(out_params);
++  if (r != NVNGX_RESULT_OK)
++    return r;
++  NVNGXParameter *p = *out_params;
++  p->Set("FrameGeneration.Available", 1u);
++  p->Set("FrameGeneration.FeatureInitResult", 1u);
++  p->Set("FrameGeneration.MinDriverVersionMajor", 0);
++  p->Set("FrameGeneration.MinDriverVersionMinor", 0);
++  p->Set("FrameGeneration.NeedsUpdatedDriver", 0);
++  p->Set("DLSSG.MultiFrameCountMax", 1u);
++  return NVNGX_RESULT_OK;
++}
++
++static NVNGX_RESULT
++GetFeatureRequirements(const NVNGX_FeatureDiscoveryInfo *discovery_info, NVNGX_FeatureRequirement *requirement) {
++  if (!requirement || !discovery_info)
++    return NVNGX_RESULT_INVALID_PARAMETER;
++  if (discovery_info->FeatureID == NVNGX_FEATURE_SUPERSAMPLING ||
++      (unsigned int)discovery_info->FeatureID == NVNGX_FEATURE_FRAME_GENERATION) {
++    requirement->FeatureSupported = NVNGX_FEATURE_SUPPORT_RESULT_SUPPORTED;
++    requirement->MinHWArchitecture = 0;
++    strcpy_s(requirement->MinOSVersion, "10.0.16299.0");
++    return NVNGX_RESULT_OK;
++  }
++  requirement->FeatureSupported = NVNGX_FEATURE_SUPPORT_RESULT_UNSUPPORTED;
++  return NVNGX_RESULT_FAIL;
++}
++
++// Initialisation and shutdown have nothing to do: there is no state outside the features.
++// The entry points take different arguments in different SDK versions; none is used.
++#define FW_NGX_NOTHING(name)                                                                                           \
++  NVNGX_API NVNGX_RESULT name() { return NVNGX_RESULT_OK; }
++
++FW_NGX_NOTHING(NVSDK_NGX_D3D12_Init)
++FW_NGX_NOTHING(NVSDK_NGX_D3D12_Init_Ext)
++FW_NGX_NOTHING(NVSDK_NGX_D3D12_Init_ProjectID)
++FW_NGX_NOTHING(NVSDK_NGX_D3D12_Init_with_ProjectID)
++FW_NGX_NOTHING(NVSDK_NGX_D3D12_Shutdown)
++FW_NGX_NOTHING(NVSDK_NGX_D3D12_Shutdown1)
++FW_NGX_NOTHING(NVSDK_NGX_VULKAN_Init)
++FW_NGX_NOTHING(NVSDK_NGX_VULKAN_Init_Ext)
++FW_NGX_NOTHING(NVSDK_NGX_VULKAN_Init_Ext2)
++FW_NGX_NOTHING(NVSDK_NGX_VULKAN_Init_ProjectID)
++FW_NGX_NOTHING(NVSDK_NGX_VULKAN_Init_ProjectID_Ext)
++FW_NGX_NOTHING(NVSDK_NGX_VULKAN_Init_with_ProjectID)
++FW_NGX_NOTHING(NVSDK_NGX_VULKAN_Shutdown)
++FW_NGX_NOTHING(NVSDK_NGX_VULKAN_Shutdown1)
++
++#define FW_NGX_COMMON(api)                                                                                             \
++  NVNGX_API NVNGX_RESULT NVSDK_NGX_##api##_GetScratchBufferSize(                                                       \
++      unsigned int feature, const NVNGXParameter *params, size_t *out_size                                             \
++  ) {                                                                                                                  \
++    if (out_size)                                                                                                      \
++      *out_size = 0;                                                                                                   \
++    return NVNGX_RESULT_OK;                                                                                            \
++  }                                                                                                                    \
++  NVNGX_API NVNGX_RESULT NVSDK_NGX_##api##_ReleaseFeature(unsigned int *handle) {                                      \
++    delete static_cast<MoltenVKFeature *>(static_cast<CommonFeature *>((void *)handle));                              \
++    return NVNGX_RESULT_OK;                                                                                            \
++  }                                                                                                                    \
++  NVNGX_API NVNGX_RESULT NVSDK_NGX_##api##_AllocateParameters(NVNGXParameter **out_params) {                           \
++    *out_params = new ParametersImpl();                                                                                \
++    return NVNGX_RESULT_OK;                                                                                            \
++  }                                                                                                                    \
++  NVNGX_API NVNGX_RESULT NVSDK_NGX_##api##_DestroyParameters(NVNGXParameter *params) {                                 \
++    delete static_cast<ParametersImpl *>(params);                                                                      \
++    return NVNGX_RESULT_OK;                                                                                            \
++  }                                                                                                                    \
++  NVNGX_API NVNGX_RESULT NVSDK_NGX_##api##_GetCapabilityParameters(NVNGXParameter **out_params) {                      \
++    return GetCapabilityParameters(out_params);                                                                        \
++  }                                                                                                                    \
++  NVNGX_API NVNGX_RESULT NVSDK_NGX_##api##_GetParameters(NVNGXParameter **out_params) {                                \
++    return GetCapabilityParameters(out_params);                                                                        \
++  }
++
++FW_NGX_COMMON(D3D12)
++FW_NGX_COMMON(VULKAN)
++
++NVNGX_API NVNGX_RESULT
++NVSDK_NGX_D3D12_CreateFeature(
++    ID3D12GraphicsCommandList *command_list, unsigned int feature, NVNGXParameter *params, unsigned int **out_handle
++) {
++  return CreateFeature(feature, params, out_handle);
++}
++
++NVNGX_API NVNGX_RESULT
++NVSDK_NGX_D3D12_EvaluateFeature(
++    ID3D12GraphicsCommandList *command_list, const unsigned int *handle, NVNGXParameter *params, void *callback
++) {
++  Target target;
++  target.d3d12 = command_list;
++  return EvaluateFeature(target, handle, params);
++}
++
++NVNGX_API NVNGX_RESULT
++NVSDK_NGX_D3D12_EvaluateFeature_C(
++    ID3D12GraphicsCommandList *command_list, const unsigned int *handle, NVNGXParameter *params, void *callback
++) {
++  return NVSDK_NGX_D3D12_EvaluateFeature(command_list, handle, params, callback);
++}
++
++NVNGX_API NVNGX_RESULT
++NVSDK_NGX_D3D12_GetFeatureRequirements(
++    void *adapter, const NVNGX_FeatureDiscoveryInfo *discovery_info, NVNGX_FeatureRequirement *requirement
++) {
++  return GetFeatureRequirements(discovery_info, requirement);
++}
++
++NVNGX_API NVNGX_RESULT
++NVSDK_NGX_VULKAN_CreateFeature(
++    void *command_buffer, unsigned int feature, NVNGXParameter *params, unsigned int **out_handle
++) {
++  return CreateFeature(feature, params, out_handle);
++}
++
++NVNGX_API NVNGX_RESULT
++NVSDK_NGX_VULKAN_CreateFeature1(
++    void *device, void *command_buffer, unsigned int feature, NVNGXParameter *params, unsigned int **out_handle
++) {
++  return CreateFeature(feature, params, out_handle);
++}
++
++NVNGX_API NVNGX_RESULT
++NVSDK_NGX_VULKAN_EvaluateFeature(
++    void *command_buffer, const unsigned int *handle, NVNGXParameter *params, void *callback
++) {
++  Target target;
++  target.vulkan = command_buffer;
++  return EvaluateFeature(target, handle, params);
++}
++
++NVNGX_API NVNGX_RESULT
++NVSDK_NGX_VULKAN_EvaluateFeature_C(
++    void *command_buffer, const unsigned int *handle, NVNGXParameter *params, void *callback
++) {
++  return NVSDK_NGX_VULKAN_EvaluateFeature(command_buffer, handle, params, callback);
++}
++
++// MoltenVK needs no extension for this, so no program has to enable any.
++NVNGX_API NVNGX_RESULT
++NVSDK_NGX_VULKAN_RequiredExtensions(
++    unsigned int *instance_count, const char ***instance_extensions, unsigned int *device_count,
++    const char ***device_extensions
++) {
++  static const char *none[1] = {nullptr};
++  if (instance_count)
++    *instance_count = 0;
++  if (instance_extensions)
++    *instance_extensions = none;
++  if (device_count)
++    *device_count = 0;
++  if (device_extensions)
++    *device_extensions = none;
++  return NVNGX_RESULT_OK;
++}
++
++NVNGX_API NVNGX_RESULT
++NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements(
++    const NVNGX_FeatureDiscoveryInfo *discovery_info, unsigned int *count, void **extensions
++) {
++  if (count)
++    *count = 0;
++  if (extensions)
++    *extensions = nullptr;
++  return NVNGX_RESULT_OK;
++}
++
++NVNGX_API NVNGX_RESULT
++NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(
++    void *instance, void *physical_device, const NVNGX_FeatureDiscoveryInfo *discovery_info, unsigned int *count,
++    void **extensions
++) {
++  if (count)
++    *count = 0;
++  if (extensions)
++    *extensions = nullptr;
++  return NVNGX_RESULT_OK;
++}
++
++NVNGX_API NVNGX_RESULT
++NVSDK_NGX_VULKAN_GetFeatureRequirements(
++    void *instance, void *physical_device, const NVNGX_FeatureDiscoveryInfo *discovery_info,
++    NVNGX_FeatureRequirement *requirement
++) {
++  return GetFeatureRequirements(discovery_info, requirement);
++}
++
++} // namespace dxmt

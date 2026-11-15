@@ -12,6 +12,11 @@
 #      and reads them back, and traces rays with Vulkan ray queries, from ARM64 and x64
 #      (tests/moltenvk/raytracing.c); then runs a ray tracing pipeline (tests/moltenvk/rtpipeline.c),
 #      if the runtime's MoltenVK has ray tracing
+#   5c. runs DLSS super resolution and frame generation for Direct3D 12 and Vulkan programs as
+#      MetalFX (tests/runtime/dlss-d3d12.c, tests/moltenvk/metalfx.c), and checks which GPU ids
+#      each layer reports with and without the prefix asking for an NVIDIA GPU
+#   5d. checks the pieces of macOS Game Mode: the game loader, and that rendering programs are
+#      recognised (whether macOS turns Game Mode on needs a full-screen game, and is not checked)
 #   5b. renders with Direct3D 11 through DXMT, from ARM64 and from x64 (tests/runtime/d3d11-clear.c),
 #      if DXMT is installed
 #   6. repairs TEB accesses made through x18 (tests/runtime/arm64-x18.c)
@@ -171,6 +176,134 @@ else
     if [ -z "$bad" ]; then pass "Vulkan ray tracing pipelines through MoltenVK (all six shader stages, shader records, recursion, indirect): $archs"
     else fail "Vulkan ray tracing pipelines failed for:$bad"; fi
   fi
+fi
+"$RT/bin/wineserver" -k 2>/dev/null
+
+# DLSS for Direct3D 12 and Vulkan programs: nvngx.dll's entry points, through Wine's vkd3d or
+# Wine's Vulkan layer, to MetalFX in MoltenVK. Super resolution and frame generation, from ARM64
+# and from x64 programs.
+if [ ! -f "$RT/lib/wine/aarch64-windows/nvngx.dll" ]; then
+  echo "  - DLSS checks for Direct3D 12 and Vulkan skipped: no nvngx.dll in this runtime (scripts/build-dxmt.sh all)"
+else
+  exes=""
+  if build_arm64 "$WORK/dlss-d3d12-arm64.exe" "$REPO/tests/runtime/dlss-d3d12.c" -ld3d12 -ldxgi -ldxguid -luuid; then exes="$WORK/dlss-d3d12-arm64.exe"
+  else fail "could not build tests/runtime/dlss-d3d12.c for ARM64"; fi
+  if [ "$have_x64" = 1 ]; then
+    if "$MINGW" -O1 -o "$WORK/dlss-d3d12-x64.exe" "$REPO/tests/runtime/dlss-d3d12.c" -ld3d12 -ldxgi -ldxguid -luuid >>"$WORK/gfx-build.log" 2>&1; then exes="$exes $WORK/dlss-d3d12-x64.exe"
+    else fail "could not build tests/runtime/dlss-d3d12.c for x64"; fi
+  fi
+  bad=""
+  for exe in $exes; do
+    for mode in builtin dxmt; do
+      [ "$mode" = dxmt ] && [ ! -f "$RT/lib/dxmt/aarch64-windows/d3d11.dll" ] && continue
+      if [ "$mode" = dxmt ]; then export WINEDLLPATH="$RT/lib/dxmt"; else unset WINEDLLPATH; fi
+      out="$(FINEWINE_DLSS=1 "$RT/bin/wine" "$exe" </dev/null 2>/dev/null | tr -d '\r')"
+      case "$out" in *"dlss-d3d12: ok"*) ;; *) bad="$bad $(basename "$exe" .exe)/$mode"; echo "$out" | tail -n 2 ;; esac
+    done
+  done
+  unset WINEDLLPATH
+  archs="ARM64"; [ "$have_x64" = 1 ] && archs="ARM64 and x64"
+  if [ -n "$exes" ]; then
+    if [ -z "$bad" ]; then pass "DLSS for Direct3D 12 as MetalFX (super resolution, frame generation): $archs, with and without DXMT selected"
+    else fail "DLSS for Direct3D 12 failed for:$bad"; fi
+  fi
+
+  exes=""
+  if [ -d "$VKH" ]; then
+    if build_arm64 "$WORK/dlss-vulkan-arm64.exe" "$REPO/tests/moltenvk/metalfx.c" -DVIA_NGX -I"$VKH"; then exes="$WORK/dlss-vulkan-arm64.exe"
+    else fail "could not build tests/moltenvk/metalfx.c for ARM64"; fi
+    if [ "$have_x64" = 1 ]; then
+      if "$MINGW" -O1 -DVIA_NGX -I"$VKH" -o "$WORK/dlss-vulkan-x64.exe" "$REPO/tests/moltenvk/metalfx.c" >>"$WORK/gfx-build.log" 2>&1; then exes="$exes $WORK/dlss-vulkan-x64.exe"
+      else fail "could not build tests/moltenvk/metalfx.c for x64"; fi
+    fi
+  fi
+  bad=""
+  for exe in $exes; do
+    out="$(FINEWINE_DLSS=1 "$RT/bin/wine" "$exe" </dev/null 2>/dev/null | tr -d '\r')"
+    case "$out" in *"requests go through nvngx.dll"*"metalfx: ok"*) ;; *) bad="$bad $(basename "$exe" .exe)"; echo "$out" | tail -n 2 ;; esac
+  done
+  if [ -n "$exes" ]; then
+    if [ -z "$bad" ]; then pass "DLSS for Vulkan as MetalFX (super resolution, frame generation): $archs"
+    else fail "DLSS for Vulkan failed for:$bad"; fi
+  fi
+fi
+
+# The GPU a prefix can ask to be reported: an NVIDIA GeForce RTX 5080, by name and by its ids
+# (10de:2c02). Set the way FineWine sets them, they must reach Vulkan, Direct3D 12 and Direct3D
+# 11; left unset, with DLSS on, every layer must still say Apple (106b).
+if [ "$have_x64" = 1 ] && [ -d "$VKH" ] && "$MINGW" -O1 -I"$VKH" -o "$WORK/ids-vulkan.exe" "$REPO/tests/moltenvk/metalfx.c" >"$WORK/ids-build.log" 2>&1 \
+   && "$MINGW" -O1 -o "$WORK/ids-d3d12.exe" "$REPO/tests/runtime/d3d12-clear.c" -ld3d12 -ldxgi -ldxguid -luuid >>"$WORK/ids-build.log" 2>&1 \
+   && "$MINGW" -O1 -o "$WORK/ids-d3d11.exe" "$REPO/tests/runtime/d3d11-clear.c" -ld3d11 -ldxgi -ldxguid -luuid >>"$WORK/ids-build.log" 2>&1; then
+  bad=""
+  # Run in a subshell with its messages discarded: a DXMT program is ended by Wine's server
+  # when its main thread returns, and the shell would otherwise report that as "Killed".
+  ids_of()( # asked(0|1) program -> the lines that carry the adapter's name and ids, joined
+    exec 2>/dev/null
+    if [ "$1" = 1 ]; then
+      FINEWINE_DLSS=1 FINEWINE_GPU_VENDOR_ID=10de FINEWINE_GPU_DEVICE_ID=2c02 FINEWINE_GPU_NAME="NVIDIA GeForce RTX 5080" \
+        WINE_D3D_CONFIG="VideoPciVendorID=0x10de,VideoPciDeviceID=0x2c02" DXMT_ENABLE_NVEXT=1 \
+        DXMT_CONFIG='dxgi.customVendorId=10de;dxgi.customDeviceId=2c02;dxgi.customDeviceDesc="NVIDIA GeForce RTX 5080"' "$RT/bin/wine" "$2" </dev/null 2>/dev/null
+    else
+      FINEWINE_DLSS=1 DXMT_ENABLE_NVEXT=1 DXMT_CONFIG="dxgi.customVendorId=106b" "$RT/bin/wine" "$2" </dev/null 2>/dev/null
+    fi | tr -d '\r' | grep -i -E '^gpu:|^adapter' | tr '\n' ' '
+  )
+  case "$(ids_of 1 "$WORK/ids-vulkan.exe")" in *"NVIDIA GeForce RTX 5080, vendor 10de, device 2c02"*) ;; *) bad="$bad vulkan" ;; esac
+  case "$(ids_of 0 "$WORK/ids-vulkan.exe")" in *"Apple "*"vendor 106b"*) ;; *) bad="$bad vulkan(unasked)" ;; esac
+  case "$(ids_of 1 "$WORK/ids-d3d12.exe")" in *"NVIDIA GeForce RTX 5080 "*"vendor 10de device 2c02"*) ;; *) bad="$bad d3d12" ;; esac
+  case "$(ids_of 0 "$WORK/ids-d3d12.exe")" in *"Apple "*"vendor 106b"*) ;; *) bad="$bad d3d12(unasked)" ;; esac
+  if [ -f "$RT/lib/dxmt/aarch64-windows/d3d11.dll" ]; then
+    export WINEDLLPATH="$RT/lib/dxmt"
+    case "$(ids_of 1 "$WORK/ids-d3d11.exe")" in *"NVIDIA GeForce RTX 5080 "*"vendor 10de device 2c02"*) ;; *) bad="$bad d3d11" ;; esac
+    case "$(ids_of 0 "$WORK/ids-d3d11.exe")" in *"Apple "*"vendor 106b"*) ;; *) bad="$bad d3d11(unasked)" ;; esac
+    case "$(ids_of 1 "$WORK/ids-d3d12.exe")" in *"NVIDIA GeForce RTX 5080 "*"vendor 10de device 2c02"*) ;; *) bad="$bad d3d12/dxmt" ;; esac
+    unset WINEDLLPATH
+  fi
+  if [ -z "$bad" ]; then pass "Reported GPU: Apple's unless asked, an NVIDIA GeForce RTX 5080 by name and ids when asked, in Vulkan, Direct3D 12 and Direct3D 11"
+  else fail "reported GPU wrong for:$bad"; fi
+elif [ "$have_x64" = 1 ]; then
+  fail "could not build the GPU id test programs"; tail -n 3 "$WORK/ids-build.log"
+fi
+"$RT/bin/wineserver" -k 2>/dev/null
+
+# Game Mode. macOS only turns it on for an app that says it is a game, which for Wine means a
+# second copy of the loader. Checked here: that copy exists and says so; a program told to use
+# it runs under it; and the marker by which FineWine learns that a program renders appears for
+# Vulkan and Direct3D programs and not for one that draws nothing. Whether macOS then turns
+# Game Mode on needs a game in full screen, which this script does not show.
+GAME_LOADER="$RT/lib/wine/aarch64-unix/wine-game"
+if [ ! -x "$GAME_LOADER" ]; then
+  echo "  - Game Mode check skipped: this runtime has no wine-game loader (scripts/build-finewine-runtime.sh package)"
+else
+  bad=""
+  # (grep -c, not -q: with pipefail, -q closing the pipe early would count as a failure.)
+  [ "$(strings -n 8 "$GAME_LOADER" | grep -c '<string>public.app-category.games</string>')" = 1 ] || bad="$bad plist(category)"
+  [ "$(strings -n 8 "$RT/lib/wine/aarch64-unix/wine" | grep -c '<string>public.app-category.utilities</string>')" = 1 ] || bad="$bad plist(default)"
+  codesign --verify "$GAME_LOADER" 2>/dev/null || bad="$bad signature"
+  # A program told to use the game loader, and what it starts, run under it.
+  if [ -f "$WORK/x64-stress.exe" ]; then
+    FINEWINE_LOADER=wine-game "$RT/bin/wine" "$WORK/x64-stress.exe" </dev/null >/dev/null 2>&1 &
+    stress_pid=$!; seen=0
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+      case "$(ps -axww -o command)" in *wine-game*x64-stress*) seen=1; break ;; esac
+      kill -0 "$stress_pid" 2>/dev/null || break
+      perl -e 'select(undef, undef, undef, 0.1)'
+    done
+    wait "$stress_pid" 2>/dev/null
+    [ "$seen" = 1 ] || bad="$bad loader-not-used"
+  fi
+  marker_after(){ # program [env...] -> yes if running it creates the marker
+    local exe="$1" marker="$WORK/marker-$RANDOM"; shift
+    env FINEWINE_GAME_MARKER="$marker" "$@" "$RT/bin/wine" "$exe" </dev/null >/dev/null 2>&1
+    [ -f "$marker" ] && echo yes || echo no
+  }
+  [ -f "$WORK/vulkan-device-arm64.exe" ] && [ "$(marker_after "$WORK/vulkan-device-arm64.exe")" != yes ] && bad="$bad marker(vulkan)"
+  [ -f "$WORK/d3d12-clear-arm64.exe" ] && [ "$(marker_after "$WORK/d3d12-clear-arm64.exe")" != yes ] && bad="$bad marker(d3d12)"
+  [ -f "$WORK/jit.exe" ] && [ "$(marker_after "$WORK/jit.exe")" != no ] && bad="$bad marker(console-program)"
+  if [ -f "$RT/lib/dxmt/aarch64-windows/d3d11.dll" ] && [ -f "$WORK/ids-d3d11.exe" ]; then
+    [ "$(marker_after "$WORK/ids-d3d11.exe" WINEDLLPATH="$RT/lib/dxmt")" != yes ] && bad="$bad marker(d3d11)"
+  fi
+  if [ -z "$bad" ]; then pass "Game Mode: the game loader says it is a game and is used when asked; Vulkan, Direct3D 12 and Direct3D 11 programs are recognised as rendering, a console program is not"
+  else fail "Game Mode:$bad"; fi
 fi
 "$RT/bin/wineserver" -k 2>/dev/null
 

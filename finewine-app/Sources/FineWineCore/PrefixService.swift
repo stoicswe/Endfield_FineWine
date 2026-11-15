@@ -79,6 +79,14 @@ public struct PrefixService {
         let edits = prefix.metadata.settings.registryEdits(replacing: prefix.metadata.appliedSettings,
                                                            appearance: appearance,
                                                            displayScale: appearance?.displayScale ?? 2)
+        // A prefix's server and its programs must agree on how synchronisation is done: a
+        // program started with MSync cannot join a server started without it, and fails to
+        // start. Changing the mode therefore stops whatever is still running in the prefix.
+        if let applied = prefix.metadata.appliedSettings, applied.syncMode != prefix.metadata.settings.syncMode,
+           let stop = try? planner(for: prefix).killPlan() {
+            _ = try? runner.run(stop)
+        }
+
         let file = prefix.directory.appendingPathComponent(".finewine-settings.reg")
         try RegistryFile.data(edits).write(to: file, options: .atomic)
         defer { try? FileManager.default.removeItem(at: file) }
@@ -217,7 +225,11 @@ public struct PrefixService {
               FileManager.default.fileExists(atPath: exe.path) else {
             throw FineWineError("“\(program.windowsPath)” doesn't exist in “\(prefix.name)”. It may have been moved or uninstalled.")
         }
-        return try runner.start(try planner(for: prefix).plan(for: program),
+        let planner = try planner(for: prefix)
+        // The folder the runtime writes its "this program rendered" marker into.
+        try? FileManager.default.createDirectory(at: planner.gameMarker(for: program).deletingLastPathComponent(),
+                                                 withIntermediateDirectories: true)
+        return try runner.start(try planner.plan(for: program),
                                 logFile: logFile(for: prefix, name: program.name), onExit: onExit)
     }
 

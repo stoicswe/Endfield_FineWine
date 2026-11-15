@@ -1,0 +1,89 @@
+From: FineWine
+Subject: [PATCH] vkd3d: Let nvngx.dll record MetalFX work in a command list.
+
+In FineWine's runtime DLSS for a Direct3D 12 program is MetalFX: the program calls NGX
+(nvngx.dll) with its command list and textures, and the upscale or the generated frame has to
+be recorded in that command list and carried out by MoltenVK, underneath Vulkan.
+
+Two private data GUIDs give nvngx.dll what it needs, without a new interface:
+
+- GetPrivateData(FINEWINE_GUID_VK_IMAGE) on a texture resource returns its VkImage.
+- SetPrivateData(FINEWINE_GUID_METALFX_REQUEST) on a command list ends the current render
+  pass and records the request it is given as a vkCmdPushConstants() call with a null layout
+  and a marker in the stage flags, which FineWine's MoltenVK takes as a MetalFX request
+  instead of push constants.
+
+Neither changes anything for a program that does not use those GUIDs.
+
+diff --git a/libs/vkd3d/libs/vkd3d/command.c b/libs/vkd3d/libs/vkd3d/command.c
+index 0ece8fd..ff7ac38 100644
+--- a/libs/vkd3d/libs/vkd3d/command.c
++++ b/libs/vkd3d/libs/vkd3d/command.c
+@@ -2599,6 +2599,18 @@ static HRESULT STDMETHODCALLTYPE d3d12_command_list_SetPrivateData(ID3D12Graphic
+ 
+     TRACE("iface %p, guid %s, data_size %u, data %p.\n", iface, debugstr_guid(guid), data_size, data);
+ 
++    if (IsEqualGUID(guid, &FINEWINE_GUID_METALFX_REQUEST))
++    {
++        const struct vkd3d_vk_device_procs *vk_procs = &list->device->vk_procs;
++
++        if (!data || data_size < 16)
++            return E_INVALIDARG;
++        /* MetalFX encodes on its own, outside any render pass. */
++        d3d12_command_list_end_current_render_pass(list);
++        VK_CALL(vkCmdPushConstants(list->vk_command_buffer, VK_NULL_HANDLE, FINEWINE_METALFX_MAGIC, 0, data_size, data));
++        return S_OK;
++    }
++
+     return vkd3d_set_private_data(&list->private_store, guid, data_size, data);
+ }
+ 
+diff --git a/libs/vkd3d/libs/vkd3d/resource.c b/libs/vkd3d/libs/vkd3d/resource.c
+index f1491cb..774ecbc 100644
+--- a/libs/vkd3d/libs/vkd3d/resource.c
++++ b/libs/vkd3d/libs/vkd3d/resource.c
+@@ -1327,6 +1327,21 @@ static HRESULT STDMETHODCALLTYPE d3d12_resource_GetPrivateData(ID3D12Resource2 *
+ 
+     TRACE("iface %p, guid %s, data_size %p, data %p.\n", iface, debugstr_guid(guid), data_size, data);
+ 
++    if (IsEqualGUID(guid, &FINEWINE_GUID_VK_IMAGE))
++    {
++        uint64_t vk_image;
++
++        if (!d3d12_resource_is_texture(resource) || !data_size)
++            return DXGI_ERROR_NOT_FOUND;
++        if (data && *data_size < sizeof(vk_image))
++            return DXGI_ERROR_MORE_DATA;
++        vk_image = (uint64_t)resource->u.vk_image;
++        *data_size = sizeof(vk_image);
++        if (data)
++            memcpy(data, &vk_image, sizeof(vk_image));
++        return S_OK;
++    }
++
+     return vkd3d_get_private_data(&resource->private_store, guid, data_size, data);
+ }
+ 
+diff --git a/libs/vkd3d/libs/vkd3d/vkd3d_private.h b/libs/vkd3d/libs/vkd3d/vkd3d_private.h
+index 822e172..0c681e4 100644
+--- a/libs/vkd3d/libs/vkd3d/vkd3d_private.h
++++ b/libs/vkd3d/libs/vkd3d/vkd3d_private.h
+@@ -532,6 +532,18 @@ static inline struct d3d12_resource *impl_from_ID3D12Resource2(ID3D12Resource2 *
+     return CONTAINING_RECORD(iface, struct d3d12_resource, ID3D12Resource2_iface);
+ }
+ 
++/* FineWine: how nvngx.dll reaches MetalFX for a Direct3D 12 program.
++ *
++ * DLSS is recorded into the program's command list, and the work is done by MoltenVK, below
++ * Vulkan. Two private data GUIDs carry it there:
++ *   - GetPrivateData(FINEWINE_GUID_VK_IMAGE) on a texture resource returns its VkImage;
++ *   - SetPrivateData(FINEWINE_GUID_METALFX_REQUEST) on a command list records the request it is
++ *     given (a FWMetalFXRequest naming VkImages) at that point of the list, as a
++ *     vkCmdPushConstants() call with a null layout, which FineWine's MoltenVK recognises. */
++static const GUID FINEWINE_GUID_VK_IMAGE = {0x46570001, 0x4d58, 0x4657, {0x8a, 0x01, 0x76, 0x6b, 0x69, 0x6d, 0x61, 0x67}};
++static const GUID FINEWINE_GUID_METALFX_REQUEST = {0x46570002, 0x4d58, 0x4657, {0x8a, 0x02, 0x6d, 0x74, 0x6c, 0x66, 0x78, 0x72}};
++#define FINEWINE_METALFX_MAGIC 0x584d5746u
++
+ static inline bool d3d12_resource_is_buffer(const struct d3d12_resource *resource)
+ {
+     return resource->desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER;

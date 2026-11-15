@@ -6,7 +6,10 @@
  *  2. Frame generation: the square moves 16 pixels a frame; from the third frame on, the
  *     in-between frame must show it half way.
  *  3. With FINEWINE_GPU_VENDOR_ID / FINEWINE_GPU_DEVICE_ID set, the device reports those ids.
- * Built for macOS by scripts/test-moltenvk-raytracing.sh. Prints "metalfx: ok" on success. */
+ * Built for macOS by scripts/test-moltenvk-raytracing.sh. Built for Windows with -DVIA_NGX by
+ * scripts/test-finewine-runtime.sh, it makes the same requests the way a Vulkan game does:
+ * through nvngx.dll's NVSDK_NGX_VULKAN_* entry points (needs FINEWINE_DLSS=1).
+ * Prints "metalfx: ok" on success. */
 #define VK_NO_PROTOTYPES
 #ifdef _WIN32
 #include <windows.h>
@@ -80,6 +83,49 @@ static int upload(VkImage image, const void *data, size_t size, uint32_t w, uint
     vkCmdCopyBufferToImage(cmd, staging, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
     return run();
 }
+#ifdef VIA_NGX
+#include "../runtime/ngx-c.h"
+static ngx_alloc_params_t ngx_alloc; static ngx_create_t ngx_create; static ngx_evaluate_t ngx_evaluate;
+typedef struct { uint64_t view, image; } NGXVulkanResource;     /* the start of NVSDK_NGX_Resource_VK */
+/* Makes the request through NGX: a feature per operation, created on first use. */
+static int submit(const FWMetalFXRequest *rq, uint32_t out_size)
+{
+    static unsigned int *handles[3]; static NGXParams *params[3]; static NGXVulkanResource res[4];
+    uint32_t op = rq->operation;
+    if (op == FW_METALFX_RELEASE) return 0;
+    if (!handles[op]) {
+        if (ngx_alloc(&params[op]) != NGX_OK) return 1;
+        NGX_SET_UINT(params[op], "Width", rq->inputWidth ? rq->inputWidth : out_size); NGX_SET_UINT(params[op], "Height", rq->inputHeight ? rq->inputHeight : out_size);
+        NGX_SET_UINT(params[op], "OutWidth", out_size); NGX_SET_UINT(params[op], "OutHeight", out_size);
+        NGX_SET_INT(params[op], "DLSS.Feature.Create.Flags", NGX_DLSS_FLAG_MV_LOWRES);
+        if (ngx_create(cmd, op == FW_METALFX_TEMPORAL_UPSCALE ? NGX_FEATURE_SUPER_SAMPLING : NGX_FEATURE_FRAME_GENERATION, params[op], &handles[op]) != NGX_OK) return 1;
+    }
+    NGXParams *p = params[op]; int reset = (rq->flags & FW_METALFX_RESET_HISTORY) != 0;
+    res[0].image = rq->color; res[1].image = rq->output; res[2].image = rq->depth; res[3].image = rq->motion;
+    if (op == FW_METALFX_TEMPORAL_UPSCALE) {
+        NGX_SET_POINTER(p, "Color", &res[0]); NGX_SET_POINTER(p, "Output", &res[1]); NGX_SET_POINTER(p, "Depth", &res[2]); NGX_SET_POINTER(p, "MotionVectors", &res[3]);
+        NGX_SET_UINT(p, "DLSS.Render.Subrect.Dimensions.Width", rq->inputWidth); NGX_SET_UINT(p, "DLSS.Render.Subrect.Dimensions.Height", rq->inputHeight);
+        NGX_SET_INT(p, "Reset", reset); NGX_SET_FLOAT(p, "MV.Scale.X", rq->motionScaleX); NGX_SET_FLOAT(p, "MV.Scale.Y", rq->motionScaleY);
+    } else {
+        NGX_SET_POINTER(p, "DLSSG.Backbuffer", &res[0]); NGX_SET_POINTER(p, "DLSSG.OutputInterpolated", &res[1]);
+        NGX_SET_POINTER(p, "DLSSG.Depth", &res[2]); NGX_SET_POINTER(p, "DLSSG.MVecs", &res[3]);
+        NGX_SET_INT(p, "DLSSG.EnableInterp", 1); NGX_SET_INT(p, "DLSSG.Reset", reset);
+        NGX_SET_FLOAT(p, "DLSSG.MvecScaleX", rq->motionScaleX); NGX_SET_FLOAT(p, "DLSSG.MvecScaleY", rq->motionScaleY);
+        NGX_SET_FLOAT(p, "DLSSG.CameraNear", rq->nearPlane); NGX_SET_FLOAT(p, "DLSSG.CameraFar", rq->farPlane);
+        NGX_SET_FLOAT(p, "DLSSG.CameraFOV", rq->fieldOfView * 0.0174533f); NGX_SET_FLOAT(p, "DLSSG.CameraAspectRatio", rq->aspectRatio);
+    }
+    return ngx_evaluate(cmd, handles[op], p, NULL) != NGX_OK;
+}
+#else
+/* Makes the request directly, the way nvngx.dll does on a program's behalf. */
+static int submit(const FWMetalFXRequest *rq, uint32_t out_size)
+{
+    (void)out_size;
+    vkCmdPushConstants(cmd, VK_NULL_HANDLE, FW_METALFX_MAGIC, 0, sizeof(*rq), rq);
+    return 0;
+}
+#endif
+
 /* The frame: dark grey with a 64-pixel white square (scaled with the frame) whose left edge is at x0. */
 static void draw(uint8_t *p, uint32_t w, uint32_t h, uint32_t x0, uint32_t side)
 {
@@ -147,8 +193,17 @@ int main(void)
     VkCommandBufferAllocateInfo cai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, NULL, pool, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1 };
     CHECK(vkAllocateCommandBuffers(device, &cai, &cmd), "vkAllocateCommandBuffers");
 
-    enum { IN = 256, OUT = 512 };
-    VkBufferCreateInfo bci = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO }; bci.size = OUT * OUT * 4;
+#ifdef VIA_NGX
+    HMODULE ngx = LoadLibraryA("nvngx.dll");
+    if (!ngx) FAIL("nvngx.dll did not load (%lu)", GetLastError());
+    ngx_alloc = (ngx_alloc_params_t)GetProcAddress(ngx, "NVSDK_NGX_VULKAN_AllocateParameters");
+    ngx_create = (ngx_create_t)GetProcAddress(ngx, "NVSDK_NGX_VULKAN_CreateFeature");
+    ngx_evaluate = (ngx_evaluate_t)GetProcAddress(ngx, "NVSDK_NGX_VULKAN_EvaluateFeature");
+    if (!ngx_alloc || !ngx_create || !ngx_evaluate) FAIL("nvngx.dll has no Vulkan entry points");
+    printf("requests go through nvngx.dll\n");
+#endif
+    enum { LOW = 256, HIGH = 512 };
+    VkBufferCreateInfo bci = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO }; bci.size = HIGH * HIGH * 4;
     bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     CHECK(vkCreateBuffer(device, &bci, NULL, &staging), "vkCreateBuffer");
     VkMemoryRequirements breq; vkGetBufferMemoryRequirements(device, staging, &breq);
@@ -157,62 +212,62 @@ int main(void)
     CHECK(vkBindBufferMemory(device, staging, bmem, 0), "vkBindBufferMemory"); CHECK(vkMapMemory(device, bmem, 0, VK_WHOLE_SIZE, 0, &staging_data), "vkMapMemory");
 
     /* The images a game would hand to DLSS: colour, depth, motion vectors, and where the result goes. */
-    VkImage color = make_image(VK_FORMAT_R8G8B8A8_UNORM, IN, IN, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
-    VkImage depth = make_image(VK_FORMAT_D32_SFLOAT, IN, IN, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
-    VkImage motion = make_image(VK_FORMAT_R16G16_SFLOAT, IN, IN, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
-    VkImage upscaled = make_image(VK_FORMAT_R8G8B8A8_UNORM, OUT, OUT, VK_IMAGE_USAGE_STORAGE_BIT);
-    VkImage full = make_image(VK_FORMAT_R8G8B8A8_UNORM, OUT, OUT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
-    VkImage full_depth = make_image(VK_FORMAT_D32_SFLOAT, OUT, OUT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
-    VkImage full_motion = make_image(VK_FORMAT_R16G16_SFLOAT, OUT, OUT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
-    VkImage between = make_image(VK_FORMAT_R8G8B8A8_UNORM, OUT, OUT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+    VkImage color = make_image(VK_FORMAT_R8G8B8A8_UNORM, LOW, LOW, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+    VkImage depth = make_image(VK_FORMAT_D32_SFLOAT, LOW, LOW, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+    VkImage motion = make_image(VK_FORMAT_R16G16_SFLOAT, LOW, LOW, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+    VkImage upscaled = make_image(VK_FORMAT_R8G8B8A8_UNORM, HIGH, HIGH, VK_IMAGE_USAGE_STORAGE_BIT);
+    VkImage full = make_image(VK_FORMAT_R8G8B8A8_UNORM, HIGH, HIGH, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+    VkImage full_depth = make_image(VK_FORMAT_D32_SFLOAT, HIGH, HIGH, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+    VkImage full_motion = make_image(VK_FORMAT_R16G16_SFLOAT, HIGH, HIGH, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+    VkImage between = make_image(VK_FORMAT_R8G8B8A8_UNORM, HIGH, HIGH, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
     if (!color || !depth || !motion || !upscaled || !full || !full_depth || !full_motion || !between) FAIL("could not make the images");
 
-    uint8_t *pixels = malloc(OUT * OUT * 4); float *depths = malloc(OUT * OUT * sizeof(float)); uint16_t *vectors = calloc(OUT * OUT * 2, sizeof(uint16_t));
-    for (int i = 0; i < OUT * OUT; i++) depths[i] = 0.5f;
+    uint8_t *pixels = malloc(HIGH * HIGH * 4); float *depths = malloc(HIGH * HIGH * sizeof(float)); uint16_t *vectors = calloc(HIGH * HIGH * 2, sizeof(uint16_t));
+    for (int i = 0; i < HIGH * HIGH; i++) depths[i] = 0.5f;
     int first, last;
 
     /* 1. Super resolution. Several frames of a still image, as the scaler accumulates over time. */
-    draw(pixels, IN, IN, 96, 64);
-    if (upload(color, pixels, IN * IN * 4, IN, IN, VK_IMAGE_ASPECT_COLOR_BIT) || upload(depth, depths, IN * IN * 4, IN, IN, VK_IMAGE_ASPECT_DEPTH_BIT) ||
-        upload(motion, vectors, IN * IN * 4, IN, IN, VK_IMAGE_ASPECT_COLOR_BIT)) FAIL("could not fill the input images");
+    draw(pixels, LOW, LOW, 96, 64);
+    if (upload(color, pixels, LOW * LOW * 4, LOW, LOW, VK_IMAGE_ASPECT_COLOR_BIT) || upload(depth, depths, LOW * LOW * 4, LOW, LOW, VK_IMAGE_ASPECT_DEPTH_BIT) ||
+        upload(motion, vectors, LOW * LOW * 4, LOW, LOW, VK_IMAGE_ASPECT_COLOR_BIT)) FAIL("could not fill the input images");
     for (int f = 0; f < 4; f++) {
         FWMetalFXRequest rq; memset(&rq, 0, sizeof(rq));
         rq.size = sizeof(rq); rq.operation = FW_METALFX_TEMPORAL_UPSCALE; rq.feature = 1; rq.flags = f == 0 ? FW_METALFX_RESET_HISTORY : 0;
         rq.color = (uint64_t)color; rq.depth = (uint64_t)depth; rq.motion = (uint64_t)motion; rq.output = (uint64_t)upscaled;
-        rq.inputWidth = IN; rq.inputHeight = IN; rq.motionScaleX = rq.motionScaleY = 1.0f; rq.preExposure = 1.0f;
+        rq.inputWidth = LOW; rq.inputHeight = LOW; rq.motionScaleX = rq.motionScaleY = 1.0f; rq.preExposure = 1.0f;
         if (begin()) FAIL("could not begin a command buffer");
-        vkCmdPushConstants(cmd, VK_NULL_HANDLE, FW_METALFX_MAGIC, 0, sizeof(rq), &rq);
+        if (submit(&rq, HIGH)) FAIL("the upscale request was refused");
         if (run()) FAIL("the upscale did not run");
     }
-    VkBufferImageCopy r = region(OUT, OUT, VK_IMAGE_ASPECT_COLOR_BIT);
-    memset(staging_data, 0, OUT * OUT * 4);
+    VkBufferImageCopy r = region(HIGH, HIGH, VK_IMAGE_ASPECT_COLOR_BIT);
+    memset(staging_data, 0, HIGH * HIGH * 4);
     if (begin()) FAIL("could not begin a command buffer");
     vkCmdCopyImageToBuffer(cmd, upscaled, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging, 1, &r);
     if (run()) FAIL("could not read the upscaled image back");
-    bright_span(staging_data, OUT, OUT, &first, &last);
+    bright_span(staging_data, HIGH, HIGH, &first, &last);
     printf("super resolution: the square at 96..159 of 256 comes out at %d..%d of 512\n", first, last);
     if (first < 188 || first > 196 || last < 315 || last > 323) FAIL("the upscaled square should be at about 192..319");
 
     /* 2. Frame generation. The square moves 16 pixels to the right each frame. */
-    if (upload(full_depth, depths, OUT * OUT * 4, OUT, OUT, VK_IMAGE_ASPECT_DEPTH_BIT)) FAIL("could not fill the depth image");
+    if (upload(full_depth, depths, HIGH * HIGH * 4, HIGH, HIGH, VK_IMAGE_ASPECT_DEPTH_BIT)) FAIL("could not fill the depth image");
     int good = 0;
     for (int f = 0; f < 5; f++) {
         uint32_t x0 = 64 + 16 * f;
-        draw(pixels, OUT, OUT, x0, 128);
+        draw(pixels, HIGH, HIGH, x0, 128);
         /* Each pixel of the square was 16 pixels further left in the last frame. */
-        memset(vectors, 0, OUT * OUT * 2 * sizeof(uint16_t));
-        for (uint32_t y = OUT / 2 - 64; y < OUT / 2 + 64; y++) for (uint32_t x = x0; x < x0 + 128; x++) vectors[(y * OUT + x) * 2] = half(-16.0f);
-        if (upload(full, pixels, OUT * OUT * 4, OUT, OUT, VK_IMAGE_ASPECT_COLOR_BIT) || upload(full_motion, vectors, OUT * OUT * 4, OUT, OUT, VK_IMAGE_ASPECT_COLOR_BIT))
+        memset(vectors, 0, HIGH * HIGH * 2 * sizeof(uint16_t));
+        for (uint32_t y = HIGH / 2 - 64; y < HIGH / 2 + 64; y++) for (uint32_t x = x0; x < x0 + 128; x++) vectors[(y * HIGH + x) * 2] = half(-16.0f);
+        if (upload(full, pixels, HIGH * HIGH * 4, HIGH, HIGH, VK_IMAGE_ASPECT_COLOR_BIT) || upload(full_motion, vectors, HIGH * HIGH * 4, HIGH, HIGH, VK_IMAGE_ASPECT_COLOR_BIT))
             FAIL("could not fill a frame");
         FWMetalFXRequest rq; memset(&rq, 0, sizeof(rq));
         rq.size = sizeof(rq); rq.operation = FW_METALFX_FRAME_INTERPOLATE; rq.feature = 2; rq.flags = f == 0 ? FW_METALFX_RESET_HISTORY : 0;
         rq.color = (uint64_t)full; rq.depth = (uint64_t)full_depth; rq.motion = (uint64_t)full_motion; rq.output = (uint64_t)between;
         rq.motionScaleX = rq.motionScaleY = 1.0f; rq.deltaTime = 1.0f / 60.0f; rq.nearPlane = 0.1f; rq.farPlane = 100.0f; rq.fieldOfView = 60.0f; rq.aspectRatio = 1.0f;
         if (begin()) FAIL("could not begin a command buffer");
-        vkCmdPushConstants(cmd, VK_NULL_HANDLE, FW_METALFX_MAGIC, 0, sizeof(rq), &rq);
+        if (submit(&rq, HIGH)) FAIL("the frame generation request was refused");
         vkCmdCopyImageToBuffer(cmd, between, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging, 1, &r);
         if (run()) FAIL("the frame interpolation did not run");
-        bright_span(staging_data, OUT, OUT, &first, &last);
+        bright_span(staging_data, HIGH, HIGH, &first, &last);
         printf("frame generation, frame %d: square at %u (was at %u); the in-between frame has it at %d\n", f, x0, x0 - 16, first);
         /* Somewhere between where the square was and where it is; the moving edge is blurred. */
         if (f >= 2 && first > (int)x0 - 15 && first < (int)x0 - 1) good++;
@@ -222,8 +277,8 @@ int main(void)
     FWMetalFXRequest release; memset(&release, 0, sizeof(release));
     release.size = sizeof(release); release.operation = FW_METALFX_RELEASE;
     if (begin()) FAIL("could not begin a command buffer");
-    release.feature = 1; vkCmdPushConstants(cmd, VK_NULL_HANDLE, FW_METALFX_MAGIC, 0, sizeof(release), &release);
-    release.feature = 2; vkCmdPushConstants(cmd, VK_NULL_HANDLE, FW_METALFX_MAGIC, 0, sizeof(release), &release);
+    release.feature = 1; submit(&release, HIGH);
+    release.feature = 2; submit(&release, HIGH);
     if (run()) FAIL("the release did not run");
     printf("metalfx: ok\n");
     return 0;

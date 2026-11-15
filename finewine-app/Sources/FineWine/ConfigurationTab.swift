@@ -106,10 +106,17 @@ struct ConfigurationTab: View {
                 Toggle(isOn: $draft.dlssThroughMetalFX) {
                     Text("DLSS through MetalFX")
                     Text(draft.graphicsBackend == .dxmt
-                         ? "Games that offer NVIDIA DLSS upscale with Apple's MetalFX instead. FSR is unaffected: it runs as the game ships it."
-                         : "Needs DXMT as the Direct3D layer. FSR is unaffected: it runs as the game ships it.")
+                         ? "Games that offer NVIDIA DLSS use Apple's MetalFX instead, for upscaling and for frame generation. FSR is unaffected: it runs as the game ships it."
+                         : "Direct3D 12 and Vulkan games that offer NVIDIA DLSS use Apple's MetalFX instead. Direct3D 11 games need DXMT as the Direct3D layer. FSR is unaffected.")
                 }
-                .disabled(draft.graphicsBackend != .dxmt)
+                Toggle(isOn: $draft.reportNvidiaGPU) {
+                    Text("Report an NVIDIA GPU")
+                    Text("Tells Windows programs the GPU is an \(PrefixSettings.reportedGPUName), by name and by id. Most games only show DLSS options on an NVIDIA GPU. Leave it off for games with NVIDIA-specific code paths you do not want.")
+                }
+                Toggle(isOn: $draft.gameMode) {
+                    Text("Game Mode")
+                    Text("Programs that use Direct3D, Vulkan or OpenGL are started as games, so macOS turns Game Mode on while one is full screen. A program started by a launcher is recognised from its second run on.")
+                }
                 Divider()
                 Toggle(isOn: $draft.metalHUD) {
                     Text("Metal performance overlay")
