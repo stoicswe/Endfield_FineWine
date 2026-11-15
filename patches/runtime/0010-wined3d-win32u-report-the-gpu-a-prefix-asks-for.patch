@@ -1,0 +1,62 @@
+From: FineWine
+Subject: [PATCH] wined3d, win32u: Report the GPU a prefix asks for.
+
+Programs offer DLSS only on an NVIDIA adapter, so a FineWine prefix can ask for the GPU to be
+reported as another one (an NVIDIA GeForce RTX 5080 is 10de:2c02). Wine already has settings
+for the ids, VideoPciVendorID and VideoPciDeviceID, in the registry or in WINE_D3D_CONFIG, but
+upstream only accepts ids found in its card table and takes the whole description from there.
+
+For an Apple GPU the ids are now taken as given, whatever they are, and with them the name in
+FINEWINE_GPU_NAME, if the environment has one. The memory stays what it is. Direct3D 12
+reports its adapter through the same code.
+
+Wine's Vulkan layer replaces the driver's device name with the name Wine has for the GPU, so
+it takes FINEWINE_GPU_NAME as well; the ids there come from MoltenVK.
+
+diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
+index 062f30d..b94c922 100644
+--- a/dlls/win32u/vulkan.c
++++ b/dlls/win32u/vulkan.c
+@@ -1742,6 +1742,15 @@ static void get_physical_device_properties2( struct vulkan_physical_device *phys
+     device_luid_valid = get_gpu_info_from_uuid( uuid, &luid, &node_mask, properties2->properties.deviceName );
+     if (!device_luid_valid) WARN( "luid for %s not found\n", debugstr_guid(uuid) );
+ 
++    /* FineWine: the line above replaces the driver's device name with the one Wine has for the
++     * GPU. A prefix that reports the GPU as another one (see MoltenVK's FINEWINE_GPU_* settings)
++     * wants that name here as well. */
++    {
++        const char *reported_name = getenv( "FINEWINE_GPU_NAME" );
++        if (reported_name && *reported_name)
++            lstrcpynA( properties2->properties.deviceName, reported_name, sizeof(properties2->properties.deviceName) );
++    }
++
+     if (id)
+     {
+         if (device_luid_valid) memcpy( &id->deviceLUID, &luid, sizeof(id->deviceLUID) );
+diff --git a/dlls/wined3d/adapter_gl.c b/dlls/wined3d/adapter_gl.c
+index 6a6416a..920cdee 100644
+--- a/dlls/wined3d/adapter_gl.c
++++ b/dlls/wined3d/adapter_gl.c
+@@ -3810,6 +3810,22 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter_gl *adapter_gl,
+         if (!shared_bytes && GlobalMemoryStatusEx(&memory)) shared_bytes = memory.ullTotalPhys;
+         apple_gpu.vendor = (enum wined3d_pci_vendor)0x106b;
+         apple_gpu.device = (enum wined3d_pci_device)0;
++        /* A prefix can ask for another GPU to be reported, because programs only offer DLSS on
++         * an NVIDIA adapter: other ids (VideoPciVendorID and VideoPciDeviceID, in the registry
++         * or in WINE_D3D_CONFIG) and, with them, another name (FINEWINE_GPU_NAME in the
++         * environment). Upstream only accepts ids from its card table; any are taken here.
++         * The memory stays what it is. */
++        if (wined3d_settings.pci_vendor_id != PCI_VENDOR_NONE)
++            apple_gpu.vendor = wined3d_settings.pci_vendor_id;
++        if (wined3d_settings.pci_device_id != PCI_DEVICE_NONE)
++            apple_gpu.device = wined3d_settings.pci_device_id;
++        if (wined3d_settings.pci_vendor_id != PCI_VENDOR_NONE || wined3d_settings.pci_device_id != PCI_DEVICE_NONE)
++        {
++            char reported_name[sizeof(apple_gpu_name)];
++            DWORD len = GetEnvironmentVariableA("FINEWINE_GPU_NAME", reported_name, sizeof(reported_name));
++            if (len && len < sizeof(reported_name))
++                lstrcpynA(apple_gpu_name, reported_name, sizeof(apple_gpu_name));
++        }
+         apple_gpu.description = apple_gpu_name;
+         apple_gpu.driver = DRIVER_WINE;
+         apple_gpu.vidmem = max(shared_bytes / 2 / (1024 * 1024), 1024);

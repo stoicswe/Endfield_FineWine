@@ -119,8 +119,15 @@ cmd_configure(){
   # Everything is passed as configure arguments, not environment variables: make re-runs
   # configure by itself when the source's configure script changes, and only arguments are
   # remembered for that.
+  # PE_CFLAGS: the Windows side is compiled for the CPUs it will run on. Every Apple silicon
+  # Mac implements ARMv8.4-A, and with it the single-instruction atomic operations that locks
+  # and reference counts are made of; the default, a 2011 baseline, uses retry loops for them
+  # (measured: 1.5 times slower, tests/runtime/bench.c). Not -mcpu=apple-m1: clang 23 fails on
+  # Wine's exception-handling code with it ("Failed to evaluate function length in SEH unwind info").
+  local PE_CFLAGS="-g -O2 -march=armv8.4-a"
   ( cd "$OBJ" && "$SRC/configure" --build=aarch64-apple-darwin --host=aarch64-apple-darwin \
         x86_64_CC=clang \
+        aarch64_CFLAGS="$PE_CFLAGS" arm64ec_CFLAGS="$PE_CFLAGS" \
         CC="/usr/bin/clang -arch arm64" CXX="/usr/bin/clang++ -arch arm64" OBJC="/usr/bin/clang -arch arm64" \
         PKG_CONFIG_PATH="$hb/lib/pkgconfig" CPPFLAGS="-I$hb/include" LDFLAGS="-L$hb/lib" \
         --enable-archs=arm64ec,aarch64 --prefix=/ --disable-tests \
@@ -130,6 +137,7 @@ cmd_configure(){
   # configure looks for libvulkan; on macOS Vulkan is MoltenVK, which the runtime bundles.
   sed -i '' 's|/\* #undef SONAME_LIBMOLTENVK \*/|#define SONAME_LIBMOLTENVK "libMoltenVK.dylib"|' "$OBJ/include/config.h"
   grep -q '^x86_64_CC = clang' "$OBJ/Makefile" || die "configure did not take clang as the x86_64 compiler"
+  grep -q '^aarch64_CFLAGS = .*-march=armv8.4-a' "$OBJ/Makefile" || die "configure did not take the Windows-side compiler flags"
   echo "configured: $OBJ"
 }
 
@@ -272,6 +280,11 @@ JSON
   done
 
   strip_runtime
+
+  # The loader a second time, as the copy macOS treats as a game (Game Mode); FineWine runs
+  # programs that use Direct3D or Vulkan with it. See scripts/lib/make-game-loader.py.
+  "$REPO/scripts/lib/make-game-loader.py" "$OUT/lib/wine/aarch64-unix/wine" "$OUT/lib/wine/aarch64-unix/wine-game" \
+    && chmod 755 "$OUT/lib/wine/aarch64-unix/wine-game" || die "could not make the game loader"
 
   # Mach-O files are signed ad hoc; arm64 macOS refuses to run unsigned code.
   find "$OUT/bin" "$OUT/lib" -type f \( -perm -u+x -o -name '*.so' -o -name '*.dylib' \) -print0 \

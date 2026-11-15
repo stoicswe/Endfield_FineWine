@@ -61,23 +61,74 @@ final class PrefixSettingsTests: XCTestCase {
         XCTAssertTrue(untouched.retinaMode)
     }
 
-    func testDLSSThroughMetalFXIsSwitchedOnOnlyWithDXMT() {
-        func env(_ settings: PrefixSettings) -> [String: String] {
-            Dictionary(uniqueKeysWithValues: settings.environmentVariables().map { ($0.name, $0.value) })
-        }
+    private func env(_ settings: PrefixSettings) -> [String: String] {
+        Dictionary(settings.environmentVariables().map { ($0.name, $0.value) }, uniquingKeysWith: { _, last in last })
+    }
+
+    func testDLSSThroughMetalFXIsOnByDefaultForEveryGraphicsLayer() {
         var settings = PrefixSettings()
         XCTAssertTrue(settings.dlssThroughMetalFX)
-        XCTAssertEqual(env(settings)["DXMT_ENABLE_NVEXT"], "1")
+        XCTAssertEqual(env(settings)["FINEWINE_DLSS"], "1", "Direct3D 12 and Vulkan games reach MetalFX through MoltenVK")
+        XCTAssertEqual(env(settings)["DXMT_ENABLE_NVEXT"], "1", "Direct3D 11 games reach it through DXMT")
 
         settings.dlssThroughMetalFX = false
+        XCTAssertNil(env(settings)["FINEWINE_DLSS"])
         XCTAssertNil(env(settings)["DXMT_ENABLE_NVEXT"])
 
         settings.dlssThroughMetalFX = true
         settings.graphicsBackend = .wined3d
-        XCTAssertNil(env(settings)["DXMT_ENABLE_NVEXT"], "only DXMT has the library that does the translation")
+        XCTAssertEqual(env(settings)["FINEWINE_DLSS"], "1", "Direct3D 12 and Vulkan do not depend on the Direct3D 11 layer")
+        XCTAssertNil(env(settings)["DXMT_ENABLE_NVEXT"], "only DXMT has that switch")
 
         let old = try? JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8))
         XCTAssertEqual(old?.dlssThroughMetalFX, true)
+    }
+
+    func testTheGPUIsReportedAsItIsUnlessAsked() {
+        var settings = PrefixSettings()
+        XCTAssertFalse(settings.reportNvidiaGPU)
+        XCTAssertNil(env(settings)["FINEWINE_GPU_VENDOR_ID"])
+        XCTAssertNil(env(settings)["FINEWINE_GPU_NAME"])
+        XCTAssertNil(env(settings)["WINE_D3D_CONFIG"])
+        // DXMT would report NVIDIA's vendor id on its own once DLSS is on; it is told Apple's.
+        XCTAssertEqual(env(settings)["DXMT_CONFIG"], "dxgi.customVendorId=106b")
+
+        settings.dlssThroughMetalFX = false
+        XCTAssertNil(env(settings)["DXMT_CONFIG"], "without DLSS, DXMT reports Apple's id unprompted")
+
+        let old = try? JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8))
+        XCTAssertEqual(old?.reportNvidiaGPU, false)
+    }
+
+    func testReportingAnNvidiaGPUUsesTheNameAndIdsOfAnRTX5080OnEveryLayer() throws {
+        XCTAssertEqual(PrefixSettings.reportedGPUVendorID, 0x10DE)
+        XCTAssertEqual(PrefixSettings.reportedGPUDeviceID, 0x2C02)
+        XCTAssertEqual(PrefixSettings.reportedGPUName, "NVIDIA GeForce RTX 5080")
+
+        var settings = PrefixSettings()
+        settings.reportNvidiaGPU = true
+        var e = env(settings)
+        XCTAssertEqual(e["FINEWINE_GPU_VENDOR_ID"], "10de", "Vulkan, through MoltenVK")
+        XCTAssertEqual(e["FINEWINE_GPU_DEVICE_ID"], "2c02")
+        XCTAssertEqual(e["FINEWINE_GPU_NAME"], "NVIDIA GeForce RTX 5080", "the name, for Vulkan and Wine's Direct3D")
+        XCTAssertEqual(e["WINE_D3D_CONFIG"], "VideoPciVendorID=0x10de,VideoPciDeviceID=0x2c02", "Wine's Direct3D, and Direct3D 12 with it")
+        XCTAssertEqual(e["DXMT_CONFIG"], "dxgi.customVendorId=10de;dxgi.customDeviceId=2c02;dxgi.customDeviceDesc=\"NVIDIA GeForce RTX 5080\"",
+                       "Direct3D 10 and 11, through DXMT")
+
+        settings.graphicsBackend = .wined3d
+        e = env(settings)
+        XCTAssertEqual(e["WINE_D3D_CONFIG"], "VideoPciVendorID=0x10de,VideoPciDeviceID=0x2c02")
+        XCTAssertNil(e["DXMT_CONFIG"], "DXMT is not in use")
+
+        // It is independent of DLSS, and survives being saved.
+        settings.dlssThroughMetalFX = false
+        XCTAssertEqual(env(settings)["FINEWINE_GPU_VENDOR_ID"], "10de")
+        let saved = try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertTrue(saved.reportNvidiaGPU)
+
+        // The user's own variables still have the last word.
+        settings.environment = [EnvironmentVariable(name: "FINEWINE_GPU_DEVICE_ID", value: "2684")]
+        XCTAssertEqual(env(settings)["FINEWINE_GPU_DEVICE_ID"], "2684")
     }
 
     func testWindowsBuildWritesBothBuildValues() {
@@ -117,10 +168,9 @@ final class PrefixSettingsTests: XCTestCase {
 
     func testEnvironmentVariables() {
         var settings = PrefixSettings()
-        XCTAssertEqual(settings.environmentVariables().map(\.name), ["WINEDEBUG", "DXMT_ENABLE_NVEXT"])
+        XCTAssertEqual(settings.environmentVariables().map(\.name), ["WINEDEBUG", "WINEMSYNC", "FINEWINE_DLSS", "DXMT_ENABLE_NVEXT", "DXMT_CONFIG"])
         XCTAssertEqual(settings.environmentVariables().first?.value, "-all")
 
-        settings.syncMode = .msync
         settings.metalHUD = true
         settings.hideHypervisor = true
         settings.debugChannels = "err+all"
@@ -128,15 +178,32 @@ final class PrefixSettingsTests: XCTestCase {
                                 EnvironmentVariable(name: "bad name", value: "x")]
         let env = Dictionary(uniqueKeysWithValues: settings.environmentVariables().map { ($0.name, $0.value) })
         XCTAssertEqual(env, ["WINEDEBUG": "err+all", "WINEMSYNC": "1", "MTL_HUD_ENABLED": "1",
-                             "FEX_HIDEHYPERVISORBIT": "1", "DXMT_ENABLE_NVEXT": "1", "MY_FLAG": "1"])
+                             "FEX_HIDEHYPERVISORBIT": "1", "FINEWINE_DLSS": "1", "DXMT_ENABLE_NVEXT": "1",
+                             "DXMT_CONFIG": "dxgi.customVendorId=106b", "MY_FLAG": "1"])
     }
 
     func testEmptyDebugChannelsFallBackToSilent() {
         var settings = PrefixSettings()
         settings.debugChannels = ""
         let env = Dictionary(uniqueKeysWithValues: settings.environmentVariables().map { ($0.name, $0.value) })
-        XCTAssertNil(env["WINEMSYNC"])
         XCTAssertEqual(env["WINEDEBUG"], "-all")
+    }
+
+    func testMSyncIsTheDefaultAndCanBeTurnedOff() throws {
+        var settings = PrefixSettings()
+        XCTAssertEqual(settings.syncMode, .msync, "measured 4 to 23 times faster than going through the server")
+        XCTAssertEqual(env(settings)["WINEMSYNC"], "1")
+        settings.syncMode = .standard
+        XCTAssertNil(env(settings)["WINEMSYNC"])
+        // A prefix saved with the old default keeps what it was saved with.
+        let saved = try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(saved.syncMode, .standard)
+    }
+
+    func testGameModeIsOnByDefault() throws {
+        XCTAssertTrue(PrefixSettings().gameMode)
+        let old = try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8))
+        XCTAssertTrue(old.gameMode)
     }
 
     func testUserVariablesComeLastSoTheyWin() {

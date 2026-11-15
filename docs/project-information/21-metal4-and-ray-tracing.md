@@ -235,32 +235,75 @@ Nothing larger has been run: no game, no refit, no large scene.
 (`MVK_FLAVOR=finewine scripts/build-moltenvk.sh all`, output in `build/moltenvk-out-finewine`).
 The MoltenVK builds that go into the CrossOver payloads are unchanged.
 
-## Frame generation (DLSS Frame Generation to MetalFX): findings, not yet built
+## DLSS as MetalFX: super resolution and frame generation (2026-11-15)
 
-Asked for on 2026-11-15, with the requirement that DLSS and frame generation work on the
-MoltenVK path (Direct3D 12 and Vulkan) as well as on DXMT. What was established that day:
+Which layer does it depends on the API the game uses:
 
-- **MetalFX has it.** `MTLFXFrameInterpolator` (macOS 26 and later) takes the current and
-  previous colour, depth and motion vectors and writes an in-between frame. On this machine
-  (Apple M3, macOS 27) `supportsDevice:` is true, an interpolator is created without a scaler,
-  and encoding one runs without error. A first try at feeding it produced the current frame
-  rather than an in-between one, so its input conventions (motion vector direction and scale,
-  history) still have to be worked out.
-- **Where games ask for it.** DLSS Frame Generation is reached through NVIDIA's Streamline
-  (`sl.dlss_g`), which calls NGX with feature 11 and presents the extra frames itself. It exists
-  for Direct3D 12 and Vulkan only. There is no Direct3D 11 version for a game to call.
-- **What this runtime has.** DXMT's `nvngx.dll` implements NGX for Direct3D 11 only, and only
-  feature 1 (super resolution, on MetalFX's temporal scaler). Direct3D 12 here is Wine's vkd3d
-  on MoltenVK, which has no NGX at all, so DLSS super resolution is not available there either.
-- **So the mapping needs, in order:** NGX entry points for Direct3D 12; a way from a vkd3d
-  resource to the Metal texture behind it (MoltenVK can export one; the call has to cross from
-  the Windows side to the Unix side); super resolution on that path; then feature 11 on
-  `MTLFXFrameInterpolator`; and Streamline's own checks have to pass.
-- **Streamline's checks include the GPU vendor.** It offers DLSS only on an NVIDIA adapter.
-  DXMT already answers that for Direct3D 11: with `DXMT_ENABLE_NVEXT=1`, which FineWine sets
-  when "DLSS through MetalFX" is on, its adapter keeps the name "Apple M3" but reports
-  NVIDIA's vendor id (`0x10DE`; `src/dxgi/dxgi_adapter.cpp`). The Direct3D 12 adapter reports
-  Apple's (`0x106B`). A Direct3D 12 DLSS path would have to report NVIDIA's too.
+| The game uses | DLSS is handled by | Super resolution | Frame generation |
+|---|---|---|---|
+| Direct3D 10, 11 | DXMT's `nvngx.dll` and its own Metal code | Yes | No: DLSS frame generation does not exist for Direct3D 11 |
+| Direct3D 12 | `nvngx.dll`, through Wine's vkd3d, to MoltenVK | Yes | Yes |
+| Vulkan | `nvngx.dll`, through Wine's Vulkan layer, to MoltenVK | Yes | Yes |
+
+**How the MoltenVK path works.** A game calls NGX (`NVSDK_NGX_D3D12_*` or `NVSDK_NGX_VULKAN_*`)
+with its command list and textures. The work has to be recorded in that command list, and it
+has to be done by MoltenVK, below Vulkan, which is on the other side of Wine from the game.
+
+- `patches/dxmt/0002` adds those entry points to `nvngx.dll`. An evaluation becomes a small
+  request structure naming the VkImages involved.
+- For Vulkan the request leaves through `vkCmdPushConstants()` with a null layout and a marker
+  as its stage flags. Wine's Vulkan layer only passes through functions Vulkan defines, and
+  this one needs no extension to be enabled.
+- For Direct3D 12, `patches/runtime/0009` gives Wine's vkd3d two private data GUIDs: one
+  returns a texture's VkImage, the other records the request in a command list (which ends the
+  current render pass and makes that same call).
+- `patches/moltenvk/0004` adds the command to MoltenVK. Feature 1 (super resolution) is an
+  `MTLFXTemporalScaler`; feature 11 (frame generation, the `DLSSG.*` parameters) is an
+  `MTLFXFrameInterpolator`, which needs macOS 26. Scalers and interpolators are kept per
+  device and feature. The interpolator wants last frame's colour, which a game does not hand
+  over, so MoltenVK keeps a copy. If MetalFX cannot write the game's output image as it was
+  created, the result goes through a texture of MoltenVK's own. Without MetalFX the frame is
+  copied across unchanged, so the game still gets an image.
+
+**What MetalFX's frame interpolator turned out to need.** Motion vectors in pixels pointing
+at where the pixel was in the previous frame (the same as DLSS), and two frames of history:
+the first two calls return the current frame, and from the third the generated frame is half
+way.
+
+**The GPU a program is told about.** Games offer DLSS only on an NVIDIA adapter. A prefix has
+a setting for that, "Report an NVIDIA GPU", off by default: it reports the ids of an NVIDIA
+GeForce RTX 5080 (`10de:2c02`) and leaves the name ("Apple M3") and memory as they are. It
+sets `FINEWINE_GPU_VENDOR_ID`/`FINEWINE_GPU_DEVICE_ID` for Vulkan (`patches/moltenvk/0004`),
+`WINE_D3D_CONFIG` for Wine's Direct3D, which Direct3D 12 also reports through
+(`patches/runtime/0010`), and `DXMT_CONFIG` for DXMT. With the setting off and DLSS on, DXMT is
+told Apple's vendor id explicitly, because with its NVIDIA stand-ins enabled it would report
+NVIDIA's on its own.
+
+**Tested** through Wine as x64 programs (`scripts/test-finewine-runtime.sh`), and natively for
+the MoltenVK command (`scripts/test-moltenvk-raytracing.sh`):
+
+- `tests/runtime/dlss-d3d12.c` calls the Direct3D 12 NGX entry points with Direct3D 12
+  textures: a 256x256 frame comes out as 512x512 with its square in the right place, and a
+  moving square appears between its last two positions in the generated frame.
+- `tests/moltenvk/metalfx.c` does the same for Vulkan, through NGX under Wine and directly
+  against MoltenVK natively.
+- The ids are checked in Vulkan, Direct3D 12 and Direct3D 11, asked for and not.
+
+**Not done, and not known:**
+
+- No game has been run. The tests call `nvngx.dll` directly; a game goes through NVIDIA's SDK
+  and, for frame generation, through Streamline, which loads its own plugins, checks driver
+  versions through NVAPI, wants Reflex, and presents the generated frames itself. None of
+  that has been exercised, and the Direct3D 12 NVAPI entry points Streamline uses are not
+  there. Frame generation reaching a real game is therefore unproven.
+- The `DLSSG.*` parameter names and the entry point signatures are from knowledge of the SDK,
+  not from its headers. The motion vector scale Streamline passes for frame generation may be
+  in other units than pixels.
+- The HUD-less and UI inputs of frame generation are ignored, so interface elements are
+  interpolated along with the scene.
+- The time between frames is not passed on (MetalFX is told 1/60 s).
+- A feature that is released keeps its scaler in MoltenVK until the device goes away.
+- ARM64 Windows programs: untested on this path.
 
 ## Summary
 
@@ -271,7 +314,7 @@ MoltenVK path (Direct3D 12 and Vulkan) as well as on DXMT. What was established 
 | Vulkan ray queries in MoltenVK | Done (first version) | Nothing else |
 | Vulkan ray tracing pipelines in MoltenVK | Done (first version) | Lowering to ray queries |
 | Direct3D 12 ray tracing in vkd3d | Months | The MoltenVK items above |
-| DLSS Frame Generation on MetalFX | Not started; needs NGX for Direct3D 12 first | A decision on the GPU vendor id |
+| DLSS on MetalFX for Direct3D 12 and Vulkan, with frame generation | Done at the NGX level; unproven with a game | Streamline and NVAPI for real titles |
 
 None of these is needed to run a game that does not use ray tracing. For Arknights: Endfield and
 similar Direct3D 11 titles the path that matters is already in place: FEX, DXMT, and DLSS

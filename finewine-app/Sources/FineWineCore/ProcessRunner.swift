@@ -28,6 +28,10 @@ public struct SystemProcessRunner: ProcessRunning {
         process.environment = plan.environment
         process.currentDirectoryURL = plan.workingDirectory
         process.standardInput = FileHandle.nullDevice
+        // Whatever thread FineWine happens to launch from, the program runs at the priority of
+        // something the user is looking at. A process started at a background priority is kept
+        // on the efficiency cores, where it runs about three times slower.
+        process.qualityOfService = .userInteractive
         return process
     }
 

@@ -81,6 +81,15 @@ public struct WineRuntime: Equatable, Identifiable, Sendable {
             .first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
+    /// The name of the copy of Wine's loader that tells macOS it is a game, beside the loader.
+    public static let gameLoaderName = "wine-game"
+
+    /// Whether this runtime has that copy. Without it programs still run, just never in Game Mode.
+    public var hasGameLoader: Bool {
+        FileManager.default.isExecutableFile(
+            atPath: root.appendingPathComponent("lib/wine/aarch64-unix/\(Self.gameLoaderName)").path)
+    }
+
     public var wineserverBinary: URL? {
         Self.serverBinaryNames.map { binDirectory.appendingPathComponent($0) }
             .first { FileManager.default.isExecutableFile(atPath: $0.path) }

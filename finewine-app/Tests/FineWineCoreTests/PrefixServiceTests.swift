@@ -282,4 +282,35 @@ final class PrefixServiceTests: XCTestCase {
         f.runner.status = { _ in 5 }
         XCTAssertThrowsError(try f.service.runWineboot(.update, in: prefix))
     }
+
+    func testChangingTheSyncModeStopsThePrefixFirst() throws {
+        let f = Fixture()
+        var prefix = try f.service.createPrefix(name: "Sync", runtime: f.runtime, profile: nil)
+        XCTAssertEqual(prefix.metadata.appliedSettings?.syncMode, .msync)
+        f.runner.ran.removeAll()
+
+        // Nothing about synchronisation changed: nothing is stopped.
+        prefix.metadata.settings.metalHUD = true
+        prefix = try f.service.applySettings(to: prefix)
+        XCTAssertFalse(f.runner.ran.contains { $0.arguments == ["-k"] })
+
+        // A program started with MSync cannot join a server started without it, and the other
+        // way round, so the server is stopped before the settings are written with the new mode.
+        f.runner.ran.removeAll()
+        prefix.metadata.settings.syncMode = .standard
+        prefix = try f.service.applySettings(to: prefix)
+        XCTAssertEqual(f.runner.ran.first?.arguments, ["-k"])
+        XCTAssertEqual(f.runner.ran.first?.executable.lastPathComponent, "wineserver")
+        XCTAssertEqual(f.runner.ran.last?.arguments.first, "regedit")
+        XCTAssertNil(f.runner.ran.last?.environment["WINEMSYNC"])
+    }
+
+    func testLaunchingAProgramMakesRoomForItsGameMarker() throws {
+        let f = Fixture()
+        let prefix = try f.prefixWithGame()
+        _ = try f.service.launch(programID: prefix.metadata.programs[0].id, in: prefix)
+        var isDir: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: prefix.directory.appendingPathComponent(".finewine-games").path, isDirectory: &isDir))
+        XCTAssertTrue(isDir.boolValue)
+    }
 }

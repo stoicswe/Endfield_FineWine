@@ -140,6 +140,37 @@ public struct LaunchPlanner {
         return env
     }
 
+    // MARK: Game Mode
+
+    /// The environment variable naming the file the runtime creates when a program first uses
+    /// Direct3D or Vulkan, and the one naming the loader a program and its children run under.
+    public static let gameMarkerVariable = "FINEWINE_GAME_MARKER"
+    public static let loaderVariable = "FINEWINE_LOADER"
+
+    /// The file that records that a program, or something it started, rendered with a GPU API.
+    public func gameMarker(for program: Program) -> URL {
+        prefix.directory.appendingPathComponent(".finewine-games", isDirectory: true)
+            .appendingPathComponent("\(program.id.uuidString).rendered")
+    }
+
+    /// Whether to start the program as a game: it has rendered before (it, or a game its
+    /// launcher started), or its executable imports a rendering API.
+    public func isGame(_ program: Program) -> Bool {
+        if FileManager.default.fileExists(atPath: gameMarker(for: program).path) { return true }
+        guard let exe = WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory) else { return false }
+        return PEImports.usesRenderingAPI(at: exe)
+    }
+
+    /// What Game Mode adds to a program's environment. macOS decides from the running
+    /// executable whether an app is a game, so a game is run with the loader that says it is;
+    /// every program is given the marker to create if it turns out to render after all.
+    public func gameModeEnvironment(for program: Program) -> [String: String] {
+        guard prefix.metadata.settings.gameMode, runtime.hasGameLoader else { return [:] }
+        var env = [Self.gameMarkerVariable: gameMarker(for: program).path]
+        if isGame(program) { env[Self.loaderVariable] = WineRuntime.gameLoaderName }
+        return env
+    }
+
     /// Runs a program installed in the prefix.
     public func plan(for program: Program) throws -> LaunchPlan {
         var arguments = [program.windowsPath]
@@ -155,9 +186,11 @@ public struct LaunchPlanner {
         if let dir = cwd, !(FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir) && isDir.boolValue) {
             cwd = nil
         }
+        var env = environment(extra: program.environment)
+        // The program's own variables keep the last word, as everywhere else.
+        for (name, value) in gameModeEnvironment(for: program) where env[name] == nil { env[name] = value }
         return LaunchPlan(executable: try wine(), arguments: arguments,
-                          environment: environment(extra: program.environment),
-                          workingDirectory: cwd ?? prefix.directory)
+                          environment: env, workingDirectory: cwd ?? prefix.directory)
     }
 
     /// Runs any executable or installer from the Mac filesystem inside the prefix.

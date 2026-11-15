@@ -178,6 +178,16 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0008-wined3d-report-an-apple-gpu-as-what-it-is.patch` makes Wine's built-in Direct3D report
   an Apple GPU by its real name ("Apple M3"), Apple's vendor id and half the shared memory,
   instead of a placeholder NVIDIA card. These are the values DXMT reports.
+- `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
+  private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
+  in a command list, to be carried out by MoltenVK as MetalFX.
+- `0011-loader-ntdll-win32u-let-a-program-run-as-a-game-for-game-mode.patch` is the runtime's
+  half of macOS Game Mode: the loader's Info.plist can be changed to say it is a game, a
+  variable picks that copy of the loader for a program and its children, and using Vulkan or
+  Direct3D 12 leaves a marker by which FineWine learns that a program renders.
+- `0010-wined3d-win32u-report-the-gpu-a-prefix-asks-for.patch` lets a prefix have the GPU
+  reported as another one, by name and PCI ids (an NVIDIA GeForce RTX 5080, for games that only offer DLSS
+  on NVIDIA).
 
 ## `moltenvk/` (top level) — FineWine's additions to MoltenVK
 
@@ -199,7 +209,11 @@ builds for the CrossOver payloads do not get these. Apache-2.0, like MoltenVK.
 - `spirv-cross/0001-msl-candidate-aabb-opaque-was-inverted.patch` fixes a ray query operation
   SPIRV-Cross translated to its opposite; the pipeline lowering depends on it.
 
-`0002` and `0003` apply as a series on `0001`. Details and limits are in
+- `0004-metalfx-as-a-command-and-reported-gpu-ids.patch` adds a command that records a MetalFX
+  upscale or frame interpolation in a command buffer, which is what DLSS is mapped to for
+  Direct3D 12 and Vulkan programs, and lets a prefix choose the GPU ids Vulkan reports.
+
+The patches apply as a series on `0001`. Details and limits are in
 [`docs/project-information/21-metal4-and-ray-tracing.md`](../docs/project-information/21-metal4-and-ray-tracing.md).
 
 ## `fex/` — the x64 emulator
@@ -215,5 +229,11 @@ Applied by `scripts/build-fex.sh` to FEX at the commit pinned in that script.
 - `0001-dxgi-hand-direct3d-12-swap-chains-to-wine-s-dxgi.patch` is the DXMT half of runtime
   patch 0007: DXMT's DXGI forwards swap chain creation for a Direct3D 12 command queue to
   `winedxgi.dll`. Applied by `scripts/build-dxmt.sh` to DXMT at the commit pinned there.
+- `0002-nvngx-ngx-for-direct3d-12-and-vulkan-with-frame-generation.patch` adds the Direct3D 12
+  and Vulkan NGX entry points to DXMT's `nvngx.dll`, with DLSS super resolution and frame
+  generation. They do no rendering themselves: each evaluation is handed to MoltenVK
+  (`patches/moltenvk/0004`), for Direct3D 12 through Wine's vkd3d (`patches/runtime/0009`).
+- `0003-winemetal-tell-finewine-when-a-program-starts-rendering.patch` leaves the same marker
+  as runtime patch 0011 when a program starts using Direct3D 10 or 11.
 - `build-arm64ec-finewine.txt` is the meson cross file `scripts/build-dxmt.sh` builds DXMT with.
   It is DXMT's own ARM64EC cross file plus one linker flag (see the comment in the file).

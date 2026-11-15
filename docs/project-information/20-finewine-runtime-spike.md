@@ -214,12 +214,10 @@ Each repair costs a trap.
 - **The adapter is reported as the Apple GPU**: "Apple M3", vendor `106b`, 9093 MB here, from
   DXMT and from Wine's built-in Direct3D alike. Upstream WineD3D has no Apple entries and
   reported an "NVIDIA GeForce 6800"; `patches/runtime/0008` fixes that.
-  **One exception, found on 2026-11-15:** with "DLSS through MetalFX" on, which is the default
-  for new prefixes, DXMT (Direct3D 10 and 11) keeps the name but reports NVIDIA's vendor id,
-  `10de`. That is DXMT's own behaviour under `DXMT_ENABLE_NVEXT=1`: games offer DLSS only on an
-  NVIDIA adapter. The runtime checks do not look at the vendor id in that mode.
-
-### Upscaling, Metal 4 and ray tracing (2026-11-15)
+  A prefix can ask for other ids: "Report an NVIDIA GPU" (off by default) reports those of an
+  NVIDIA GeForce RTX 5080, `10de:2c02`, on every layer, and leaves the name and memory alone.
+  Games only offer DLSS on an NVIDIA adapter. With it off, every layer says Apple, including
+  DXMT with DLSS on, which would otherwise report NVIDIA's vendor id by itself.
 
 - **DLSS as MetalFX: available for Direct3D 11.** DXMT ships its own `nvngx.dll`, which answers
   the DLSS SDK and upscales with MetalFX's temporal scaler, and an `nvapi64.dll`. Both are
@@ -228,8 +226,10 @@ Each repair costs a trap.
   MetalFX" on (the default) and DXMT selected. `tests/runtime/dlss-metalfx.c` initialises NGX
   on a DXMT device and fetches its capability parameters, as x64 under FEX. No frame has been
   upscaled: that needs a game or a DLSS sample.
-- **DLSS for Direct3D 12 is not available.** Direct3D 12 here is vkd3d on MoltenVK, which has
-  no DLSS path. Apple's D3DMetal has one, but cannot be loaded (see above).
+- **DLSS for Direct3D 12 and Vulkan: as MetalFX, through MoltenVK**, super resolution and
+  frame generation. `nvngx.dll` has the Direct3D 12 and Vulkan NGX entry points; the work is
+  recorded in the game's command buffer and done by a MetalFX command in MoltenVK. Tested at
+  the NGX level, not with a game. See [21-metal4-and-ray-tracing.md](21-metal4-and-ray-tracing.md).
 - **FSR needs nothing.** It is shader code the game ships, and runs on any Direct3D layer.
 - **MetalFX spatial upscaling of the whole output** is a DXMT option
   (`DXMT_METALFX_SPATIAL_SWAPCHAIN=1`), not wired into FineWine's settings yet.
@@ -265,6 +265,6 @@ Each repair costs a trap.
 | `scripts/build-dxmt.sh` | DXMT builds and renders. The `fetch` step was not re-run from scratch. |
 | `patches/runtime/0007`, `patches/dxmt/0001` | Direct3D 12 works with and without DXMT selected. |
 | `patches/runtime/0008` | Apple GPU reported by both Direct3D layers. |
-| DLSS as MetalFX | NGX and NVAPI initialise on DXMT; no frame upscaled yet. |
+| DLSS as MetalFX | Direct3D 11: NGX and NVAPI initialise on DXMT. Direct3D 12 and Vulkan: frames upscaled and generated through NGX in tests. No game yet. |
 | `scripts/test-finewine-runtime.sh` | All twelve checks pass on the current, stripped runtime. |
 | FineWine.app | Unit tests pass, and the core library passes an integration test against the runtime. The app's windows were not driven by hand against it. |
