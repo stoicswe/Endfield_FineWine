@@ -171,6 +171,15 @@ public struct LaunchPlanner {
         return env
     }
 
+    // MARK: Steam stand-in
+
+    /// The Steam id to start the program with, if it is one that is started through the
+    /// runtime's stand-in for Steam, the prefix allows it and the runtime has the stand-in.
+    public func steamAppID(for program: Program) -> String? {
+        guard prefix.metadata.settings.steamForHoYoverse, runtime.steamStandIn != nil else { return nil }
+        return SteamStandIn.appID(forWindowsPath: program.windowsPath)
+    }
+
     /// Runs a program installed in the prefix.
     public func plan(for program: Program) throws -> LaunchPlan {
         var arguments = [program.windowsPath]
@@ -187,6 +196,10 @@ public struct LaunchPlanner {
             cwd = nil
         }
         var env = environment(extra: program.environment)
+        if let steamID = steamAppID(for: program) {
+            arguments.insert(SteamStandIn.windowsPath, at: 0)
+            for name in ["SteamGameId", "SteamAppId"] where env[name] == nil { env[name] = steamID }
+        }
         // The program's own variables keep the last word, as everywhere else.
         for (name, value) in gameModeEnvironment(for: program) where env[name] == nil { env[name] = value }
         return LaunchPlan(executable: try wine(), arguments: arguments,

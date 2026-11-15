@@ -123,6 +123,10 @@ struct ConfigurationTab: View {
                     Text("Game Mode")
                     Text("Programs that use Direct3D, Vulkan or OpenGL are started as games, so macOS turns Game Mode on while one is full screen. A program started by a launcher is recognised from its second run on.")
                 }
+                Toggle(isOn: $draft.steamForHoYoverse) {
+                    Text("Start HoYoverse games as Steam does")
+                    Text("Genshin Impact, Zenless Zone Zero, Honkai Impact 3rd and the HoYoPlay launcher are started through a stand-in for the Steam client, the way they are run on Linux. The game is told it was started by Steam, which is not a platform HoYoverse supports on a Mac; use it at your own account's risk.")
+                }
                 Divider()
                 Toggle(isOn: $draft.metalHUD) {
                     Text("Start with the Metal performance overlay shown")
