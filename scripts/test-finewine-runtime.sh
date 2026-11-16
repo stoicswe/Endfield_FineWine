@@ -169,7 +169,11 @@ if [ -x "$MINGWA" ] && "$MINGWA" -O1 -mwindows -o "$WORK/CoolGame.exe" "$REPO/te
   sleep 5
   tpid="$(ps -axww -o pid,command | grep '[C]oolGame.exe' | awk '{print $1}' | head -n 1)"
   shown="$(lsappinfo info -only name "$tpid" 2>/dev/null | head -n 1 || true)"
+  # The Dock goes by the bundle the process runs from, which is one of the program's own name.
+  bundle="$(lsappinfo info "$tpid" 2>/dev/null | grep "bundle path" || true)"
   wait
+  case "$bundle" in *'/.finewine-apps/'*'/Cool Game Deluxe.app"'*) pass "a program runs from a bundle of its own name, which is what the Dock shows" ;;
+    *) fail "the program's bundle is $bundle, expected one named Cool Game Deluxe.app in the prefix" ;; esac
   tray="$(grep -c 'tray item visible=1 image=yes' "$WORK/tray.log" || true)"
   case "$shown" in *'"Cool Game Deluxe"'*)
       if [ "$tray" -ge 1 ]; then pass "macOS calls a program by its own name, and its tray icon is a menu bar item"
