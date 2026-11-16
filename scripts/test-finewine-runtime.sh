@@ -116,6 +116,19 @@ else
   else
     echo "  - 32-bit stand-in check skipped: could not build its test programs"
   fi
+  # Chromium's switches go to a process that has Chromium in it, and to nothing else: a
+  # launcher's folder also holds programs such as 7z.exe, which fail on switches they do not know.
+  if mkdir -p "$WORK/cef" && : >"$WORK/cef/libcef.dll" && : >"$WORK/cef/chrome_100_percent.pak" \
+     && "$MINGW" -O1 -o "$WORK/cef/vc_redist.x64.exe" "$REPO/tests/runtime/cmdline.c" >"$WORK/cef-build.log" 2>&1 \
+     && "$MINGW" -O1 -municode -o "$WORK/cef/start.exe" "$REPO/tests/runtime/start-and-wait.c" >>"$WORK/cef-build.log" 2>&1; then
+    "$RT/bin/wine" "$WORK/cef/start.exe" vc_redist.x64.exe </dev/null >/dev/null 2>&1 || true
+    got="$(cat "$WORK/cef/cmdline.txt" 2>/dev/null || true)"
+    case "$got" in *"--disable-gpu"*|*"--in-process-gpu"*|"") fail "a plain program in a Chromium folder was started with: ${got:-nothing (it did not run)}" ;;
+      *"/install /quiet /norestart"*) pass "a program that only shares a folder with Chromium keeps the command line it was given" ;;
+      *) fail "unexpected command line: $got" ;; esac
+  else
+    fail "could not build tests/runtime/cmdline.c"; tail -n 3 "$WORK/cef-build.log"
+  fi
   # The stand-in for the Steam client: a program started through it finds Steam "running".
   STEAM="$RT/share/finewine/steam/steam.exe"
   if [ ! -f "$STEAM" ]; then
@@ -153,6 +166,20 @@ if [ -x "$MINGWA" ] && "$MINGWA" -O1 -mwindows -o "$WORK/CoolGame.exe" "$REPO/te
     *) fail "macOS calls the program $shown, expected \"Cool Game Deluxe\"" ;; esac
 else
   echo "  - program name and tray icon check skipped: could not build tests/runtime/tray.c"
+fi
+# Direct3D 11 into a window, through a swap chain, on DXMT: what every Direct3D 11 game does.
+# (The other Direct3D 11 checks render off screen.) A small window appears for a moment.
+MINGWX="$REPO/build/llvm-mingw/bin/x86_64-w64-mingw32-clang"
+if [ ! -f "$RT/lib/dxmt/aarch64-windows/d3d11.dll" ] && [ ! -d "$RT/lib/dxmt" ]; then
+  echo "  - Direct3D 11 window check skipped: DXMT is not in this runtime"
+elif "$MINGWA" -O1 -o "$WORK/d3dwin-arm64.exe" "$REPO/tests/runtime/d3d11-window.c" -ld3d11 -ldxgi -ldxguid -luuid >"$WORK/d3dwin-build.log" 2>&1 \
+     && "$MINGWX" -O1 -o "$WORK/d3dwin-x64.exe" "$REPO/tests/runtime/d3d11-window.c" -ld3d11 -ldxgi -ldxguid -luuid >>"$WORK/d3dwin-build.log" 2>&1; then
+  one="$(WINEDLLPATH="$RT/lib/dxmt" "$RT/bin/wine" "$WORK/d3dwin-arm64.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+  two="$(WINEDLLPATH="$RT/lib/dxmt" "$RT/bin/wine" "$WORK/d3dwin-x64.exe" 0 0 </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+  case "$one|$two" in "d3d11-window: ok|d3d11-window: ok") pass "Direct3D 11 presents into a window through DXMT (swap chain, clear, present, read back): ARM64 and x64" ;;
+    *) fail "Direct3D 11 could not present into a window (ARM64: '$one', x64: '$two')" ;; esac
+else
+  fail "could not build tests/runtime/d3d11-window.c"; tail -n 3 "$WORK/d3dwin-build.log"
 fi
 # The menu bar. Opening a menu once left the program stuck in the menu's event loop for good,
 # so: open the application menu, close it, and see that the program still answers; then use

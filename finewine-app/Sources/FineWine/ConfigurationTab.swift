@@ -148,7 +148,7 @@ struct ConfigurationTab: View {
                 Divider()
                 Toggle(isOn: $draft.hideHypervisor) {
                     Text("Hide the hypervisor flag")
-                    Text("Stops x64 programs from seeing that they run under emulation. Some games refuse to start otherwise.")
+                    Text("The x64 emulator announces itself to programs through the CPU flag a virtual machine sets. Games that refuse to run in a virtual machine then refuse to start, though the Mac is not one. On by default; turn it off for a program that needs to know it is emulated.")
                 }
             }
 

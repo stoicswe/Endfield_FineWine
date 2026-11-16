@@ -186,6 +186,9 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
   private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
   in a command list, to be carried out by MoltenVK as MetalFX.
+- `0019-winemac-give-dxmt-the-interface-it-presents-through.patch`: exports the
+  `macdrv_functions` structure DXMT looks up to put its Metal view into a window. Without it
+  no Direct3D 10 or 11 program could present ("Failed to create metal view").
 - `0018-winemac-round-the-corners-of-windows-without-a-mac-title-bar.patch`: borderless app
   windows (launchers, games in a window) get a Mac window's round corners; not full-screen,
   small or self-shaped ones. `FINEWINE_ROUNDED_WINDOWS=0` turns it off.

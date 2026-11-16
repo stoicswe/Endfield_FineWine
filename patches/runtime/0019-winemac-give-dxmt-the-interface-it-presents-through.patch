@@ -1,0 +1,173 @@
+winemac: give DXMT the interface it presents through
+
+DXMT puts a Metal view into a window to present Direct3D 10 and 11. It looks the functions for
+that up by name: a structure called macdrv_functions, or the functions themselves. This Wine
+had neither visible, and its window data no longer has the client view DXMT reads, so every
+swap chain failed ("Failed to create metal view") and no Direct3D 11 game could draw to a
+window. macdrv_functions is now exported; a window asked for through it gets a client surface,
+as a Vulkan window does, whose view DXMT draws in. tests/runtime/d3d11-window.c checks it.
+
+diff --git a/dlls/winemac.drv/window.c b/dlls/winemac.drv/window.c
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -2207,4 +2207,160 @@
+     pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+     pthread_mutex_init(&win_data_mutex, &attr);
+     pthread_mutexattr_destroy(&attr);
++}
++
++
++/***********************************************************************
++ * FineWine: what DXMT asks the Mac driver for.
++ *
++ * DXMT (Direct3D 10 and 11 on Metal) presents into a window by putting a Metal view into the
++ * window's client view. It finds the functions for that by name in the process: a structure
++ * called macdrv_functions, as CrossOver's Wine has, or the functions themselves. This Wine has
++ * neither visible, and its window data is laid out differently from what DXMT reads (a window
++ * has no client view of its own any more; each client surface brings one). So every swap chain
++ * failed with "Failed to create metal view".
++ *
++ * The structure below is that interface. A window asked for here gets a client surface, the
++ * way a Vulkan or OpenGL window does, whose view is handed to DXMT; the surface lives for as
++ * long as the Metal view made in it, and Wine keeps it over the window's client area.
++ */
++struct finewine_dxmt_win_data
++{
++    HWND                    hwnd;
++    WineWindow             *cocoa_window;
++    WineContentView        *cocoa_view;
++    WineContentView        *client_cocoa_view;   /* the only member DXMT reads */
++    struct client_surface  *surface;
++};
++
++static struct
++{
++    WineContentView        *client_view;
++    WineMetalView          *metal_view;
++    struct client_surface  *surface;
++} finewine_dxmt_views[32];
++static pthread_mutex_t finewine_dxmt_mutex = PTHREAD_MUTEX_INITIALIZER;
++
++static struct finewine_dxmt_win_data *finewine_dxmt_get_win_data(HWND hwnd)
++{
++    struct finewine_dxmt_win_data *ret;
++    struct client_surface *client;
++    unsigned int i;
++
++    /* never NULL: DXMT reads the result without looking */
++    if (!(ret = calloc(1, sizeof(*ret)))) abort();
++    ret->hwnd = hwnd;
++    if (!(client = macdrv_CreateClientSurface(hwnd, 0, FALSE))) return ret;
++
++    ret->surface = client;
++    ret->client_cocoa_view = ret->cocoa_view = impl_from_client_surface(client)->cocoa_view;
++    ret->cocoa_window = macdrv_get_cocoa_window(hwnd, FALSE);
++
++    pthread_mutex_lock(&finewine_dxmt_mutex);
++    for (i = 0; i < ARRAY_SIZE(finewine_dxmt_views); i++)
++    {
++        if (finewine_dxmt_views[i].surface) continue;
++        finewine_dxmt_views[i].surface = client;
++        finewine_dxmt_views[i].client_view = ret->client_cocoa_view;
++        finewine_dxmt_views[i].metal_view = NULL;
++        break;
++    }
++    pthread_mutex_unlock(&finewine_dxmt_mutex);
++    if (i == ARRAY_SIZE(finewine_dxmt_views))
++    {
++        /* no room to remember it: do without, DXMT reports the failure */
++        client_surface_release(client);
++        ret->surface = NULL;
++        ret->client_cocoa_view = ret->cocoa_view = NULL;
++    }
++    return ret;
++}
++
++static void finewine_dxmt_release_win_data(struct finewine_dxmt_win_data *data)
++{
++    struct client_surface *unused = NULL;
++    unsigned int i;
++
++    if (!data) return;
++    /* a surface no Metal view was made in is not needed */
++    pthread_mutex_lock(&finewine_dxmt_mutex);
++    for (i = 0; i < ARRAY_SIZE(finewine_dxmt_views); i++)
++    {
++        if (!data->surface || finewine_dxmt_views[i].surface != data->surface) continue;
++        if (!finewine_dxmt_views[i].metal_view)
++        {
++            unused = finewine_dxmt_views[i].surface;
++            memset(&finewine_dxmt_views[i], 0, sizeof(finewine_dxmt_views[i]));
++        }
++        break;
++    }
++    pthread_mutex_unlock(&finewine_dxmt_mutex);
++    if (unused) client_surface_release(unused);
++    free(data);
+ }
++
++static WineMetalView *finewine_dxmt_create_metal_view(WineContentView *view, MTLDevice_id device)
++{
++    WineMetalView *metal_view;
++    unsigned int i;
++
++    if (!view) return NULL;
++    if (!(metal_view = macdrv_view_create_metal_view(view, device))) return NULL;
++    pthread_mutex_lock(&finewine_dxmt_mutex);
++    for (i = 0; i < ARRAY_SIZE(finewine_dxmt_views); i++)
++        if (finewine_dxmt_views[i].surface && finewine_dxmt_views[i].client_view == view && !finewine_dxmt_views[i].metal_view)
++        {
++            finewine_dxmt_views[i].metal_view = metal_view;
++            break;
++        }
++    pthread_mutex_unlock(&finewine_dxmt_mutex);
++    return metal_view;
++}
++
++static void finewine_dxmt_release_metal_view(WineMetalView *metal_view)
++{
++    struct client_surface *surface = NULL;
++    unsigned int i;
++
++    if (!metal_view) return;
++    pthread_mutex_lock(&finewine_dxmt_mutex);
++    for (i = 0; i < ARRAY_SIZE(finewine_dxmt_views); i++)
++        if (finewine_dxmt_views[i].metal_view == metal_view)
++        {
++            surface = finewine_dxmt_views[i].surface;
++            memset(&finewine_dxmt_views[i], 0, sizeof(finewine_dxmt_views[i]));
++            break;
++        }
++    pthread_mutex_unlock(&finewine_dxmt_mutex);
++    macdrv_view_release_metal_view(metal_view);
++    if (surface) client_surface_release(surface);
++}
++
++/* The members and their order are DXMT's (src/winemetal/unix/winemetal_unix.c); it uses the
++ * window data pair and the three Metal view functions. */
++__attribute__((visibility("default"), used))
++struct
++{
++    void (*macdrv_init_display_devices)(BOOL);
++    struct finewine_dxmt_win_data *(*get_win_data)(HWND hwnd);
++    void (*release_win_data)(struct finewine_dxmt_win_data *data);
++    WineWindow *(*macdrv_get_cocoa_window)(HWND hwnd, bool require_on_screen);
++    MTLDevice_id (*macdrv_create_metal_device)(void);
++    void (*macdrv_release_metal_device)(MTLDevice_id device);
++    WineMetalView *(*macdrv_view_create_metal_view)(WineContentView *view, MTLDevice_id device);
++    CAMetalLayer *(*macdrv_view_get_metal_layer)(WineMetalView *view);
++    void (*macdrv_view_release_metal_view)(WineMetalView *view);
++    void (*on_main_thread)(dispatch_block_t block);
++} macdrv_functions =
++{
++    NULL,
++    finewine_dxmt_get_win_data,
++    finewine_dxmt_release_win_data,
++    macdrv_get_cocoa_window,
++    macdrv_create_metal_device,
++    macdrv_release_metal_device,
++    finewine_dxmt_create_metal_view,
++    macdrv_view_get_metal_layer,
++    finewine_dxmt_release_metal_view,
++    NULL,
++};
