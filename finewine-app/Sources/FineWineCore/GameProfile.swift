@@ -14,9 +14,13 @@ public struct GameProfile: Codable, Equatable, Identifiable, Sendable {
     public var launchArguments: [String]
     /// Things the user should know, shown when the profile is chosen.
     public var notes: [String]
+    /// Words in an installer's file name that mean it installs this game (`GRYPHLINK`); a
+    /// prefix made for such an installer starts from this profile. Compared without regard to case.
+    public var installerHints: [String]
 
     public init(id: String, name: String, summary: String, settings: PrefixSettings = PrefixSettings(),
-                executables: [String] = [], launchArguments: [String] = [], notes: [String] = []) {
+                executables: [String] = [], launchArguments: [String] = [], notes: [String] = [],
+                installerHints: [String] = []) {
         self.id = id
         self.name = name
         self.summary = summary
@@ -24,6 +28,7 @@ public struct GameProfile: Codable, Equatable, Identifiable, Sendable {
         self.executables = executables
         self.launchArguments = launchArguments
         self.notes = notes
+        self.installerHints = installerHints
     }
 
     public init(from decoder: Decoder) throws {
@@ -35,6 +40,13 @@ public struct GameProfile: Codable, Equatable, Identifiable, Sendable {
         executables = try c.decodeIfPresent([String].self, forKey: .executables) ?? []
         launchArguments = try c.decodeIfPresent([String].self, forKey: .launchArguments) ?? []
         notes = try c.decodeIfPresent([String].self, forKey: .notes) ?? []
+        installerHints = try c.decodeIfPresent([String].self, forKey: .installerHints) ?? []
+    }
+
+    /// The profile meant for the installer at `url`, if any.
+    public static func forInstaller(_ url: URL, among profiles: [GameProfile]) -> GameProfile? {
+        let name = url.deletingPathExtension().lastPathComponent.lowercased()
+        return profiles.first { profile in profile.installerHints.contains { name.contains($0.lowercased()) } }
     }
 
     /// Whether the profile's launch arguments apply to the executable at `windowsPath`.
@@ -63,7 +75,9 @@ public struct GameProfile: Codable, Equatable, Identifiable, Sendable {
             settings: settings,
             executables: ["Endfield.exe"],
             launchArguments: ["-force-d3d11"],
-            notes: ["Needs a FineWine runtime that includes the Endfield fixes from this project's patches."])
+            notes: ["Needs a FineWine runtime that includes the Endfield fixes from this project's patches.",
+                    "Choose DirectX 11 in the GRYPHLINK launcher's settings: the game starts with Vulkan otherwise, which draws its interface wrongly on a Mac."],
+            installerHints: ["GRYPHLINK", "Endfield"])
     }()
 
     public static let builtIn: [GameProfile] = [generic, endfield]

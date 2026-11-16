@@ -691,7 +691,10 @@ final class AppModel: ObservableObject {
         pendingPrefixNames.append(name)
         Task { @MainActor in
             settingUpPrefixName = name
-            let created = await createPrefix(name: name, runtime: runtime, profile: nil)
+            // A game this app has a profile for (the GRYPHLINK installer: Arknights: Endfield)
+            // gets that profile's settings.
+            let created = await createPrefix(name: name, runtime: runtime,
+                                             profile: GameProfile.forInstaller(url, among: profiles))
             pendingPrefixNames.removeAll { $0 == name }
             settingUpPrefixName = pendingPrefixNames.first
             guard created, let prefix = prefixes.first(where: { $0.name == name }) else {

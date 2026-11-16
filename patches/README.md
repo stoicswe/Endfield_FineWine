@@ -186,6 +186,11 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
   private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
   in a command list, to be carried out by MoltenVK as MetalFX.
+- `0027-ntdll-arm64ec-stop-stack-walks-that-leave-the-real-frames.patch`: the source form of the
+  patcher's `ArmNtdllFix` for CrossOver ARM. `RtlWalkFrameChain` stops where there is no unwind
+  data (as the x86_64 version does), and `RtlIsEcCode` no longer reads past its bitmap for a
+  junk address. Without them Arknights: Endfield hung at its logo, its main thread walking the
+  stack for IL2CPP for good.
 - `0026-winemac-dwmapi-show-what-dxmt-draws-in-windows-that-also-paint-and-keep-their-transparency.patch`:
   two fixes for launcher windows drawn with Direct3D through DXMT. A window that was also
   painted the ordinary way (Qt fills its window once) had DXMT's view hidden for good and stayed
@@ -287,11 +292,18 @@ The patches apply as a series on `0001`. Details and limits are in
 
 ## `fex/` — the x64 emulator
 
-Applied by `scripts/build-fex.sh` to FEX at the commit pinned in that script.
+Applied by `scripts/build-fex.sh` to FEX at the commit pinned in `finewine-sources.lock`.
+FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`.
 
 - `0001-arm64ec-read-the-teb-from-thread-specific-data-on-macos.patch` replaces FEX's ten reads
-  of the TEB through x18 with the thread-specific data lookup the runtime uses. FEX's Windows
-  ARM64EC build is otherwise unchanged; it is installed in the runtime as `xtajit64.dll`.
+  of the TEB through x18 with the thread-specific data lookup the runtime uses.
+- `0002-windows-guard-the-call-ret-stack-with-whole-host-pages.patch`: the call-return stack's
+  guard pages are 64 KB, whole 16 KB Mac pages, instead of 4 KB.
+- `0003-cpuid-name-an-unknown-arm-cpu-as-the-host-does.patch`: x64 programs are told the Mac's
+  own name for its CPU ("Apple M3") instead of "Unknown ARM CPU" (macOS does not give programs
+  the CPU ID FEX names CPUs by). The source form of the patcher's `ArmEmulatorIdentity` brand
+  edit for CrossOver ARM. Its other part, the hypervisor bit, is FineWine's "Hide the hypervisor
+  flag" setting (`FEX_HIDEHYPERVISORBIT=1`), on by default.
 
 ## `dxmt/` — Direct3D on Metal
 
