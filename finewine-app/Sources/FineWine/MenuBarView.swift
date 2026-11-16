@@ -10,6 +10,14 @@ struct MenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
+            if let name = model.settingUpPrefixName {
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("Setting up the prefix “\(name)”…").font(.callout)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .glassCard(padding: 12)
+            }
             if model.prefixes.isEmpty {
                 Text(model.usableRuntimes.isEmpty
                      ? "Add a Wine runtime, then create a prefix to install Windows programs into."

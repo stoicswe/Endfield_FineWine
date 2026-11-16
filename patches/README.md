@@ -181,6 +181,12 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
   private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
   in a command list, to be carried out by MoltenVK as MetalFX.
+- `0014-ntdll-run-a-do-nothing-program-in-place-of-32-bit-runtime-setup-programs.patch`: the
+  runtime cannot run 32-bit Windows programs (a native ARM64 Mac process has no memory below
+  4 GB). When a program starts the 32-bit setup program of the Visual C++ or DirectX runtime
+  (`vc_redist*`, `vcredist*`, `dxsetup`, `dxwebsetup`, `directx_*`, `ue4prereqsetup*`,
+  `ueprereqsetup*`), a built-in program that does nothing and succeeds runs in its place, so
+  the installer that started it carries on. Other 32-bit programs still fail to start.
 - `0013-ntdll-keep-a-file-in-the-prefix-open-so-its-processes-can-be-found.patch` makes every
   Wine process hold `<prefix>/.finewine-alive` open, so that a frozen program can be traced to
   its prefix and ended (Force Shut Down). `ps` cannot do it: Wine overwrites a process's

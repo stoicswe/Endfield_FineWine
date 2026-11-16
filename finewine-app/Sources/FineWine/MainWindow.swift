@@ -16,6 +16,19 @@ struct MainWindow: View {
                 Backdrop()
                 detail
             }
+            // A prefix being made for a file opened from Finder: it takes a few seconds before
+            // the program appears, and without this nothing would say why.
+            .overlay(alignment: .bottom) {
+                if let name = model.settingUpPrefixName {
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text("Setting up the prefix “\(name)”…")
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .glassEffect()
+                    .padding(.bottom, 18)
+                }
+            }
         }
         .frame(minWidth: 860, minHeight: 560)
         .sheet(isPresented: $showingNewPrefix) {
@@ -208,7 +221,15 @@ struct SettingsView: View {
                 }
 
                 Card(title: "Windows files", symbol: "doc.badge.gearshape",
-                     footnote: "FineWine always asks which prefix to use before it runs a file from outside one. Either way, FineWine appears under Open With for these files.") {
+                     footnote: "A program that is already inside a prefix always runs there. FineWine appears under Open With for these files whether or not it is their default app.") {
+                    Row(label: "When a program is opened", detail: "A .exe or .msi from outside any prefix, such as a downloaded installer. FineWine can make a prefix for it, named after what it installs, or ask whether to make one or use a prefix you have.") {
+                        Picker("When a program is opened", selection: Binding(get: { model.openedFilePolicy },
+                                                                             set: { model.openedFilePolicy = $0 })) {
+                            ForEach(OpenedFilePolicy.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                        }
+                        .labelsHidden().fixedSize()
+                    }
+                    Divider()
                     Toggle(isOn: Binding(get: { model.opensWindowsExecutables },
                                          set: { enabled in Task { await model.setOpensWindowsExecutables(enabled) } })) {
                         Text("Open Windows programs with FineWine")

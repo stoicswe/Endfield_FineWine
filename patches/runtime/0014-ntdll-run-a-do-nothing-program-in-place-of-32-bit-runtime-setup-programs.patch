@@ -1,0 +1,72 @@
+ntdll: run a do-nothing program in place of 32-bit setup programs of built-in runtimes
+
+A native ARM64 process on macOS has no memory below 4 GB, so the runtime cannot run 32-bit
+Windows programs. Game installers start the 32-bit bootstrappers of the Visual C++ and DirectX
+runtimes and wait for them; Wine has those runtimes built in, so a built-in program that does
+nothing and exits with success is started in their place. FINEWINE_NO_REDIST_STANDIN=1 turns
+it off. Other 32-bit programs still fail to start.
+
+diff --git a/dlls/ntdll/unix/process.c b/dlls/ntdll/unix/process.c
+index 1d10948..95480e2 100644
+--- a/dlls/ntdll/unix/process.c
++++ b/dlls/ntdll/unix/process.c
+@@ -677,6 +677,33 @@ static NTSTATUS alloc_handle_list( const PS_ATTRIBUTE *handles_attr, obj_handle_
+     return STATUS_SUCCESS;
+ }
+ 
++/* FineWine: a native ARM64 process on macOS has no memory below 4 GB, so 32-bit Windows
++ * programs cannot be run. The ones games meet most are the setup programs of Microsoft's
++ * Visual C++ and DirectX runtimes, whose bootstrappers are 32-bit even in their "x64" editions;
++ * a game's installer starts one and waits for it to succeed. Wine has those runtimes built in,
++ * so in place of such a setup program a program that does nothing is run.
++ * FINEWINE_NO_REDIST_STANDIN=1 turns this off. */
++static BOOL finewine_is_provided_redistributable( const UNICODE_STRING *nt_name )
++{
++    static const char * const names[] = { "vc_redist", "vcredist", "dxsetup", "dxwebsetup", "directx_",
++                                          "ue4prereqsetup", "ueprereqsetup" };
++    const char *off = getenv( "FINEWINE_NO_REDIST_STANDIN" );
++    const WCHAR *name = nt_name->Buffer, *end, *p;
++    char base[32];
++    unsigned int i, len;
++
++    if (off && *off && *off != '0') return FALSE;
++    if (!name) return FALSE;
++    end = name + nt_name->Length / sizeof(WCHAR);
++    for (p = name; p < end; p++) if (*p == '\\' || *p == '/') name = p + 1;
++    for (len = 0; len < sizeof(base) - 1 && name + len < end && name[len] < 0x80; len++)
++        base[len] = (name[len] >= 'A' && name[len] <= 'Z') ? name[len] + 32 : name[len];
++    base[len] = 0;
++    for (i = 0; i < ARRAY_SIZE(names); i++) if (!strncmp( base, names[i], strlen(names[i]) )) return TRUE;
++    return FALSE;
++}
++
++
+ /**********************************************************************
+  *           NtCreateUserProcess  (NTDLL.@)
+  */
+@@ -771,6 +798,25 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
+         }
+         goto done;
+     }
++    if (pe_info.machine == IMAGE_FILE_MACHINE_I386 && finewine_is_provided_redistributable( &path ))
++    {
++        /* see finewine_is_provided_redistributable: run a program that does nothing and succeeds */
++        static const WCHAR standinW[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\',
++            's','y','s','t','e','m','3','2','\\','d','p','n','s','v','r','.','e','x','e',0};
++        UNICODE_STRING standin = { sizeof(standinW) - sizeof(WCHAR), sizeof(standinW), (WCHAR *)standinW };
++
++        MESSAGE( "wine: %s is a 32-bit installer, which FineWine cannot run, of a runtime it already provides; "
++                 "reporting it as installed\n", debugstr_us(&path) );
++        NtClose( file_handle );
++        file_handle = 0;
++        free( unix_name );
++        unix_name = NULL;
++        free( nt_name.Buffer );
++        nt_name.Buffer = NULL;
++        InitializeObjectAttributes( &attr, &standin, OBJ_CASE_INSENSITIVE, 0, 0 );
++        if ((status = get_pe_file_info( &attr, &nt_name, &unix_name, &file_handle, &pe_info ))) goto done;
++        machine = 0;
++    }
+     if (!machine)
+     {
+         machine = pe_info.machine;
