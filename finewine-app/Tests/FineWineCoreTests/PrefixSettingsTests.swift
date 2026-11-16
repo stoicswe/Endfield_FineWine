@@ -169,8 +169,11 @@ final class PrefixSettingsTests: XCTestCase {
     func testEnvironmentVariables() {
         var settings = PrefixSettings()
         XCTAssertEqual(settings.environmentVariables().map(\.name), ["WINEDEBUG", "WINEMSYNC", "MTL_HUD_ENABLED", "FINEWINE_METAL_HUD", "FINEWINE_FULLSCREEN",
-                        "FINEWINE_DLSS", "DXMT_ENABLE_NVEXT", "DXMT_CONFIG"])
+                        "FEX_HIDEHYPERVISORBIT", "FINEWINE_DLSS", "DXMT_ENABLE_NVEXT", "DXMT_CONFIG"])
         XCTAssertEqual(settings.environmentVariables().first?.value, "-all")
+        // The hypervisor flag is hidden unless the prefix says otherwise.
+        var shown = PrefixSettings(); shown.hideHypervisor = false
+        XCTAssertFalse(shown.environmentVariables().contains { $0.name == "FEX_HIDEHYPERVISORBIT" })
 
         settings.metalHUD = true
         settings.hideHypervisor = true

@@ -191,8 +191,11 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     public var rightOptionIsAlt: Bool = true
     /// Show Metal's performance overlay.
     public var metalHUD: Bool = false
-    /// Hide the "running under a hypervisor" CPU flag from x64 programs (a FEX setting).
-    public var hideHypervisor: Bool = false
+    /// Hide the "running under a hypervisor" CPU flag from x64 programs (a FEX setting). FEX
+    /// sets the flag to announce itself as an emulator; the Mac is not a virtual machine, and
+    /// games that refuse to run in one ("cannot run under a Virtual Machine") refuse here too.
+    /// On by default, by the user's decision (2026-11-15).
+    public var hideHypervisor: Bool = true
     /// Let games that offer NVIDIA DLSS use Apple's MetalFX instead: super resolution as
     /// MetalFX upscaling, frame generation as MetalFX frame interpolation. Direct3D 10 and 11
     /// games get it from DXMT; Direct3D 12 and Vulkan games from the runtime's MoltenVK. FSR
