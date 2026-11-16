@@ -61,6 +61,13 @@ changed on the way to making it work:
 - **Confirmed:** a program run with it is registered as `org.finewine.game`, and
   `gamepolicyctl game-mode status` reports "Game mode is on" while its window is in a
   full-screen Space.
+- **The Dock shows the program's own name.** The Dock labels a program with the name of the
+  bundle its executable is in, and ignores the name a process gives itself, so every game was
+  "FineWine Game" there. Each program is now started through a bundle of its own name, made in
+  its prefix when first needed: `.finewine-apps/game/<name>.app` (or `…/program/…` for the
+  plain loader), holding only a link to the loader and the loader's Info.plist under that name
+  (`patches/runtime/0024`). Game Mode still turns on for a game run this way (tested). The
+  folders are small and can be deleted; they come back.
 
 ## The Metal HUD
 

@@ -181,6 +181,16 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
   private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
   in a command list, to be carried out by MoltenVK as MetalFX.
+- `0024-ntdll-winemac-start-each-program-from-a-bundle-of-its-own-name.patch`: the Dock labels a
+  program with the name of the app bundle its executable is in, so every program said "wine" or
+  "FineWine Game" there whatever `0017` told the rest of macOS. A program is now started through
+  a small bundle of its own name in the prefix (`.finewine-apps/<game or program>/<name>.app`: a
+  link to the loader and the loader's Info.plist under that name). The name is worked out before
+  the program starts and handed to it in `FINEWINE_PROCESS_NAME`. Windows' own programs keep the
+  plain loader. `FINEWINE_DOCK_NAMES=0` turns it off.
+- `0023-winemac-one-switch-for-the-metal-hud.patch`: the system's Metal HUD menu item, View >
+  Show/Hide Metal HUD and the shortcuts (Control-Command-H, Option-F12) are one switch; the
+  system's item did nothing before, once the layers had a HUD setting of their own.
 - `0022-winemac-command-c-v-x-a-z-as-the-control-combinations.patch`: the Mac's copy, paste,
   cut, select-all and undo chords reach Windows programs as Control with the key.
   `FINEWINE_COMMAND_SHORTCUTS=0` turns it off.
