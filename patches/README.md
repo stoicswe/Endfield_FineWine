@@ -181,6 +181,9 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
   private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
   in a command list, to be carried out by MoltenVK as MetalFX.
+- `0022-winemac-command-c-v-x-a-z-as-the-control-combinations.patch`: the Mac's copy, paste,
+  cut, select-all and undo chords reach Windows programs as Control with the key.
+  `FINEWINE_COMMAND_SHORTCUTS=0` turns it off.
 - `0021-server-report-a-connected-socket-s-real-local-port.patch`: `getsockname()` on a socket
   that was connected without being bound returned port 0 on macOS. libcurl's loopback socket
   pair check then failed, and with it every name lookup of a Unity game.
