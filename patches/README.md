@@ -186,6 +186,12 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
   private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
   in a command list, to be carried out by MoltenVK as MetalFX.
+- `0025-winemac-a-display-with-a-camera-housing-is-the-part-below-it.patch`: with full-screen
+  windows in a Space of their own, a display with a camera housing is reported without the rows
+  the housing is in (3024x1898 on a 14-inch MacBook Pro) and Windows' screen coordinates start
+  below them. A game that sizes its window to "the display" then fits its Space exactly; before,
+  the bottom of the picture was cut off and clicks landed 33 points low.
+  `FINEWINE_KEEP_CAMERA_ROWS=1` turns it off.
 - `0024-ntdll-winemac-start-each-program-from-a-bundle-of-its-own-name.patch`: the Dock labels a
   program with the name of the app bundle its executable is in, so every program said "wine" or
   "FineWine Game" there whatever `0017` told the rest of macOS. A program is now started through
@@ -291,5 +297,9 @@ Applied by `scripts/build-fex.sh` to FEX at the commit pinned in that script.
   (`patches/moltenvk/0004`), for Direct3D 12 through Wine's vkd3d (`patches/runtime/0009`).
 - `0003-winemetal-tell-finewine-when-a-program-starts-rendering.patch` leaves the same marker
   as runtime patch 0011 when a program starts using Direct3D 10 or 11.
+- `0004-d3d11-upscale-a-picture-smaller-than-its-window-with-metalfx.patch`: a swap chain whose
+  buffers are smaller than its window is in display pixels (by 5% to 4x) is upscaled to the
+  window's pixels with MetalFX's spatial scaler, instead of being stretched by the window
+  server. `FINEWINE_METALFX_AUTO=0` turns it off.
 - `build-arm64ec-finewine.txt` is the meson cross file `scripts/build-dxmt.sh` builds DXMT with.
   It is DXMT's own ARM64EC cross file plus one linker flag (see the comment in the file).

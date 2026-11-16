@@ -317,4 +317,14 @@ final class PrefixSettingsTests: XCTestCase {
         settings.roundedWindows = false
         XCTAssertTrue(settings.environmentVariables().contains { $0.0 == "FINEWINE_ROUNDED_WINDOWS" && $0.1 == "0" })
     }
+
+    func testMetalFXUpscalingIsOnUnlessTurnedOff() throws {
+        var settings = PrefixSettings()
+        XCTAssertFalse(settings.environmentVariables().contains { $0.0 == "FINEWINE_METALFX_AUTO" })
+        settings.metalFXUpscaling = false
+        XCTAssertTrue(settings.environmentVariables().contains { $0.0 == "FINEWINE_METALFX_AUTO" && $0.1 == "0" })
+        // settings saved before the switch existed have it on
+        let old = try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8))
+        XCTAssertTrue(old.metalFXUpscaling)
+    }
 }

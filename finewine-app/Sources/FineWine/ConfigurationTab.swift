@@ -75,6 +75,11 @@ struct ConfigurationTab: View {
                     Text("Programs draw at the display's real pixel resolution, so they are as sharp as Mac apps. Turn it off if a program runs too slowly at full resolution.")
                 }
                 Divider()
+                Toggle(isOn: $draft.metalFXUpscaling) {
+                    Text("Sharpen lower resolutions with MetalFX")
+                    Text("When a Direct3D 10 or 11 game draws fewer pixels than its window has (a lower resolution chosen in the game, or high-resolution mode off), the picture is upscaled to the display's pixels with MetalFX instead of being stretched. Games using their own upscaler are left alone.")
+                }
+                Divider()
                 Toggle(isOn: $draft.automaticDPI) {
                     Text("Scale automatically")
                     Text(draft.retinaMode

@@ -218,6 +218,9 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// Give windows that have no Mac title bar (launchers, games in a window) a Mac window's
     /// round corners.
     public var roundedWindows: Bool = true
+    /// Upscale a Direct3D 10 or 11 picture that is smaller than its window to the window's
+    /// display pixels with MetalFX, instead of leaving the stretch to the window server.
+    public var metalFXUpscaling: Bool = true
 
     /// The PCI ids reported when `reportNvidiaGPU` is on: NVIDIA, and its GeForce RTX 5080.
     public static let reportedGPUVendorID: UInt16 = 0x10DE
@@ -259,6 +262,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         gameMode = try c.decodeIfPresent(Bool.self, forKey: .gameMode) ?? d.gameMode
         steamForHoYoverse = try c.decodeIfPresent(Bool.self, forKey: .steamForHoYoverse) ?? d.steamForHoYoverse
         roundedWindows = try c.decodeIfPresent(Bool.self, forKey: .roundedWindows) ?? d.roundedWindows
+        metalFXUpscaling = try c.decodeIfPresent(Bool.self, forKey: .metalFXUpscaling) ?? d.metalFXUpscaling
         fullScreenMode = try c.decodeIfPresent(FullScreenMode.self, forKey: .fullScreenMode) ?? d.fullScreenMode
     }
 
@@ -373,6 +377,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         out.append(("FINEWINE_METAL_HUD", metalHUD ? "1" : "0"))
         out.append(("FINEWINE_FULLSCREEN", fullScreenMode.rawValue))
         if !roundedWindows { out.append(("FINEWINE_ROUNDED_WINDOWS", "0")) }
+        if !metalFXUpscaling { out.append(("FINEWINE_METALFX_AUTO", "0")) }
         if hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
         if dlssThroughMetalFX {
             // Lets nvngx.dll load for Direct3D 12 and Vulkan programs, whose DLSS calls it
