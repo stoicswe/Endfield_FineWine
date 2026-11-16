@@ -84,7 +84,7 @@ struct MenuBarView: View {
                 Image(systemName: "power")
             }
             .buttonStyle(.glass)
-            .help("Quit FineWine. Programs that are running keep running.")
+            .help("Quit FineWine. If programs are running, you are asked first, and they are closed.")
         }
     }
 }

@@ -195,6 +195,48 @@ final class AppModel: ObservableObject {
         running[prefix.id] = nil
     }
 
+    // MARK: Quitting
+
+    /// Decides whether FineWine may quit. With nothing running it may. Otherwise the user is
+    /// shown what is running and asked; on a yes every program is asked to close, and what has
+    /// not closed after five seconds is ended. Returns false when the user said no.
+    func confirmQuit() async -> Bool {
+        let all = prefixes
+        let service = UncheckedBox(service)
+        let runningNow = await Task.detached(priority: .userInitiated) {
+            all.compactMap { prefix -> (Prefix, [String])? in
+                let names = service.value.runningProgramNames(in: prefix)
+                return names.isEmpty ? nil : (prefix, names)
+            }
+        }.value
+        guard !runningNow.isEmpty else { return true }
+
+        let count = runningNow.reduce(0) { $0 + $1.1.count }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = count == 1 ? "Quit FineWine and close 1 running program?"
+                                       : "Quit FineWine and close \(count) running programs?"
+        let list = runningNow.map { prefix, names in
+            names.count == 1 && names[0] == prefix.name ? "•  \(prefix.name)"
+                                                        : "•  \(prefix.name): " + names.joined(separator: ", ")
+        }.joined(separator: "\n")
+        alert.informativeText = "These are still running:\n\n\(list)\n\nThey will be asked to close. Any that have not closed after 5 seconds are ended, and unsaved work in them is lost."
+        alert.addButton(withTitle: "Close and Quit")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate()
+        guard alert.runModal() == .alertFirstButtonReturn else { return false }
+
+        let token = StatusSplash.shared.show(title: "Quitting FineWine",
+                                             message: count == 1 ? "Closing 1 program…" : "Closing \(count) programs…")
+        let toClose = runningNow.map(\.0)
+        _ = await Task.detached(priority: .userInitiated) {
+            service.value.closeEverything(in: toClose, grace: 5).map(\.id)
+        }.value
+        StatusSplash.shared.hide(token)
+        running.removeAll()
+        return true
+    }
+
     func wineboot(_ action: WinebootAction, in prefix: Prefix, status: String) async {
         _ = await work(on: prefix.id, status, failure: "Wine reported a problem", splash: true) {
             try $0.runWineboot(action, in: prefix)

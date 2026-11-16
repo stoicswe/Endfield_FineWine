@@ -7,6 +7,7 @@ public struct PrefixService {
     /// How processes are listed and killed for `forceShutDown`. Replaced in tests.
     public var findProcesses: @Sendable (URL) -> [Int32] = { PrefixProcesses.systemPIDs(prefixDirectory: $0) }
     public var killProcess: @Sendable (Int32) -> Void = { _ = kill($0, SIGKILL) }
+    public var commandsOfProcesses: @Sendable ([Int32]) -> [String] = { RunningPrograms.systemCommands(of: $0) }
 
     public let paths: FineWinePaths
     public let prefixes: PrefixStore
@@ -154,6 +155,33 @@ public struct PrefixService {
         let left = findProcesses(prefix.directory)
         left.forEach(killProcess)
         return left.count
+    }
+
+    /// The programs running in the prefix right now, by name; empty when there are none
+    /// (Wine's own background processes do not count).
+    public func runningProgramNames(in prefix: Prefix) -> [String] {
+        RunningPrograms.names(commands: commandsOfProcesses(findProcesses(prefix.directory)),
+                              programs: prefix.metadata.programs)
+    }
+
+    /// Closes everything in the given prefixes: every program is asked to close, as a Windows
+    /// shut down asks; whatever is still there once `grace` seconds have passed is ended
+    /// without asking. Returns the prefixes that had to be forced.
+    @discardableResult
+    public func closeEverything(in prefixes: [Prefix], grace: TimeInterval = 5,
+                                pause: @Sendable (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) -> [Prefix] {
+        for prefix in prefixes { try? shutDown(prefix) }
+        var waited: TimeInterval = 0
+        let step: TimeInterval = 0.25
+        var left = prefixes
+        while true {
+            left = left.filter { !findProcesses($0.directory).isEmpty }
+            if left.isEmpty || waited >= grace { break }
+            pause(step)
+            waited += step
+        }
+        for prefix in left { _ = try? forceShutDown(prefix) }
+        return left
     }
 
     // MARK: Programs
