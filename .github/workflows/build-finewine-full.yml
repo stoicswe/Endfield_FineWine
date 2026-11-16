@@ -8,6 +8,9 @@
 #   MoltenVK (FineWine flavour) · the llvm-mingw compiler · Wine with patches/runtime ·
 #   FEX · DXMT (which needs LLVM 15, built once and cached) · FineWine.app with the lot inside
 #
+# Every source it downloads is pinned to an exact commit in finewine-sources.lock, and the
+# build stops if what it fetched is not that; Homebrew's tools are checked by major version.
+#
 # It takes hours, so nothing runs it on a push: beta.yml calls it for beta builds, and it can
 # be run by hand (Actions → build-finewine-full → Run workflow) to try the build without
 # publishing anything.
@@ -119,16 +122,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/llvm-mingw
-          key: llvm-mingw-${{ runner.arch }}-${{ hashFiles('scripts/build-fex.sh') }}
+          key: llvm-mingw-${{ runner.arch }}-${{ hashFiles('finewine-sources.lock', 'scripts/build-fex.sh') }}
 
       # LLVM 15's static libraries, which DXMT links: about 20 minutes on a fast Mac, far
       # more here, and they change only when the script does.
-      - name: Cache LLVM 15 for DXMT
+      # Restored and saved as two steps, so that it is kept as soon as it is built: a plain
+      # cache step saves only when the whole job succeeds, and a later failure would mean
+      # building it all over again next time.
+      - name: Restore LLVM 15 for DXMT
         id: llvm
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: build/dxmt-llvm
-          key: dxmt-llvm15-${{ runner.arch }}-${{ steps.toolchain.outputs.hash }}-${{ hashFiles('scripts/build-dxmt.sh') }}
+          key: dxmt-llvm15-${{ runner.arch }}-${{ steps.toolchain.outputs.hash }}-${{ hashFiles('finewine-sources.lock', 'scripts/build-dxmt.sh') }}
 
       - name: Build LLVM 15 for DXMT
         if: steps.llvm.outputs.cache-hit != 'true'
@@ -140,6 +146,13 @@ jobs:
           # tree are two gigabytes the rest of the build can use.
           rm -rf build/dxmt-llvm-project build/dxmt-llvm-build
           df -h "$RUNNER_WORKSPACE" | tail -1
+
+      - name: Save LLVM 15 for DXMT
+        if: steps.llvm.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/dxmt-llvm
+          key: ${{ steps.llvm.outputs.cache-primary-key }}
 
       - name: Build the runtime and FineWine.app
         shell: bash

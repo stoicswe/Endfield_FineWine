@@ -31,8 +31,8 @@
 #      automatically among /Applications/Xcode*.app if unset).
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+. "$REPO/scripts/lib/sources-lock.sh"; lock_load   # DXMT_COMMIT, DXMT_LLVM_TAG, DXMT_LLVM_COMMIT
 BUILD_DIR="${BUILD_DIR:-$REPO/build}"
-DXMT_COMMIT="${DXMT_COMMIT:-0df8610}"
 RUNTIME_DIR="${RUNTIME_DIR:-$BUILD_DIR/finewine-runtime}"
 SRC="$BUILD_DIR/dxmt-src"
 OBJ="$BUILD_DIR/dxmt-build"
@@ -60,7 +60,11 @@ cmd_llvm(){
   if [ -f "$LLVM/lib/libLLVMCore.a" ]; then echo "LLVM 15: already built in $LLVM"; return; fi
   log "Building LLVM 15 static libraries (once, about 20 minutes)"
   rm -rf "$BUILD_DIR/dxmt-llvm-project" "$BUILD_DIR/dxmt-llvm-build"
-  git clone -q --depth 1 --branch llvmorg-15.0.7 https://github.com/llvm/llvm-project.git "$BUILD_DIR/dxmt-llvm-project"
+  # The tag is fetched by name and then checked against the pinned commit.
+  git init -q "$BUILD_DIR/dxmt-llvm-project"
+  git -C "$BUILD_DIR/dxmt-llvm-project" fetch -q --depth 1 https://github.com/llvm/llvm-project.git "refs/tags/$DXMT_LLVM_TAG"
+  git -C "$BUILD_DIR/dxmt-llvm-project" checkout -q FETCH_HEAD
+  lock_check "LLVM $DXMT_LLVM_TAG" "$(git -C "$BUILD_DIR/dxmt-llvm-project" rev-parse HEAD)" "$DXMT_LLVM_COMMIT"
   cmake -B "$BUILD_DIR/dxmt-llvm-build" -S "$BUILD_DIR/dxmt-llvm-project/llvm" -G Ninja \
     -DCMAKE_INSTALL_PREFIX="$LLVM" -DCMAKE_OSX_ARCHITECTURES=arm64 -DLLVM_HOST_TRIPLE=arm64-apple-darwin \
     -DLLVM_ENABLE_ASSERTIONS=On -DLLVM_ENABLE_ZSTD=Off -DCMAKE_BUILD_TYPE=Release \
@@ -80,6 +84,7 @@ cmd_fetch(){
   git -C "$SRC" fetch -q --depth 1 https://github.com/3Shain/dxmt.git "$DXMT_COMMIT" 2>/dev/null \
     || { git -C "$SRC" fetch -q https://github.com/3Shain/dxmt.git && true; }
   git -C "$SRC" checkout -q "$DXMT_COMMIT" 2>/dev/null || git -C "$SRC" checkout -q FETCH_HEAD
+  lock_check DXMT "$(git -C "$SRC" rev-parse HEAD)" "$DXMT_COMMIT"
   git -C "$SRC" submodule update --init --depth 1 >/dev/null
   echo "source: $SRC ($(git -C "$SRC" log -1 --format=%h))"
 }

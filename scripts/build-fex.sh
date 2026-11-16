@@ -23,16 +23,14 @@
 # Env: BUILD_DIR (default ./build), FEX_COMMIT, RUNTIME_DIR (default build/finewine-runtime).
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+. "$REPO/scripts/lib/sources-lock.sh"; lock_load   # FEX_COMMIT, MINGW_VERSION, MINGW_SHA256
 BUILD_DIR="${BUILD_DIR:-$REPO/build}"
-FEX_COMMIT="${FEX_COMMIT:-ea43314f040633c76fb5891ff31d8a7c3dc533b8}"
 RUNTIME_DIR="${RUNTIME_DIR:-$BUILD_DIR/finewine-runtime}"
 SRC="$BUILD_DIR/fex-src"
 OBJ="$BUILD_DIR/fex-arm64ec"
 MINGW="$BUILD_DIR/llvm-mingw"
-MINGW_VERSION="20260908"
 MINGW_ARCHIVE="llvm-mingw-$MINGW_VERSION-ucrt-macos-universal.tar.xz"
 MINGW_URL="https://github.com/mstorsjo/llvm-mingw/releases/download/$MINGW_VERSION/$MINGW_ARCHIVE"
-MINGW_SHA256="d1dc5d1ecf3a3ced5ed5544c72f1acd0c8e84eb3024d520ecc6b143eec62a149"
 
 log(){ printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 die(){ echo "ERROR: $*" >&2; exit 1; }
@@ -89,6 +87,7 @@ cmd_fetch(){
   rm -rf "$SRC"; git init -q "$SRC"
   git -C "$SRC" fetch -q --depth 1 https://github.com/FEX-Emu/FEX.git "$FEX_COMMIT"
   git -C "$SRC" checkout -q FETCH_HEAD
+  lock_check FEX "$(git -C "$SRC" rev-parse HEAD)" "$FEX_COMMIT"
   git -C "$SRC" submodule update --init --depth 1 >/dev/null
   echo "source: $SRC"
 }

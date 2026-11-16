@@ -37,9 +37,10 @@
 #      instead of cloning; it is copied, never modified).
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+. "$REPO/scripts/lib/sources-lock.sh"; lock_load   # WINE_TAG, WINE_COMMIT, BREW_*_MAJOR
 BUILD_DIR="${BUILD_DIR:-$REPO/build}"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"
-WINE_TAG="${WINE_TAG:-wine-11.21}"
+# WINE_TAG and WINE_COMMIT come from finewine-sources.lock
 RUNTIME_VERSION="${RUNTIME_VERSION:-1}"
 SRC="$BUILD_DIR/finewine-runtime-src"
 OBJ="$BUILD_DIR/finewine-runtime-build"
@@ -65,6 +66,14 @@ toolchain(){
 cmd_deps(){
   log "Installing build dependencies with Homebrew"
   "$BREW" install bison pkgconf llvm lld freetype gnutls sdl2 molten-vk
+  check_tools
+}
+
+# The Homebrew tools that shape what is built, against the major versions in the lock file.
+check_tools(){
+  lock_check_brew llvm "${BREW_LLVM_MAJOR:-}"
+  lock_check_brew lld "${BREW_LLD_MAJOR:-}"
+  lock_check_brew bison "${BREW_BISON_MAJOR:-}"
 }
 
 cmd_fetch(){
@@ -80,7 +89,8 @@ cmd_fetch(){
     git -C "$SRC" fetch -q --depth 1 https://gitlab.winehq.org/wine/wine.git "refs/tags/$WINE_TAG"
     git -C "$SRC" checkout -q FETCH_HEAD
   fi
-  echo "source: $SRC ($(cat "$SRC/VERSION"))"
+  [ -n "${WINE_SRC_DIR:-}" ] || lock_check "Wine $WINE_TAG" "$(git -C "$SRC" rev-parse HEAD)" "${WINE_COMMIT:-}"
+  echo "source: $SRC ($(cat "$SRC/VERSION"), $(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo 'not a git tree'))"
 }
 
 patch_series(){
@@ -110,6 +120,7 @@ cmd_apply(){
 
 cmd_configure(){
   log "Configuring"
+  check_tools
   [ -d "$SRC" ] || die "run 'fetch' first"
   toolchain
   local hb; hb="$("$BREW" --prefix)"

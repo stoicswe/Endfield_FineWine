@@ -15,10 +15,10 @@ diff --git a/dlls/winemac.drv/cocoa_app.m b/dlls/winemac.drv/cocoa_app.m
 @@ -19,6 +19,7 @@
   */
  
- #include <dlfcn.h>
-+#import <objc/runtime.h>
  #import "config.h"
  #import "macdrv.h"
+ #include <dlfcn.h>
++#import <objc/runtime.h>
  
 @@ -356,8 +357,10 @@
              submenu = [[[NSMenu alloc] initWithTitle:@"View"] autorelease];

@@ -20,8 +20,11 @@
 
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-MVK_TAG="${MVK_TAG:-v1.4.2}"
 MVK_FLAVOR="${MVK_FLAVOR:-}"
+# FineWine's MoltenVK is pinned by finewine-sources.lock (MVK_TAG, MVK_COMMIT); the patcher's
+# keeps the default below.
+if [ "$MVK_FLAVOR" = "finewine" ]; then . "$REPO/scripts/lib/sources-lock.sh"; lock_load; fi
+MVK_TAG="${MVK_TAG:-v1.4.2}"
 case "$MVK_FLAVOR" in
   "") SFX="" ;;
   finewine) SFX="-finewine"; MVK_ARCH="${MVK_ARCH:-aarch64}" ;;
@@ -68,6 +71,9 @@ cmd_fetch() {
   ui_run "$BUILD_DIR/clone-moltenvk.log" "cloning MoltenVK $MVK_TAG (depth 1)" \
     sh -c "$CLONE" ui_sh "https://github.com/KhronosGroup/MoltenVK.git" "refs/tags/$MVK_TAG" "$MVK_SRC" \
     || { echo "MoltenVK clone failed — see $BUILD_DIR/clone-moltenvk.log"; exit 1; }
+  if [ -n "${MVK_COMMIT:-}" ]; then
+    lock_check "MoltenVK $MVK_TAG" "$(git -C "$MVK_SRC" rev-parse HEAD)" "$MVK_COMMIT"
+  fi
   ui_run "$BUILD_DIR/clone-spirv-cross.log" "cloning SPIRV-Cross (pinned revision, depth 1)" \
     sh -c "$CLONE" ui_sh "https://github.com/KhronosGroup/SPIRV-Cross.git" \
     "$(cat "$rev/SPIRV-Cross_repo_revision")" "$SPVC_SRC" \

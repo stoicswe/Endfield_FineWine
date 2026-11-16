@@ -1,0 +1,48 @@
+# finewine-sources.lock — exactly what FineWine's runtime and app are built from.
+#
+# Every source the FineWine build downloads is named here by an exact commit (a tag can be
+# moved; a commit cannot), and the one prebuilt download by its checksum. The build scripts
+# read this file (scripts/lib/sources-lock.sh) and stop if what they fetched is not what is
+# named here. To move to a newer version of something, change its line here, build, run
+# scripts/test-finewine-runtime.sh, and commit the change with the patches it needed.
+#
+# Sources reached through these are pinned by them in turn: FEX's and DXMT's submodules by
+# their commits, and MoltenVK's SPIRV-Cross, Vulkan-Headers and other dependencies by the
+# ExternalRevisions files in its commit.
+#
+# For a one-off build of something else, set the variable in the environment (WINE_TAG=…
+# WINE_COMMIT=…) or set FINEWINE_UNLOCKED=1, which turns the checks into warnings.
+#
+# Format: KEY=value, one per line; # starts a comment.
+
+# Wine (scripts/build-finewine-runtime.sh), from gitlab.winehq.org/wine/wine
+WINE_TAG=wine-11.21
+WINE_COMMIT=2528aff26208257fdbf980666a4f0e66d47563ce
+
+# FEX, x64 emulation (scripts/build-fex.sh), from github.com/FEX-Emu/FEX
+FEX_COMMIT=ea43314f040633c76fb5891ff31d8a7c3dc533b8
+
+# llvm-mingw, the Windows compiler for FEX and DXMT (scripts/build-fex.sh toolchain),
+# a release archive from github.com/mstorsjo/llvm-mingw
+MINGW_VERSION=20260908
+MINGW_SHA256=d1dc5d1ecf3a3ced5ed5544c72f1acd0c8e84eb3024d520ecc6b143eec62a149
+
+# DXMT, Direct3D 10/11 on Metal (scripts/build-dxmt.sh), from github.com/3Shain/dxmt
+DXMT_COMMIT=0df86108348bab2aaa5c4610a5eb63a9de9047ac
+
+# LLVM 15, whose libraries DXMT links (scripts/build-dxmt.sh llvm), from github.com/llvm/llvm-project
+DXMT_LLVM_TAG=llvmorg-15.0.7
+DXMT_LLVM_COMMIT=8dfdcc7b7bf66834a761bd8de445840ef68e4d1a
+
+# MoltenVK, FineWine flavour (MVK_FLAVOR=finewine scripts/build-moltenvk.sh), from
+# github.com/KhronosGroup/MoltenVK. (The patcher's MoltenVK is not governed by this file.)
+MVK_TAG=v1.4.2
+MVK_COMMIT=db66022459ffb663aa2b50f6b018bc2e124f5edf
+
+# Build tools from Homebrew. Homebrew offers only its newest version of each, so these cannot
+# be pinned the way the sources are; the build checks the major version instead and stops on
+# a different one. llvm and lld compile Wine's Windows side, so a new major version of them
+# changes the code that is built and needs a test run before it is accepted here.
+BREW_LLVM_MAJOR=23
+BREW_LLD_MAJOR=23
+BREW_BISON_MAJOR=3
