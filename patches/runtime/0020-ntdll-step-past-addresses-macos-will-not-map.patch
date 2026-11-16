@@ -1,0 +1,27 @@
+ntdll: step past addresses macOS will not map when looking for free memory
+
+On arm64 macOS everything below the program's own image is off limits, starting at 4 GB, and
+mach_vm_map says KERN_INVALID_ADDRESS for it. That was reported as out of memory, which ends a
+search for free memory at its first step. Searches "above 4 GB" (a thread's emulator stack, a
+library wanting a low address) begin exactly there, so once the area set aside at start-up was
+used up they failed. It is now reported as taken, and the search steps on.
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -581,7 +581,14 @@
+     }
+     else
+     {
+-        errno = (ret == KERN_NO_SPACE ? EEXIST : ENOMEM);
++        /* FineWine: KERN_INVALID_ADDRESS is "taken" too. On arm64 macOS everything below the
++         * program's own image is off limits (the zero page is stretched up to it), and that
++         * starts at 4 GB, exactly where a search for memory "above 4 GB" begins: for a thread's
++         * emulator stack, for a library that wants a low address. Reported as out of memory,
++         * it ended the search at its first step, and once the area set aside at start-up was
++         * used up no thread could be created any more (a game's "getaddrinfo() thread failed
++         * to start", and with it all of its networking). The caller steps on instead. */
++        errno = (ret == KERN_NO_SPACE || ret == KERN_INVALID_ADDRESS) ? EEXIST : ENOMEM;
+         ptr = MAP_FAILED;
+     }
+ #else

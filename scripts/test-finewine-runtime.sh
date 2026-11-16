@@ -116,6 +116,17 @@ else
   else
     echo "  - 32-bit stand-in check skipped: could not build its test programs"
   fi
+  # The loopback socket pair libcurl makes before every name lookup: a connected socket must
+  # know its own port. Without it a Unity game cannot reach any server.
+  if "$MINGW" -O1 -o "$WORK/socketpair-x64.exe" "$REPO/tests/runtime/socketpair.c" -lws2_32 >"$WORK/socketpair-build.log" 2>&1 \
+     && "$REPO/build/llvm-mingw/bin/aarch64-w64-mingw32-clang" -O1 -o "$WORK/socketpair-arm64.exe" "$REPO/tests/runtime/socketpair.c" -lws2_32 >>"$WORK/socketpair-build.log" 2>&1; then
+    one="$("$RT/bin/wine" "$WORK/socketpair-arm64.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    two="$("$RT/bin/wine" "$WORK/socketpair-x64.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$one|$two" in "socketpair: ok|socketpair: ok") pass "a connected local socket pair checks out the way libcurl checks it (real ports on both ends): ARM64 and x64" ;;
+      *) fail "local socket pair (ARM64: '$one', x64: '$two')" ;; esac
+  else
+    fail "could not build tests/runtime/socketpair.c"; tail -n 3 "$WORK/socketpair-build.log"
+  fi
   # Chromium's switches go to a process that has Chromium in it, and to nothing else: a
   # launcher's folder also holds programs such as 7z.exe, which fail on switches they do not know.
   if mkdir -p "$WORK/cef" && : >"$WORK/cef/libcef.dll" && : >"$WORK/cef/chrome_100_percent.pak" \

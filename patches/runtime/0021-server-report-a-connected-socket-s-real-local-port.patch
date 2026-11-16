@@ -1,0 +1,47 @@
+server: report a connected socket's real local port
+
+A socket that is connected without being bound has its local address read back right after
+connect() is called. On macOS the port is not chosen yet while the connection is in progress,
+so 0 was recorded and getsockname() returned it for good. libcurl compares the two ends of the
+loopback socket pair it makes before every name lookup, found port 0, and failed with
+"getaddrinfo() thread failed to start": a Unity game could reach no server at all. The port is
+now asked for again when it is wanted. tests/runtime/socketpair.c checks it.
+
+diff --git a/server/sock.c b/server/sock.c
+--- a/server/sock.c
++++ b/server/sock.c
+@@ -3146,6 +3146,34 @@
+         {
+             set_error( STATUS_INVALID_PARAMETER );
+             return;
++        }
++
++        /* FineWine: a socket that was never bound gets its local address when it connects,
++         * and that is read back right after connect() is called. On macOS the port has not
++         * been chosen yet at that moment when the connection is still in progress, so 0 was
++         * recorded for good. libcurl checks the two ends of the loopback socket pair it makes
++         * before every name lookup against each other, found port 0, and could not resolve
++         * anything ("getaddrinfo() thread failed to start"). Asked again here, when it is known. */
++        if ((sock->addr.addr.sa_family == WS_AF_INET && !sock->addr.in.sin_port) ||
++            (sock->addr.addr.sa_family == WS_AF_INET6 && !sock->addr.in6.sin6_port))
++        {
++            union unix_sockaddr unix_addr;
++            union win_sockaddr win_addr;
++            socklen_t unix_len = sizeof(unix_addr);
++            int unix_fd = get_unix_fd( sock->fd );
++
++            if (unix_fd >= 0 && !getsockname( unix_fd, &unix_addr.addr, &unix_len ) &&
++                sockaddr_from_unix( &unix_addr, &win_addr.addr, sizeof(win_addr) ) &&
++                win_addr.addr.sa_family == sock->addr.addr.sa_family)
++            {
++                if (win_addr.addr.sa_family == WS_AF_INET)
++                {
++                    sock->addr.in.sin_port = win_addr.in.sin_port;
++                    if (!sock->addr.in.sin_addr.WS_s_addr) sock->addr.in.sin_addr = win_addr.in.sin_addr;
++                }
++                else sock->addr.in6.sin6_port = win_addr.in6.sin6_port;
++            }
++            clear_error();  /* get_unix_fd may have set one; the stored address is still an answer */
+         }
+ 
+         if (get_reply_max_size() < sock->addr_len)
