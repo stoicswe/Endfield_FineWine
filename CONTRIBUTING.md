@@ -134,6 +134,16 @@ Notes:
     mirrors its title, `nightly_<CrossOver version>.<UTC date>_<commit>`, so each snapshot
     keeps its own assets; see
     [`.github/workflows/nightly.yml`](.github/workflows/nightly.yml).
+-   Betas are separate again: a push to a `beta/<anything>` branch (or **Actions → beta → Run
+    workflow** on one) builds that branch the way a nightly builds `main`, builds FineWine.app
+    with its Wine runtime inside as well (from source, which takes hours;
+    [`.github/workflows/build-finewine-full.yml`](.github/workflows/build-finewine-full.yml),
+    which can also be run by hand without publishing anything), and publishes a
+    prerelease titled `Endfield FW <UTC date as YYYYMMDD> Beta <number>`, tagged
+    `beta_<YYYYMMDD>.<number>`. The number counts betas across all beta branches and carries on
+    from the highest one there is; a commit that already has a beta is not built again. Betas
+    never count as a nightly's baseline, are never the latest release, and are not announced;
+    see [`.github/workflows/beta.yml`](.github/workflows/beta.yml).
 
 ### Discord announcements (optional)
 

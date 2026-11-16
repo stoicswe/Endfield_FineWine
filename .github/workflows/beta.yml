@@ -1,0 +1,302 @@
+# beta.yml — beta pre-releases, built from `beta/*` branches.
+#
+# A beta is built like a nightly (the same build-wine reusable workflow, the same patcher
+# assets) but from a branch someone pushed on purpose, and it is numbered instead of being
+# stamped with a commit. It also carries FineWine.app with its Wine runtime inside, built from
+# source by build-finewine-full.yml: the app a user downloads, unzips and runs. It does not
+# touch the nightlies:
+#   - its tags are `beta_<UTC date>.<number>`, which the nightly's "what changed since the last
+#     nightly" lookup (`nightly_*`, `nightly-*`) never matches;
+#   - it has its own concurrency group, so a beta and a nightly neither queue behind nor
+#     cancel each other;
+#   - it is published as a pre-release, so it is never "the latest release", and the issue
+#     forms' version lists (full releases only) do not pick it up;
+#   - nothing is announced on Bluesky.
+#
+# Pipeline:
+#   1. `plan`    — gives the build its number: one more than the highest number among the
+#      existing `beta_*` tags, counted across all beta branches and all dates. A commit that
+#      already has a beta keeps that beta's number (a re-run does not publish a second one).
+#   2. `build`    — the build-wine reusable workflow at the pushed commit (the patcher and
+#      its Wine modules), and beside it
+#      `finewine` — build-finewine-full.yml (FineWine.app with its runtime; hours).
+#      If either fails nothing is published and the number is not used up.
+#   3. `release` — publishes FineWine.app's zip and the `patcher-app` and `wine-modules`
+#      artifacts as a new GitHub pre-release:
+#          title  Endfield FW <UTC date as YYYYMMDD> Beta <number>     e.g. Endfield FW 20261115 Beta 3
+#          tag    beta_<YYYYMMDD>.<number>                             e.g. beta_20261115.3
+#
+# Triggers: a push to any `beta/**` branch that changes something the build is made from, or
+# a manual run on such a branch (Actions → beta → Run workflow, choosing the branch).
+
+name: beta
+
+on:
+  push:
+    branches:
+      - 'beta/**'
+    paths:
+      - 'patches/**'
+      - 'scripts/**'
+      - 'patcher-app/**'
+      - 'finewine-app/**'
+      - 'runtime-extras/**'
+      - '.github/workflows/**'
+  workflow_dispatch: # manual run: always builds and publishes, on the branch it is run from
+
+permissions:
+  contents: write # needed to create the release and its tag
+
+concurrency:
+  # One beta at a time, whatever the branch, so that two never work out the same number.
+  # Nothing is cancelled: every pushed commit that should get a beta gets one, in order.
+  group: beta
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Number the beta
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      is_beta_branch: ${{ steps.plan.outputs.is_beta_branch }}
+      number: ${{ steps.plan.outputs.number }}
+      existing_tag: ${{ steps.plan.outputs.existing_tag }}
+      commits: ${{ steps.plan.outputs.commits }}
+      short_sha: ${{ steps.plan.outputs.short_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history and tags: the number and the commit list come from them
+
+      - name: Plan
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "event: $GITHUB_EVENT_NAME / ref: $GITHUB_REF / head: $(git rev-parse --short HEAD)"
+          echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+          # A manual run can be started on any branch; only beta branches publish betas.
+          case "$GITHUB_REF" in
+            refs/heads/beta/*) echo "is_beta_branch=true" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "is_beta_branch=false" >> "$GITHUB_OUTPUT"
+              echo "::error::Betas are built from beta/* branches; this run is on ${GITHUB_REF#refs/heads/}."
+              exit 1 ;;
+          esac
+
+          # Tags are beta_<YYYYMMDD>.<number>. The number counts betas, not days: it carries
+          # on from the highest one there is, whatever its date or branch.
+          HIGHEST=0
+          PREVIOUS=""
+          EXISTING=""
+          while read -r tag; do
+            [ -n "$tag" ] || continue
+            n="${tag##*.}"
+            case "$n" in ''|*[!0-9]*) continue ;; esac
+            if [ "$(git rev-parse "${tag}^{}")" = "$(git rev-parse HEAD)" ]; then EXISTING="$tag"; fi
+            if [ "$n" -gt "$HIGHEST" ]; then HIGHEST="$n"; PREVIOUS="$tag"; fi
+          done < <(git for-each-ref 'refs/tags/beta_*' --format='%(refname:short)')
+
+          if [ -n "$EXISTING" ]; then
+            NUMBER="${EXISTING##*.}"
+            echo "this commit already has $EXISTING -> keeping number $NUMBER"
+          else
+            NUMBER=$((HIGHEST + 1))
+            echo "highest beta so far: $HIGHEST -> this is beta $NUMBER"
+          fi
+          echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
+          echo "existing_tag=$EXISTING" >> "$GITHUB_OUTPUT"
+
+          # What the notes list: the commits since the previous beta when this branch carries
+          # on from it, otherwise the commits this branch has that main does not.
+          BASE=""
+          if [ -n "$PREVIOUS" ] && [ "$PREVIOUS" != "$EXISTING" ] && git merge-base --is-ancestor "${PREVIOUS}^{}" HEAD; then
+            BASE="$(git rev-parse "${PREVIOUS}^{}")"
+            echo "commits since $PREVIOUS"
+          elif git rev-parse -q --verify refs/remotes/origin/main >/dev/null; then
+            BASE="$(git merge-base refs/remotes/origin/main HEAD)"
+            echo "commits not on main (since $BASE)"
+          fi
+          {
+            echo "commits<<EOT"
+            if [ -n "$BASE" ]; then git log --oneline --no-decorate "$BASE"..HEAD | head -n 200; fi
+            echo "EOT"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: echo "🧪 Beta ${{ steps.plan.outputs.number }} from \`${GITHUB_REF#refs/heads/}\` at \`${{ steps.plan.outputs.short_sha }}\`." >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Beta Wine build
+    needs: plan
+    # A commit that already has its beta is not built again.
+    if: needs.plan.outputs.is_beta_branch == 'true' && needs.plan.outputs.existing_tag == ''
+    uses: ./.github/workflows/build-wine.yml
+    with:
+      cx_version: "26.3.0"
+      runner: "xcode-27" # keep in step with nightly.yml
+      build_patcher_app: true
+      # What the patcher reports as its version, so a beta can be told from a nightly or a release.
+      app_version: beta-${{ needs.plan.outputs.number }}
+
+  finewine:
+    name: Beta FineWine.app
+    needs: plan
+    if: needs.plan.outputs.is_beta_branch == 'true' && needs.plan.outputs.existing_tag == ''
+    uses: ./.github/workflows/build-finewine-full.yml
+    with:
+      runner: "xcode-27"
+      # Blank on purpose: FineWine.app keeps the version its own build script gives it, and
+      # the beta's number is in the release it is attached to.
+      app_version: ""
+
+  release:
+    name: Beta pre-release
+    needs: [plan, build, finewine]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CX_VER: "26.3.0"
+      BETA_NUMBER: ${{ needs.plan.outputs.number }}
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          pattern: "*"
+          merge-multiple: true
+
+      - name: Checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -l assets
+          ( cd assets && sha256sum ./*.zip > SHA256SUMS.txt )
+
+      - name: Name the beta
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The date is the day the beta was built, in UTC.
+          DATE="$(date -u +%Y%m%d)"
+          echo "RELEASE_TAG=beta_${DATE}.${BETA_NUMBER}" >> "$GITHUB_ENV"
+          echo "RELEASE_TITLE=Endfield FW ${DATE} Beta ${BETA_NUMBER}" >> "$GITHUB_ENV"
+
+      - name: Write release notes
+        shell: bash
+        env:
+          NOTES_SHA: ${{ github.sha }}
+          NOTES_BRANCH: ${{ github.ref_name }}
+          NOTES_RUN_NUMBER: ${{ github.run_number }}
+          NOTES_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NOTES_CX_VER: ${{ env.CX_VER }}
+          NOTES_NUMBER: ${{ needs.plan.outputs.number }}
+          # multiline-capable: passed through the process environment, never inlined into the
+          # shell script, so commit subjects can't break quoting
+          NOTES_COMMITS: ${{ needs.plan.outputs.commits }}
+        run: |
+          set -euo pipefail
+          export NOTES_TITLE="$RELEASE_TITLE"
+          python3 - <<'PY'
+          import os
+
+          template = """## @@TITLE@@
+
+          > 🧪 **Beta @@NUMBER@@**, built from the `@@BRANCH@@` branch at `@@SHA@@` by
+          > [run #@@RUN_NUMBER@@](@@RUN_URL@@).
+          > A beta is a test build of work that is not on `main` yet. It has not been through
+          > the testing a release gets; expect rough edges, and please report what you find.
+
+          ### What's inside
+
+          | Asset | What it is |
+          |---|---|
+          | `FineWine-…zip` | **FineWine.app** — the menu bar app with its own Wine runtime inside. Unzip it, move it to Applications and open it (right-click → Open the first time: it is ad-hoc signed). Needs an Apple silicon Mac on macOS 26 or later; it does not need CrossOver or Rosetta. |
+          | `finewine-patcher-…zip` | **FineWine Patcher.app** — patches a copy of your CrossOver @@CX_VER@@ with the anti-cheat Wine modules and a patched MoltenVK (open it and follow the UI) |
+          | `finewine-wine-modules-…zip` | The three patched Wine modules alone — for `scripts/swap-into-crossover.sh` users |
+          | `SHA256SUMS.txt` | SHA-256 checksums of the assets |
+
+          The patcher and the Wine modules require CrossOver **@@CX_VER@@** (the Wine ABI must match), Apple silicon, macOS 15+ and Rosetta 2.
+
+          ### Commits in this beta
+
+          ```text
+          @@COMMITS@@
+          ```
+
+          ### Provenance & license
+
+          - Built on the `xcode-27` GitHub runner image (macOS 27.0 / Xcode 27.0; x86_64 Wine output under Rosetta).
+          - FineWine.app's runtime is built from source by `scripts/build-finewine.sh`: upstream Wine with this repo's `patches/runtime`, FEX with `patches/fex`, DXMT with `patches/dxmt` and MoltenVK with `patches/moltenvk`, each at the revision its build script pins, all at `@@SHA@@`. The runtime's own checks are not run in CI.
+          - CrossOver Wine source (for the patcher): [crossover-sources-@@CX_VER@@.tar.gz](https://media.codeweavers.com/pub/crossover/source/crossover-sources-@@CX_VER@@.tar.gz) + this repo's `patches/` at `@@SHA@@`.
+          - The patched Wine modules are **LGPL-2.1-or-later**; the bundled MoltenVK is **Apache-2.0**. The complete corresponding source is the CrossOver tarball above, the pinned MoltenVK revision, and this repo's `patches/` (see `patcher-app/README.md`).
+          """
+          # The template lives inside the workflow's literal block scalar, so strip the
+          # common leading indentation before writing it out.
+          lines = template.splitlines()
+          indent = min((len(l) - len(l.lstrip()) for l in lines if l.strip()), default=0)
+          template = "\n".join(l[indent:] if l.strip() else "" for l in lines) + "\n"
+
+          out = template
+          for key in ("TITLE", "NUMBER", "BRANCH", "SHA", "RUN_NUMBER", "RUN_URL", "CX_VER", "COMMITS"):
+              out = out.replace("@@" + key + "@@", os.environ.get("NOTES_" + key, ""))
+          if not os.environ.get("NOTES_COMMITS", "").strip():
+              out = out.replace("### Commits in this beta\n\n```text\n\n```\n\n", "")
+          with open("notes.md", "w") as f:
+              f.write(out)
+          print(out)
+          PY
+
+      - name: Publish the beta pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            # The same number on the same day: a re-run of this job after it had published.
+            # Published releases are left as they are.
+            echo "release $RELEASE_TAG already exists (re-run) -> keeping it"
+          else
+            echo "creating release $RELEASE_TAG at $GITHUB_SHA"
+            # gh creates the tag at --target when it doesn't exist yet. --latest=false: a beta
+            # must never be shown as the repository's latest release.
+            gh release create "$RELEASE_TAG" \
+              --prerelease \
+              --latest=false \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_TITLE" \
+              --notes-file notes.md \
+              assets/*.zip assets/SHA256SUMS.txt
+          fi
+
+          gh release view "$RELEASE_TAG" --json name,tagName,isPrerelease,assets --jq '{name, tagName, isPrerelease, assets: [.assets[].name]}'
+
+      - name: Summary
+        shell: bash
+        run: |
+          cat > summary.md <<'EOT'
+          ## Beta published
+
+          | | |
+          |---|---|
+          | Title | %TITLE% |
+          | Tag | %TAG% (pre-release) |
+          | Branch | `%BRANCH%` |
+          | Commit | `%SHA%` |
+          | Assets | FineWine.app zip · Patcher.app zip · modules zip · SHA256SUMS.txt |
+          | URL | %RELEASE_URL% |
+          EOT
+          sed -i \
+            -e "s|%TITLE%|$RELEASE_TITLE|g" \
+            -e "s|%TAG%|$RELEASE_TAG|g" \
+            -e "s|%BRANCH%|${{ github.ref_name }}|g" \
+            -e "s|%SHA%|${{ github.sha }}|g" \
+            -e "s|%RELEASE_URL%|${{ github.server_url }}/${{ github.repository }}/releases/tag/$RELEASE_TAG|g" \
+            summary.md
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"

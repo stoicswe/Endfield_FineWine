@@ -1,0 +1,236 @@
+# build-finewine-full.yml — FineWine.app with its Wine runtime inside: the app a user can
+# download, unzip and run.
+#
+# build-finewine.yml builds the app alone (minutes, on every pull request). This builds
+# everything the app runs Windows programs with, from source, with the one script a developer
+# uses for the same thing (scripts/build-finewine.sh all):
+#
+#   MoltenVK (FineWine flavour) · the llvm-mingw compiler · Wine with patches/runtime ·
+#   FEX · DXMT (which needs LLVM 15, built once and cached) · FineWine.app with the lot inside
+#
+# It takes hours, so nothing runs it on a push: beta.yml calls it for beta builds, and it can
+# be run by hand (Actions → build-finewine-full → Run workflow) to try the build without
+# publishing anything.
+#
+# Not run here: scripts/test-finewine-runtime.sh. Those checks open windows, go full screen
+# and need the Accessibility permission, which a CI runner does not offer. The app's unit
+# tests run, and the built runtime is started once as a smoke check (reported, not required:
+# a virtual machine is not where the runtime is meant to run).
+
+name: build-finewine-full
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: macOS runner image (Apple silicon; the app needs the macOS 26 SDK or later)
+        required: false
+        default: "xcode-27"
+        type: choice
+        options:
+          - "xcode-27"
+          - "macos-26"
+      app_version:
+        description: CFBundleShortVersionString for FineWine.app (blank = build-app.sh default)
+        required: false
+        default: ""
+        type: string
+  workflow_call:
+    inputs:
+      runner:
+        description: macOS runner image
+        required: false
+        default: "xcode-27"
+        type: string
+      app_version:
+        description: CFBundleShortVersionString for FineWine.app (blank = build-app.sh default)
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-finewine-full-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  finewine-full:
+    name: FineWine.app with its runtime
+    runs-on: ${{ inputs.runner || 'xcode-27' }}
+    timeout-minutes: 330
+    env:
+      BUILD_DIR: ${{ github.workspace }}/build
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Short SHA
+        run: echo "SHORT_SHA=${GITHUB_SHA::8}" >> "$GITHUB_ENV"
+
+      - name: Environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "== os: $(uname -m) / $(sw_vers -productName) $(sw_vers -productVersion)"
+          echo "== xcode: $(xcodebuild -version 2>/dev/null | tr '\n' ' ')"
+          echo "== cpus: $(sysctl -n hw.ncpu)"
+          echo "== disk:"; df -h "$RUNNER_WORKSPACE" | tail -1
+          [ "$(uname -m)" = "arm64" ] || { echo "::error::FineWine's runtime is built on and for Apple silicon; this runner is $(uname -m)."; exit 1; }
+
+      - name: Identify toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          hash=$({ sw_vers; xcodebuild -version; clang --version; } | shasum -a 256 | cut -d ' ' -f 1)
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
+
+      # The app's unit tests first: they take a minute, and there is no point building Wine
+      # for an app that does not pass them.
+      - name: Unit tests
+        shell: bash
+        working-directory: finewine-app
+        run: |
+          set -euo pipefail
+          swift test 2>&1 | tee test.log | grep -E 'error:|failed|Executed [0-9]+ tests' || true
+          grep -Eq 'Executed [1-9][0-9]* tests, with ([0-9]+ tests? skipped and )?0 failures' test.log
+
+      - name: Install build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The runtime's script installs what Wine needs; these are for FEX, DXMT and MoltenVK.
+          brew install cmake ninja meson
+          ./scripts/build-finewine-runtime.sh deps
+
+      # DXMT compiles its shaders with Apple's Metal compiler, which recent Xcodes download
+      # separately. Harmless when it is there already.
+      - name: Metal toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun metal --version >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+          xcrun metal --version
+
+      # The Windows compiler (a pinned download, checked against its checksum by the script).
+      - name: Cache llvm-mingw
+        uses: actions/cache@v4
+        with:
+          path: build/llvm-mingw
+          key: llvm-mingw-${{ runner.arch }}-${{ hashFiles('scripts/build-fex.sh') }}
+
+      # LLVM 15's static libraries, which DXMT links: about 20 minutes on a fast Mac, far
+      # more here, and they change only when the script does.
+      - name: Cache LLVM 15 for DXMT
+        id: llvm
+        uses: actions/cache@v4
+        with:
+          path: build/dxmt-llvm
+          key: dxmt-llvm15-${{ runner.arch }}-${{ steps.toolchain.outputs.hash }}-${{ hashFiles('scripts/build-dxmt.sh') }}
+
+      - name: Build LLVM 15 for DXMT
+        if: steps.llvm.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/build-dxmt.sh llvm
+          # Only the installed libraries are needed from here on; the source and the build
+          # tree are two gigabytes the rest of the build can use.
+          rm -rf build/dxmt-llvm-project build/dxmt-llvm-build
+          df -h "$RUNNER_WORKSPACE" | tail -1
+
+      - name: Build the runtime and FineWine.app
+        shell: bash
+        env:
+          FINEWINE_VERSION: ${{ inputs.app_version }}
+          SKIP_TESTS: "1"     # see the note at the top; the unit tests ran above
+          SKIP_ARCHIVE: "1"   # the runtime ships inside the app here, not as its own archive
+        run: |
+          set -euo pipefail
+          if [ -z "${FINEWINE_VERSION:-}" ]; then unset FINEWINE_VERSION; fi
+          ./scripts/build-finewine.sh all
+          df -h "$RUNNER_WORKSPACE" | tail -1
+
+      - name: Verify the bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="finewine-app/build/FineWine.app"
+          RT="$APP/Contents/Resources/Runtime"
+          fail(){ echo "::error::$*"; exit 1; }
+          plutil -lint "$APP/Contents/Info.plist"
+          codesign --verify --deep "$APP"
+          [ -x "$APP/Contents/MacOS/FineWine" ] || fail "no executable in the bundle"
+          [ -x "$RT/bin/wine" ] || fail "the runtime is not in the app"
+          [ -f "$RT/runtime.json" ] || fail "the runtime in the app has no runtime.json"
+          for part in lib/wine/aarch64-unix/ntdll.so lib/wine/aarch64-unix/winemac.so \
+                      lib/wine/aarch64-windows/xtajit64.dll lib/dxmt/aarch64-windows/d3d11.dll \
+                      lib/wine/aarch64-unix/winemetal.so; do
+            [ -e "$RT/$part" ] || fail "the runtime in the app is missing $part"
+          done
+          ls "$RT"/lib/libMoltenVK*.dylib >/dev/null 2>&1 || fail "the runtime in the app has no MoltenVK"
+          lipo -archs "$RT/bin/wine" | grep -qw arm64 || fail "the runtime's loader is not arm64"
+          echo "bundle OK: $(du -sh "$APP" | cut -f1)"
+
+      # Reported, not required: see the note at the top.
+      - name: Smoke check (start the runtime once)
+        id: smoke
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          RT="$PWD/finewine-app/build/FineWine.app/Contents/Resources/Runtime"
+          export WINEPREFIX="$RUNNER_TEMP/finewine-smoke" WINEDEBUG=-all
+          export WINEDLLOVERRIDES="winedbg.exe=d;winemenubuilder.exe=d;mscoree=d;mshtml=d"
+          "$RT/bin/wine" --version
+          # perl's alarm stands in for `timeout`, which macOS does not have
+          out="$(perl -e 'alarm 420; exec @ARGV' "$RT/bin/wine" cmd /c echo finewine-ok 2>/dev/null | tr -d '\r' | tail -n 1 || true)"
+          "$RT/bin/wineserver" -k 2>/dev/null || true
+          echo "console program said: '$out'"
+          [ "$out" = "finewine-ok" ]
+
+      - name: Zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' finewine-app/build/FineWine.app/Contents/Info.plist)"
+          echo "APP_VER=$VER" >> "$GITHUB_ENV"
+          # ditto keeps the code signature and the symbolic links inside the bundle intact
+          ditto -c -k --keepParent finewine-app/build/FineWine.app "dist/FineWine-$VER-$SHORT_SHA.zip"
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: finewine-app
+          path: dist/FineWine-${{ env.APP_VER }}-${{ env.SHORT_SHA }}.zip
+          retention-days: 14
+          if-no-files-found: error
+          compression-level: 0 # it is a zip already
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: finewine-full-logs
+          path: |
+            build/*.log
+            finewine-app/test.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Write job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## FineWine.app with its runtime"
+            echo
+            echo "- Version: \`${APP_VER:-not built}\` (\`$SHORT_SHA\`)"
+            [ ! -f finewine-app/test.log ] || echo "- Unit tests: $(grep -E 'Executed [0-9]+ tests' finewine-app/test.log | tail -n 1 | sed 's/^[[:space:]]*//')"
+            echo "- Runtime smoke check on this runner: ${{ steps.smoke.outcome }}"
+            echo "- The runtime's own checks (scripts/test-finewine-runtime.sh) are not run in CI; run them on a Mac."
+            echo "- Ad-hoc signed: right-click → Open on first launch."
+          } >> "$GITHUB_STEP_SUMMARY"
