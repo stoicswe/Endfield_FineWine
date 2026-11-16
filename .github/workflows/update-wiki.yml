@@ -1,18 +1,16 @@
 name: Generate Wiki Documentation
 
+# The wiki is regenerated when something is published, not on every push: nightly.yml calls
+# this once a nightly has been released, and release.yml once a full release has been. Pushes
+# to main and beta builds leave the wiki alone. It can still be run by hand.
 on:
-  push:
-    branches: [main, master]
-    paths:
-      - 'README.md'
-      - 'docs/**'
-      - 'scripts/**'
-      - 'patches/**'
-      - 'patcher-app/**'
-      - '.git-wiki-builder.yml'
-      - '.github/scripts/generate-wiki.py'
-      - '*.md'
+  workflow_call:
   workflow_dispatch:
+
+# A nightly and a release finishing close together regenerate it one after the other.
+concurrency:
+  group: wiki
+  cancel-in-progress: false
 
 permissions:
   # The publisher pushes the generated pages to <repo>.wiki.git, so the default

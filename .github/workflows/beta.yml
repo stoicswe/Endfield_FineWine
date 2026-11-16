@@ -26,22 +26,19 @@
 #          title  Endfield FW <UTC date as YYYYMMDD> Beta <number>     e.g. Endfield FW 20261115 Beta 3
 #          tag    beta_<YYYYMMDD>.<number>                             e.g. beta_20261115.3
 #
-# Triggers: a push to any `beta/**` branch that changes something the build is made from, or
-# a manual run on such a branch (Actions → beta → Run workflow, choosing the branch).
+# Triggers: any push to a `beta/**` branch, creating one included, or a manual run on such a
+# branch (Actions → beta → Run workflow, choosing the branch).
 
 name: beta
 
 on:
   push:
+    # Every push to a beta branch is meant as a beta, so there is no filter on which files
+    # changed. (There was one, and creating a beta branch at a commit main already had never
+    # started a build: against main, nothing had changed. A commit that already has its beta is
+    # still not built twice; the plan job sees to that.)
     branches:
       - 'beta/**'
-    paths:
-      - 'patches/**'
-      - 'scripts/**'
-      - 'patcher-app/**'
-      - 'finewine-app/**'
-      - 'runtime-extras/**'
-      - '.github/workflows/**'
   workflow_dispatch: # manual run: always builds and publishes, on the branch it is run from
 
 permissions:

@@ -308,3 +308,10 @@ jobs:
             -e "s|%RELEASE_URL%|${{ github.server_url }}/${{ github.repository }}/releases/tag/$RELEASE_TAG|g" \
             summary.md
           cat summary.md >> "$GITHUB_STEP_SUMMARY"
+
+  wiki:
+    name: Wiki
+    # Only after the nightly is published: nothing is regenerated for a skipped nightly or a failed build.
+    needs: release
+    uses: ./.github/workflows/update-wiki.yml
+    secrets: inherit # the wiki generator's API key and its wiki token
