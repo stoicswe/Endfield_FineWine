@@ -1,0 +1,63 @@
+winemac: Command-C, -V, -X, -A and -Z as the Control combinations
+
+A Mac user copies and pastes with Command; a Windows program expects Control and does nothing
+for Command. These five chords are handed over as Control with the key, pressed and released
+at the key press (macOS does not report the release of a key pressed with Command). Command
+by itself is unchanged. FINEWINE_COMMAND_SHORTCUTS=0 turns it off; it is also off when Command
+is mapped to Control altogether. tests/runtime/paste.c is the text field used to check it.
+
+diff --git a/dlls/winemac.drv/cocoa_window.m b/dlls/winemac.drv/cocoa_window.m
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -2134,10 +2134,51 @@
+ 
+         [controller noteKey:keyCode pressed:pressed];
+     }
++
++    /* FineWine: Command-C, -V, -X, -A and -Z are what a Mac user types to copy, paste, cut,
++     * select all and undo; a Windows program expects Control with those keys and does nothing
++     * for Command (which it sees as the Windows key). So these five are handed over as the
++     * Control combination: Command up, Control down, the key down and up, Control up, all at
++     * the key press, because macOS does not report the release of a key pressed with Command.
++     * Only these chords change; Command by itself stays what it was, so nothing a game binds
++     * to Control is triggered by Command. FINEWINE_COMMAND_SHORTCUTS=0 turns it off. */
++    - (BOOL) wine_postEditingShortcut:(NSEvent*)theEvent
++    {
++        /* virtual key codes, as in Carbon's Events.h (which clashes with the Windows headers here) */
++        enum { kVK_ANSI_A = 0x00, kVK_ANSI_Z = 0x06, kVK_ANSI_X = 0x07, kVK_ANSI_C = 0x08, kVK_ANSI_V = 0x09,
++               kVK_RightCommand = 0x36, kVK_Command = 0x37, kVK_Control = 0x3B };
++        static int enabled = -1;
++        NSUInteger flags = [theEvent modifierFlags], modifiers;
++        uint16_t key = [theEvent keyCode];
+ 
++        if (enabled < 0)
++        {
++            const char* setting = getenv("FINEWINE_COMMAND_SHORTCUTS");
++            enabled = !(setting && setting[0] == '0');
++        }
++        if (!enabled || left_command_is_ctrl || right_command_is_ctrl) return NO;
++        if (!(flags & NSEventModifierFlagCommand) || (flags & (NSEventModifierFlagControl | NSEventModifierFlagOption))) return NO;
++        if (key != kVK_ANSI_C && key != kVK_ANSI_V && key != kVK_ANSI_X && key != kVK_ANSI_A && key != kVK_ANSI_Z) return NO;
++        if ([theEvent type] != NSEventTypeKeyDown) return YES;  /* the release was sent with the press */
++        if ([theEvent isARepeat]) return YES;
++
++        modifiers = adjusted_modifiers_for_settings(flags);
++        modifiers &= ~(NSEventModifierFlagCommand | NX_DEVICELCMDKEYMASK | NX_DEVICERCMDKEYMASK);
++        [self postKey:kVK_Command pressed:NO modifiers:modifiers event:theEvent];
++        [self postKey:kVK_RightCommand pressed:NO modifiers:modifiers event:theEvent];
++        modifiers |= NSEventModifierFlagControl | NX_DEVICELCTLKEYMASK;
++        [self postKey:kVK_Control pressed:YES modifiers:modifiers event:theEvent];
++        [self postKey:key pressed:YES modifiers:modifiers event:theEvent];
++        [self postKey:key pressed:NO modifiers:modifiers event:theEvent];
++        modifiers &= ~(NSEventModifierFlagControl | NX_DEVICELCTLKEYMASK);
++        [self postKey:kVK_Control pressed:NO modifiers:modifiers event:theEvent];
++        return YES;
++    }
++
+     - (void) postKeyEvent:(NSEvent *)theEvent
+     {
+         [self flagsChanged:theEvent];
++        if ([self wine_postEditingShortcut:theEvent]) return;
+         [self postKey:[theEvent keyCode]
+               pressed:[theEvent type] == NSEventTypeKeyDown
+             modifiers:adjusted_modifiers_for_settings([theEvent modifierFlags])

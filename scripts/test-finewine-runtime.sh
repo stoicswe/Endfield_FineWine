@@ -178,6 +178,27 @@ if [ -x "$MINGWA" ] && "$MINGWA" -O1 -mwindows -o "$WORK/CoolGame.exe" "$REPO/te
 else
   echo "  - program name and tray icon check skipped: could not build tests/runtime/tray.c"
 fi
+# Command-V pastes into a Windows text field. The Mac's clipboard is used for a moment and put
+# back; the key is sent to the test program only. Needs the Accessibility permission.
+MINGWA="$REPO/build/llvm-mingw/bin/aarch64-w64-mingw32-clang"
+if swiftc -O -o "$WORK/axmenu" "$REPO/tests/runtime/axmenu.swift" >"$WORK/paste-build.log" 2>&1 \
+   && [ "$("$WORK/axmenu" trusted)" = yes ] \
+   && swiftc -O -o "$WORK/command-key" "$REPO/tests/runtime/command-key.swift" >>"$WORK/paste-build.log" 2>&1 \
+   && "$MINGWA" -O1 -mwindows -o "$WORK/PasteTest.exe" "$REPO/tests/runtime/paste.c" >>"$WORK/paste-build.log" 2>&1; then
+  saved="$(pbpaste 2>/dev/null || true)"
+  printf 'finewine paste check' | pbcopy
+  ( "$RT/bin/wine" "$WORK/PasteTest.exe" 9 </dev/null >/dev/null 2>&1 ) &
+  sleep 6
+  ppid_="$(ps -axww -o pid,command | grep '[P]asteTest.exe' | grep -v -e zsh -e bash | awk '{print $1}' | head -n 1)"
+  "$WORK/command-key" "$ppid_" 9 || true
+  wait
+  printf '%s' "$saved" | pbcopy
+  got="$(cat "$WORK/paste.txt" 2>/dev/null || true)"
+  if [ "$got" = "finewine paste check" ]; then pass "Command-V pastes the Mac's clipboard into a Windows text field"
+  else fail "Command-V left the text field with: '${got}'"; fi
+else
+  echo "  - paste check skipped: needs the Accessibility permission for the terminal (and swiftc)"
+fi
 # Direct3D 11 into a window, through a swap chain, on DXMT: what every Direct3D 11 game does.
 # (The other Direct3D 11 checks render off screen.) A small window appears for a moment.
 MINGWX="$REPO/build/llvm-mingw/bin/x86_64-w64-mingw32-clang"
