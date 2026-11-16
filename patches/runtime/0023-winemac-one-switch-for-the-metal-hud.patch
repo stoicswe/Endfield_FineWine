@@ -1,0 +1,124 @@
+winemac: one switch for the Metal HUD
+
+macOS adds a "Metal HUD" menu of its own to a program started with MTL_HUD_ENABLED=1, with a
+Show HUD / Hide HUD item. That item does nothing once a layer's own HUD setting has been made,
+and View > Show/Hide Metal HUD worked by making that setting, so the system's item was dead.
+The two are now tied together: the system's item is the switch, the layers are set to what it
+says (checked every second and when a menu closes), and the View item and the shortcuts press
+it. Its title is only brought up to date by menuNeedsUpdate:, which is asked for before it is
+read. The shortcut shown in the menu is Control-Command-H, which needs no function key;
+Option-F12 still works.
+
+diff --git a/dlls/winemac.drv/cocoa_app.m b/dlls/winemac.drv/cocoa_app.m
+--- a/dlls/winemac.drv/cocoa_app.m
++++ b/dlls/winemac.drv/cocoa_app.m
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include <dlfcn.h>
++#import <objc/runtime.h>
+ #import "config.h"
+ #import "macdrv.h"
+ 
+@@ -356,8 +357,10 @@
+             submenu = [[[NSMenu alloc] initWithTitle:@"View"] autorelease];
+             item = [submenu addItemWithTitle:@"Show Metal HUD"
+                                       action:@selector(toggleMetalHUD:)
+-                               keyEquivalent:[NSString stringWithFormat:@"%C", (unichar)NSF12FunctionKey]];
+-            [item setKeyEquivalentModifierMask:NSEventModifierFlagOption];
++                               keyEquivalent:@"h"];
++            /* Control-Command-H: no function key in it, which on a Mac's own keyboard needs Fn
++             * and otherwise changes the volume. Option-F12 works as well (-handleEvent:). */
++            [item setKeyEquivalentModifierMask:NSEventModifierFlagControl | NSEventModifierFlagCommand];
+             [item setTarget:self];
+             item = [[[NSMenuItem alloc] init] autorelease];
+             [item setTitle:@"View"];
+@@ -797,10 +800,15 @@
+             metalHUDShown = metalHUDAvailable && (!shown || atoi(shown) != 0);
+             metalHUDStateKnown = TRUE;
+             /* Layers that do not come from Wine's own Metal view (a Direct3D layer may make
+-             * its own) are found by looking again now and then. */
+-            if (metalHUDAvailable && shown)
+-                [NSTimer scheduledTimerWithTimeInterval:3.0 target:self selector:@selector(applyMetalHUD)
++             * its own) are found by looking again now and then; so is the system's menu. */
++            if (metalHUDAvailable)
++            {
++                [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(applyMetalHUD)
+                                                userInfo:nil repeats:YES];
++                /* and at once when a menu closes: that is when the system's item was used */
++                [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applyMetalHUD)
++                                                             name:NSMenuDidEndTrackingNotification object:nil];
++            }
+         }
+         return metalHUDShown;
+     }
+@@ -816,10 +824,53 @@
+             apply_metal_hud(sub, show);
+     }
+ 
++    /* macOS adds a "Metal HUD" menu of its own to a program started with MTL_HUD_ENABLED=1,
++     * with an item that says Hide HUD or Show HUD. By itself that item does nothing once a
++     * layer's own HUD setting has been made (measured, in both directions), and making that
++     * setting is the only way to hide the overlay at all. So the two are tied together: the
++     * system's item is the switch, and the layers are set to whatever it says. View >
++     * Show/Hide Metal HUD and the keyboard shortcuts press the system's item. Where there is
++     * no such menu, the layers' setting is switched directly. */
++    - (NSMenuItem*) systemMetalHUDItem
++    {
++        SEL toggle = NSSelectorFromString(@"toggleEnabled:");
++        for (NSMenuItem* top in [[NSApp mainMenu] itemArray])
++            for (NSMenuItem* item in [[top submenu] itemArray])
++                if ([item action] == toggle && [item target] != self && [[item target] respondsToSelector:toggle])
++                {
++                    /* The title says what the item would do now, but it is only brought up to
++                     * date when the menu is about to open: ask for that. */
++                    NSMenu* menu = [top submenu];
++                    if ([[menu delegate] respondsToSelector:@selector(menuNeedsUpdate:)])
++                        [[menu delegate] menuNeedsUpdate:menu];
++                    else if ([[item target] respondsToSelector:@selector(menuNeedsUpdate:)])
++                        [(id)[item target] menuNeedsUpdate:menu];
++                    return item;
++                }
++        return nil;
++    }
++
+     - (void) applyMetalHUD
+     {
++        static BOOL initialStateApplied;
++        NSMenuItem* system;
+         BOOL show = [self isMetalHUDShown];
++
+         if (!metalHUDAvailable) return;
++        if ((system = [self systemMetalHUDItem]))
++        {
++            NSString* title = [system title];
++            BOOL known = [title hasPrefix:@"Hide"] || [title hasPrefix:@"Show"];
++            BOOL systemShown = [title hasPrefix:@"Hide"];
++
++            if (known && !initialStateApplied)
++            {
++                /* the first time it is there: put it the way the prefix asked for */
++                initialStateApplied = TRUE;
++                if (systemShown != show) [NSApp sendAction:[system action] to:[system target] from:system];
++            }
++            else if (known) show = metalHUDShown = systemShown;
++        }
+         for (NSWindow *window in [NSApp windows])
+             apply_metal_hud([[window contentView] layer], show);
+     }
+@@ -863,8 +914,14 @@
+ 
+     - (void) toggleMetalHUD:(id)sender
+     {
++        NSMenuItem* system;
++
+         if (![self isMetalHUDAvailable]) return;
+-        metalHUDShown = !metalHUDShown;
++        [self applyMetalHUD];                       /* settles the starting state first */
++        if ((system = [self systemMetalHUDItem]) && ([[system title] hasPrefix:@"Hide"] || [[system title] hasPrefix:@"Show"]))
++            [NSApp sendAction:[system action] to:[system target] from:system];
++        else
++            metalHUDShown = !metalHUDShown;
+         [self applyMetalHUD];
+         /* A layer the program is about to make, or has in a view that is not attached yet,
+          * is caught by going round again shortly. */

@@ -3,7 +3,7 @@ kernelbase: keep Chromium-based programs' drawing in their main process, in soft
 Launchers built on CEF or Electron draw from a GPU process into the main process's window.
 DXMT cannot present into another process's window, and the Mac driver cannot paint one with
 GDI from another process either, so the window stays blank. A process that has Chromium in it
-(libcef.dll loaded; or ffmpeg.dll imported with Chromium's resources beside the program) gets
+(libcef.dll or chrome_elf.dll loaded; or ffmpeg.dll imported with Chromium's resources beside the program) gets
 --in-process-gpu --disable-gpu --disable-gpu-compositing added to its own command line, unless
 it is one of Chromium's child processes. It is done inside the process: adding the switches
 when a program is started hits every program in the folder (a launcher's 7z.exe failed on
@@ -46,10 +46,10 @@ index 8c37e5d..ec3187b 100644
      }
      return TRUE;
 diff --git a/dlls/kernelbase/process.c b/dlls/kernelbase/process.c
-index c58e977..2b1f200 100644
+index c58e977..3ef9683 100644
 --- a/dlls/kernelbase/process.c
 +++ b/dlls/kernelbase/process.c
-@@ -1329,6 +1329,63 @@ void init_startup_info( RTL_USER_PROCESS_PARAMETERS *params )
+@@ -1329,6 +1329,65 @@ void init_startup_info( RTL_USER_PROCESS_PARAMETERS *params )
  }
  
  
@@ -66,7 +66,7 @@ index c58e977..2b1f200 100644
 + * what is needed on to the processes it starts.
 + *
 + * The switches are added to this process's own command line, once Chromium is in it: when
-+ * libcef.dll has been loaded, or for Electron when the program imports ffmpeg.dll and has
++ * libcef.dll or chrome_elf.dll has been loaded, or for Electron when the program imports ffmpeg.dll and has
 + * Chromium's resources beside it. Chromium reads the command line when it is initialised,
 + * which is later. Chromium's own child processes (started with --type=) are left alone.
 + * It must be done here and not by whoever starts the program: other programs live in the same
@@ -81,7 +81,9 @@ index c58e977..2b1f200 100644
 +    DWORD len;
 +
 +    if (done || !command_lineW) return;
-+    if (!GetModuleHandleW( L"libcef.dll" ))
++    /* chrome_elf.dll comes with every CEF, whatever the main library is called: games rename
++     * it (zf_cef.dll in the browser Zenless Zone Zero shows its login pages in) */
++    if (!GetModuleHandleW( L"libcef.dll" ) && !GetModuleHandleW( L"chrome_elf.dll" ))
 +    {
 +        if (!GetModuleHandleW( L"ffmpeg.dll" )) return;
 +        len = GetModuleFileNameW( NULL, path, ARRAY_SIZE(path) );
