@@ -27,6 +27,13 @@ and will later become one function of this app.
   program's own icon. The app contains no Wine code; it opens a `finewine://launch` link that
   FineWine handles.
 - **Opening programs from Finder.** A `.exe` or `.msi` from outside any prefix gets a new prefix named after what it installs (the program's product name, else its cleaned-up file name), or FineWine asks whether to make one or use an existing prefix: Settings > Windows files > "Auto create prefix" or "Ask Me".
+- **Quitting.** If programs are running in any prefix when FineWine is asked to quit (the power
+  button, Command-Q, logging out), it lists them and asks. On a yes every program is asked to
+  close; whatever has not closed after 5 seconds is ended, and then FineWine quits.
+- **Status window.** While a prefix is set up or changed and while a program starts, a small
+  window in the middle of the display says what FineWine is doing and for how long, so a slow
+  start does not look like a stall. It takes no focus, goes away when the program's own window
+  appears (or the program ends), and a click hides it. It can be turned off in Settings.
 - **Configuration.** Windows version and build number, Direct3D backend, Retina mode, DPI,
   virtual desktop, Metal overlay, full-screen behaviour (a Mac full-screen Space by default), Game Mode (programs that use Direct3D, Vulkan or OpenGL run as games), starting HoYoverse games through a Steam stand-in, DLSS through MetalFX, reporting an NVIDIA GPU (the ids of an RTX 5080, for games that only offer DLSS on NVIDIA), MSync, the hypervisor flag, macOS styling for Windows controls,
   Option-as-Alt, DLL overrides,

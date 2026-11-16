@@ -99,6 +99,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // Quitting, however it was asked for (the power button, Command-Q, logging out): if
+    // programs are running the user is asked first, and they are closed before FineWine goes.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Task { @MainActor in
+            let quit = await AppModel.shared.confirmQuit()
+            sender.reply(toApplicationShouldTerminate: quit)
+        }
+        return .terminateLater
+    }
+
     // Closing the manager window leaves FineWine running in the menu bar.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
