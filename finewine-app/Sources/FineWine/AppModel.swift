@@ -97,10 +97,15 @@ final class AppModel: ObservableObject {
     }
 
     /// Runs blocking work off the main thread, with the prefix marked busy meanwhile.
-    private func work<T: Sendable>(on prefixID: UUID?, _ status: String, failure: String,
+    /// With `splash`, the status window says so too: for work the user is left waiting on.
+    private func work<T: Sendable>(on prefixID: UUID?, _ status: String, failure: String, splash: Bool = false,
                                    _ body: @escaping @Sendable (PrefixService) throws -> T) async -> T? {
         if let prefixID { busy[prefixID] = status }
-        defer { if let prefixID { busy[prefixID] = nil } }
+        let token = splash ? StatusSplash.shared.show(title: prefix(prefixID)?.name ?? "FineWine", message: status) : nil
+        defer {
+            if let prefixID { busy[prefixID] = nil }
+            StatusSplash.shared.hide(token)
+        }
         let service = UncheckedBox(service)
         do {
             return try await Task.detached(priority: .userInitiated) { try body(service.value) }.value
@@ -116,8 +121,12 @@ final class AppModel: ObservableObject {
         isCreatingPrefix = true
         defer { isCreatingPrefix = false }
         let appearance = currentAppearance
+        let token = StatusSplash.shared.show(title: "Setting up “\(name)”", message: "Creating the prefix…")
+        defer { StatusSplash.shared.hide(token) }
         let created = await work(on: nil, "", failure: "The prefix couldn't be created") {
-            try $0.createPrefix(name: name, runtime: runtime, profile: profile, appearance: appearance)
+            try $0.createPrefix(name: name, runtime: runtime, profile: profile, appearance: appearance) { stage in
+                Task { @MainActor in StatusSplash.shared.update(token, message: stage) }
+            }
         }
         reload()
         if let created { selection = created.id }
@@ -133,7 +142,7 @@ final class AppModel: ObservableObject {
         replace(updated)
         let toApply = updated
         let appearance = currentAppearance
-        if let applied = await work(on: prefix.id, "Applying settings…", failure: "The settings couldn't be applied", {
+        if let applied = await work(on: prefix.id, "Applying settings…", failure: "The settings couldn't be applied", splash: true, {
             try $0.applySettings(to: toApply, appearance: appearance)
         }) {
             replace(applied)
@@ -147,7 +156,7 @@ final class AppModel: ObservableObject {
 
     func duplicate(_ prefix: Prefix) async {
         let name = prefix.name + " copy"
-        if let copy = await work(on: prefix.id, "Duplicating…", failure: "The prefix couldn't be duplicated", {
+        if let copy = await work(on: prefix.id, "Duplicating…", failure: "The prefix couldn't be duplicated", splash: true, {
             try $0.prefixes.duplicate(prefix, as: name)
         }) {
             reload()
@@ -187,7 +196,7 @@ final class AppModel: ObservableObject {
     }
 
     func wineboot(_ action: WinebootAction, in prefix: Prefix, status: String) async {
-        _ = await work(on: prefix.id, status, failure: "Wine reported a problem") {
+        _ = await work(on: prefix.id, status, failure: "Wine reported a problem", splash: true) {
             try $0.runWineboot(action, in: prefix)
         }
     }
@@ -283,16 +292,32 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The status window for something that is being started in a prefix. The token it
+    /// returns ends it when the program ends before showing a window.
+    private func startingStatus(_ name: String, icon: NSImage? = nil, in prefix: Prefix) -> UUID? {
+        let updating = (try? service.runtime(for: prefix)).map {
+            StartupStatus.prefixNeedsWineUpdate(prefix: prefix.directory, runtimeRoot: $0.root)
+        } ?? false
+        return StatusSplash.shared.showLaunch(title: "Starting \(name)", icon: icon, updatingPrefix: updating)
+    }
+
     func launch(_ program: Program, in prefix: Prefix) {
         let box = PIDBox()
         let prefixID = prefix.id
+        // The icon of the program's shortcut app, when it has one: that is the program's own.
+        let icon = program.shortcutPath.flatMap { FileManager.default.fileExists(atPath: $0) ? NSWorkspace.shared.icon(forFile: $0) : nil }
+        let status = startingStatus(program.name, icon: icon, in: prefix)
         do {
             let pid = try service.launch(programID: program.id, in: prefix, onExit: exitHandler(prefixID: prefix.id, pidBox: box) {
+                StatusSplash.shared.hide(status)
                 AppModel.shared.adoptNewPrograms(in: prefixID)
             })
             box.pid = pid
             track(pid, in: prefix.id)
-        } catch { show(error, title: "“\(program.name)” couldn't be started") }
+        } catch {
+            StatusSplash.shared.hide(status)
+            show(error, title: "“\(program.name)” couldn't be started")
+        }
     }
 
     /// Opens a Wine tool. If the Mac's appearance has changed since the prefix was last styled
@@ -304,7 +329,7 @@ final class AppModel: ObservableObject {
         if service.needsAppearanceRefresh(prefix, current: appearance),
            prefix.metadata.settings == prefix.metadata.appliedSettings {
             let refreshed = await work(on: prefix.id, "Matching the Mac's appearance…",
-                                       failure: "The appearance couldn't be updated") {
+                                       failure: "The appearance couldn't be updated", splash: true) {
                 try $0.applySettings(to: prefix, appearance: appearance)
             }
             if let refreshed { replace(refreshed); current = refreshed }
@@ -314,24 +339,35 @@ final class AppModel: ObservableObject {
 
     func launch(_ tool: WineTool, in prefix: Prefix) {
         let box = PIDBox()
+        let status = startingStatus(tool.displayName, in: prefix)
         do {
-            let pid = try service.launch(tool: tool, in: prefix, onExit: exitHandler(prefixID: prefix.id, pidBox: box))
+            let pid = try service.launch(tool: tool, in: prefix, onExit: exitHandler(prefixID: prefix.id, pidBox: box) {
+                StatusSplash.shared.hide(status)
+            })
             box.pid = pid
             track(pid, in: prefix.id)
-        } catch { show(error, title: "\(tool.displayName) couldn't be started") }
+        } catch {
+            StatusSplash.shared.hide(status)
+            show(error, title: "\(tool.displayName) couldn't be started")
+        }
     }
 
     /// Runs an installer, then looks for the programs it added.
     func runInstaller(_ url: URL, in prefix: Prefix) {
         let box = PIDBox()
         let prefixID = prefix.id
+        let status = startingStatus(url.deletingPathExtension().lastPathComponent, in: prefix)
         do {
             let pid = try service.launch(executable: url, in: prefix, onExit: exitHandler(prefixID: prefixID, pidBox: box) {
+                StatusSplash.shared.hide(status)
                 AppModel.shared.adoptNewPrograms(in: prefixID)
             })
             box.pid = pid
             track(pid, in: prefix.id)
-        } catch { show(error, title: "“\(url.lastPathComponent)” couldn't be started") }
+        } catch {
+            StatusSplash.shared.hide(status)
+            show(error, title: "“\(url.lastPathComponent)” couldn't be started")
+        }
     }
 
     /// Handles a `finewine://` link from a shortcut app.
@@ -388,6 +424,15 @@ final class AppModel: ObservableObject {
 
     func prefixesUsing(_ runtime: WineRuntime) -> [Prefix] {
         prefixes.filter { $0.metadata.runtimeID == runtime.id }
+    }
+
+    /// Whether the status window is shown while prefixes are set up and programs start.
+    var showsStatusWindow: Bool {
+        get { StatusSplash.shared.isEnabled }
+        set {
+            objectWillChange.send()
+            StatusSplash.shared.isEnabled = newValue
+        }
     }
 
     // MARK: Opening files from Finder

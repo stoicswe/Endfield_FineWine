@@ -59,15 +59,18 @@ public struct PrefixService {
     /// Creates a prefix, has Wine set it up, and applies its settings. If Wine fails, the
     /// half-made prefix is removed so the name can be used again.
     public func createPrefix(name: String, runtime: WineRuntime, profile: GameProfile?,
-                             appearance: MacAppearance? = nil) throws -> Prefix {
+                             appearance: MacAppearance? = nil,
+                             progress: (@Sendable (String) -> Void)? = nil) throws -> Prefix {
         let problems = runtime.problems()
         guard problems.isEmpty else {
             throw FineWineError("The runtime “\(runtime.name)” can't be used: " + problems.joined(separator: " "))
         }
         let prefix = try prefixes.create(name: name, runtimeID: runtime.id, profile: profile)
         do {
+            progress?("Creating the Windows folders and registry. This takes about a minute.")
             try runChecked(try planner(for: prefix).plan(for: .initialize), what: "Setting up the prefix")
             keepDesktopInPrefix(prefix)
+            progress?("Applying the prefix's settings…")
             return try applySettings(to: prefix, appearance: appearance)
         } catch {
             try? prefixes.delete(prefix)
