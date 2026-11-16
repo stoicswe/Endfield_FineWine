@@ -79,6 +79,11 @@ final class StatusSplash: ObservableObject {
         items[index].message = message
     }
 
+    func retitle(_ token: UUID?, _ title: String) {
+        guard let token, let index = items.firstIndex(where: { $0.id == token }) else { return }
+        items[index].title = title
+    }
+
     func hide(_ token: UUID?) {
         guard let token, let item = items.first(where: { $0.id == token }) else { return }
         let shownFor = Date().timeIntervalSince(item.started)

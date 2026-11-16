@@ -27,6 +27,18 @@ and will later become one function of this app.
   program's own icon. The app contains no Wine code; it opens a `finewine://launch` link that
   FineWine handles.
 - **Opening programs from Finder.** A `.exe` or `.msi` from outside any prefix gets a new prefix named after what it installs (the program's product name, else its cleaned-up file name), or FineWine asks whether to make one or use an existing prefix: Settings > Windows files > "Auto create prefix" or "Ask Me".
+- **32-bit installers.** The runtime cannot run 32-bit programs, and most installers are 32-bit.
+  One made with NSIS is installed by FineWine itself, from the script inside it, with the
+  status window showing progress; see `docs/project-information/25-32-bit-programs-and-installers.md`.
+  Other 32-bit programs are explained rather than failing silently.
+- **Right-click a prefix** in the manager's sidebar for its actions: run an installer, find
+  programs, configure, Wine tools, show its files or logs, shut down, rename, duplicate, delete.
+- **Discord activity.** With "Show what I'm playing in Discord" on in Settings (it is off by
+  default) and the id of a Discord application of your own entered there, the program you
+  started from FineWine is your Discord activity while it runs; when a launcher starts the
+  game, the game is what is shown. FineWine talks only to the Discord app on the Mac
+  (`DiscordPresence.swift`).
+- **Supporting Wine.** Settings and the menu bar panel link to WineHQ's donation page.
 - **Quitting.** If programs are running in any prefix when FineWine is asked to quit (the power
   button, Command-Q, logging out), it lists them and asks. On a yes every program is asked to
   close; whatever has not closed after 5 seconds is ended, and then FineWine quits.

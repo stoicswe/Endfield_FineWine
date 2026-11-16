@@ -12,6 +12,17 @@ public enum WindowsExecutable {
     public static let msiTypeIdentifier = "io.github.stoicswe.finewine.msi-installer"
     public static let typeIdentifiers = [exeTypeIdentifier, msiTypeIdentifier]
 
+    /// True when the file is a 32-bit Windows program, which FineWine's runtime cannot run (a
+    /// native Apple silicon process has no memory below 4 GB to give one).
+    public static func is32BitProgram(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let dos = try? handle.read(upToCount: 64), dos.count == 64, dos[0] == 0x4D, dos[1] == 0x5A else { return false }
+        try? handle.seek(toOffset: UInt64(dos.le32(at: 0x3C)))
+        guard let pe = try? handle.read(upToCount: 6), pe.count == 6, pe.le32(at: 0) == 0x4550 else { return false }
+        return pe.le16(at: 4) == 0x014C
+    }
+
     public static func isSupported(_ url: URL) -> Bool {
         url.isFileURL && extensions.contains(url.pathExtension.lowercased())
     }
