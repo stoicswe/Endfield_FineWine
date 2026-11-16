@@ -89,6 +89,18 @@ else
   else
     fail "could not build the x64 test programs"; tail -n 3 "$WORK/x64-build.log"
   fi
+  # Memory handed back and taken again reads as zeroes, 4K page by 4K page, though the Mac's
+  # pages are 16K. Chromium's JavaScript engine crashes without it.
+  MINGWA="$REPO/build/llvm-mingw/bin/aarch64-w64-mingw32-clang"
+  if "$MINGW" -O1 -o "$WORK/decommit-x64.exe" "$REPO/tests/runtime/decommit.c" >"$WORK/decommit-build.log" 2>&1 \
+     && "$MINGWA" -O1 -o "$WORK/decommit-arm64.exe" "$REPO/tests/runtime/decommit.c" >>"$WORK/decommit-build.log" 2>&1; then
+    one="$("$RT/bin/wine" "$WORK/decommit-arm64.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    two="$("$RT/bin/wine" "$WORK/decommit-x64.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$one|$two" in "decommit: ok|decommit: ok") pass "decommitted memory reads as zeroes when committed again, down to single 4K pages: ARM64 and x64" ;;
+      *) fail "decommitted memory kept its contents (ARM64: '$one', x64: '$two')" ;; esac
+  else
+    fail "could not build tests/runtime/decommit.c"; tail -n 3 "$WORK/decommit-build.log"
+  fi
   # 32-bit programs cannot run here (no memory below 4 GB). An installer that starts the 32-bit
   # setup program of a runtime Wine has built in must see it succeed; any other 32-bit program
   # must still fail to start, and say so.
@@ -123,6 +135,47 @@ else
   else
     fail "could not build tests/runtime/steam-probe.c"; tail -n 3 "$WORK/steam-build.log"
   fi
+fi
+# What macOS calls a program, and its tray icon. A small window and a menu bar item appear for
+# a few seconds.
+MINGWA="$REPO/build/llvm-mingw/bin/aarch64-w64-mingw32-clang"
+if [ -x "$MINGWA" ] && "$MINGWA" -O1 -mwindows -o "$WORK/CoolGame.exe" "$REPO/tests/runtime/tray.c" -lshell32 >"$WORK/tray-build.log" 2>&1; then
+  ( FINEWINE_TRAY_LOG=1 FINEWINE_APP_NAME="Cool Game Deluxe" FINEWINE_APP_EXE=coolgame.exe \
+      "$RT/bin/wine" "$WORK/CoolGame.exe" 7 </dev/null >"$WORK/tray.log" 2>&1 ) &
+  sleep 5
+  tpid="$(ps -axww -o pid,command | grep '[C]oolGame.exe' | awk '{print $1}' | head -n 1)"
+  shown="$(lsappinfo info -only name "$tpid" 2>/dev/null | head -n 1 || true)"
+  wait
+  tray="$(grep -c 'tray item visible=1 image=yes' "$WORK/tray.log" || true)"
+  case "$shown" in *'"Cool Game Deluxe"'*)
+      if [ "$tray" -ge 1 ]; then pass "macOS calls a program by its own name, and its tray icon is a menu bar item"
+      else fail "the tray icon did not become a visible menu bar item"; grep finewine "$WORK/tray.log" | tail -n 2; fi ;;
+    *) fail "macOS calls the program $shown, expected \"Cool Game Deluxe\"" ;; esac
+else
+  echo "  - program name and tray icon check skipped: could not build tests/runtime/tray.c"
+fi
+# The menu bar. Opening a menu once left the program stuck in the menu's event loop for good,
+# so: open the application menu, close it, and see that the program still answers; then use
+# its window commands. Done through the accessibility interface, so it needs that permission.
+if [ -x "$MINGWA" ] && swiftc -O -o "$WORK/axmenu" "$REPO/tests/runtime/axmenu.swift" >"$WORK/axmenu-build.log" 2>&1 \
+   && [ "$("$WORK/axmenu" trusted)" = yes ] \
+   && "$MINGWA" -O1 -mwindows -o "$WORK/MenuTest.exe" "$REPO/tests/runtime/borderless.c" >>"$WORK/axmenu-build.log" 2>&1; then
+  ( "$RT/bin/wine" "$WORK/MenuTest.exe" 800 500 22 </dev/null >/dev/null 2>&1 ) &
+  sleep 6
+  mpid="$(ps -axww -o pid,command | grep '[M]enuTest.exe' | grep -v -e zsh -e bash | awk '{print $1}' | head -n 1)"
+  ( "$WORK/axmenu" "$mpid" press 1 >/dev/null 2>&1 & ); sleep 2
+  ( "$WORK/axmenu" "$mpid" cancel >/dev/null 2>&1 & ); sleep 2
+  answer="$("$WORK/axmenu" "$mpid" list 2>&1 | sed -n 2p || true)"
+  ( "$WORK/axmenu" "$mpid" press 1 >/dev/null 2>&1 & ); sleep 1.5
+  closed="$("$WORK/axmenu" "$mpid" pick 1 "Close Window" 2>&1 || true)"; sleep 2
+  left="$(ps -axww -o pid,command | grep -c '[M]enuTest.exe' || true)"
+  kill -9 "$mpid" 2>/dev/null || true; wait 2>/dev/null || true
+  case "$answer" in *"Close Window"*)
+      case "$closed" in *"enabled true"*) pass "the menu bar opens and closes without hanging the program; its window commands are there and usable" ;;
+        *) fail "the application menu's Close Window could not be used: $closed" ;; esac ;;
+    *) fail "the program stopped answering after its menu was opened (got: ${answer:-nothing})" ;; esac
+else
+  echo "  - menu bar check skipped: needs the Accessibility permission for the terminal (and swiftc)"
 fi
 # Vulkan and Direct3D 12, both through MoltenVK. These must work in every prefix, so each is run
 # twice: with Wine's built-in Direct3D, and with DXMT selected the way FineWine selects it.

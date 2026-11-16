@@ -268,10 +268,28 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Looks for programs that have appeared in a prefix since it was last looked at, lists
+    /// them, and gives each a Mac app: what a Windows installer does with shortcuts, done the
+    /// Mac way. Run when an installer finishes, and when any program does, because launchers
+    /// install games and make their shortcuts long after their own installer has gone.
+    func adoptNewPrograms(in prefixID: UUID) {
+        guard let current = prefix(prefixID) else { return }
+        let before = Set(current.metadata.programs.map(\.id))
+        findInstalledPrograms(in: current, quietly: true)
+        let added = prefix(prefixID)?.metadata.programs.filter { !before.contains($0.id) } ?? []
+        nameAfterInstalledPrograms(prefixID, added: added)
+        for program in added {
+            if let prefix = prefix(prefixID) { createShortcut(for: program.id, in: prefix) }
+        }
+    }
+
     func launch(_ program: Program, in prefix: Prefix) {
         let box = PIDBox()
+        let prefixID = prefix.id
         do {
-            let pid = try service.launch(programID: program.id, in: prefix, onExit: exitHandler(prefixID: prefix.id, pidBox: box))
+            let pid = try service.launch(programID: program.id, in: prefix, onExit: exitHandler(prefixID: prefix.id, pidBox: box) {
+                AppModel.shared.adoptNewPrograms(in: prefixID)
+            })
             box.pid = pid
             track(pid, in: prefix.id)
         } catch { show(error, title: "“\(program.name)” couldn't be started") }
@@ -309,12 +327,7 @@ final class AppModel: ObservableObject {
         let prefixID = prefix.id
         do {
             let pid = try service.launch(executable: url, in: prefix, onExit: exitHandler(prefixID: prefixID, pidBox: box) {
-                if let current = AppModel.shared.prefix(prefixID) {
-                    let before = Set(current.metadata.programs.map(\.id))
-                    AppModel.shared.findInstalledPrograms(in: current, quietly: true)
-                    let added = AppModel.shared.prefix(prefixID)?.metadata.programs.filter { !before.contains($0.id) } ?? []
-                    AppModel.shared.nameAfterInstalledPrograms(prefixID, added: added)
-                }
+                AppModel.shared.adoptNewPrograms(in: prefixID)
             })
             box.pid = pid
             track(pid, in: prefix.id)

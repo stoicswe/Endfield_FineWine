@@ -186,6 +186,21 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
   private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
   in a command list, to be carried out by MoltenVK as MetalFX.
+- `0018-winemac-round-the-corners-of-windows-without-a-mac-title-bar.patch`: borderless app
+  windows (launchers, games in a window) get a Mac window's round corners; not full-screen,
+  small or self-shaped ones. `FINEWINE_ROUNDED_WINDOWS=0` turns it off.
+- `0017-winemac-programs-go-by-their-own-name-and-tray-icons-show-in-the-menu-bar.patch`: macOS
+  calls a program by its own name (the one FineWine lists it under, else its version
+  information, else its file name) in the menu bar, Dock and app switcher, where it said "wine";
+  and notification-area ("tray") icons are menu bar items again (they were made with a custom
+  view, which macOS no longer shows).
+- `0016-ntdll-zero-partial-host-pages-when-memory-is-decommitted.patch`: memory that is
+  decommitted and committed again must read as zeroes; with the Mac's 16K pages the 4K pages at
+  the ends of a range kept their contents, and Chromium's JavaScript engine crashed on them.
+- `0015-kernelbase-keep-chromium-drawing-in-the-main-process-in-software.patch`: programs with Chromium's
+  files beside them (CEF, Electron) get `--in-process-gpu --disable-gpu --disable-gpu-compositing`: neither DXMT nor the Mac driver
+  can draw into a window from a process that does not own it, which is what Chromium's GPU process does.
+  `FINEWINE_CHROMIUM_FLAGS` names other switches, or `none`.
 - `0014-ntdll-run-a-do-nothing-program-in-place-of-32-bit-runtime-setup-programs.patch`: the
   runtime cannot run 32-bit Windows programs (a native ARM64 Mac process has no memory below
   4 GB). When a program starts the 32-bit setup program of the Visual C++ or DirectX runtime

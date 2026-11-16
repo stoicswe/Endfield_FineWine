@@ -55,11 +55,25 @@ public enum ICNS {
         return rep.representation(using: .png, properties: [:])
     }
 
+    /// The icon in a file a Windows shortcut names: an `.ico`, or a program or library with
+    /// icons in it. `nil` if the file is missing or holds no icon.
+    public static func data(fromIconFile url: URL) -> Data? {
+        if url.pathExtension.lowercased() == "ico" {
+            guard let ico = try? Data(contentsOf: url) else { return nil }
+            return data(fromICO: ico)
+        }
+        return data(fromExecutable: url)
+    }
+
     /// The icon of a Windows executable as `.icns` data, or `nil` if it has no icon.
     public static func data(fromExecutable url: URL) -> Data? {
         guard let exe = try? Data(contentsOf: url, options: .mappedIfSafe),
-              let ico = PEIcon.icoData(fromExecutable: exe),
-              let image = NSImage(data: ico) else { return nil }
+              let ico = PEIcon.icoData(fromExecutable: exe) else { return nil }
+        return data(fromICO: ico)
+    }
+
+    static func data(fromICO ico: Data) -> Data? {
+        guard let image = NSImage(data: ico) else { return nil }
         // An .ico holds several sizes; draw from the largest so small sizes are scaled down, not up.
         if let largest = image.representations.max(by: { $0.pixelsWide < $1.pixelsWide }) {
             let single = NSImage(size: NSSize(width: largest.pixelsWide, height: largest.pixelsHigh))

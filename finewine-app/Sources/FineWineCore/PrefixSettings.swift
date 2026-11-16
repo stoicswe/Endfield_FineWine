@@ -212,6 +212,9 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// Start HoYoverse's games and launcher through the runtime's stand-in for the Steam
     /// client, as they are started on Linux. See `SteamStandIn`.
     public var steamForHoYoverse: Bool = true
+    /// Give windows that have no Mac title bar (launchers, games in a window) a Mac window's
+    /// round corners.
+    public var roundedWindows: Bool = true
 
     /// The PCI ids reported when `reportNvidiaGPU` is on: NVIDIA, and its GeForce RTX 5080.
     public static let reportedGPUVendorID: UInt16 = 0x10DE
@@ -252,6 +255,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         reportNvidiaGPU = try c.decodeIfPresent(Bool.self, forKey: .reportNvidiaGPU) ?? d.reportNvidiaGPU
         gameMode = try c.decodeIfPresent(Bool.self, forKey: .gameMode) ?? d.gameMode
         steamForHoYoverse = try c.decodeIfPresent(Bool.self, forKey: .steamForHoYoverse) ?? d.steamForHoYoverse
+        roundedWindows = try c.decodeIfPresent(Bool.self, forKey: .roundedWindows) ?? d.roundedWindows
         fullScreenMode = try c.decodeIfPresent(FullScreenMode.self, forKey: .fullScreenMode) ?? d.fullScreenMode
     }
 
@@ -365,6 +369,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         out.append(("MTL_HUD_ENABLED", "1"))
         out.append(("FINEWINE_METAL_HUD", metalHUD ? "1" : "0"))
         out.append(("FINEWINE_FULLSCREEN", fullScreenMode.rawValue))
+        if !roundedWindows { out.append(("FINEWINE_ROUNDED_WINDOWS", "0")) }
         if hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
         if dlssThroughMetalFX {
             // Lets nvngx.dll load for Direct3D 12 and Vulkan programs, whose DLSS calls it

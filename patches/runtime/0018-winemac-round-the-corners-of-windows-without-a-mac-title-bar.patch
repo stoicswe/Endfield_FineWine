@@ -1,0 +1,161 @@
+winemac: round the corners of windows without a Mac title bar; window command requests
+
+A Windows program that draws its own title bar gets a borderless Mac window, with square
+corners where every Mac window has round ones. Such a window now gets round corners, unless it
+is full screen, small (a menu, a tooltip, a splash image) or shaped by its program.
+FINEWINE_ROUNDED_WINDOWS=0 turns it off.
+
+Also the window's half of the application menu's commands (previous patch): each asks the
+Windows program, as its own title bar buttons would, so they work without a Mac title bar.
+
+diff --git a/dlls/winemac.drv/cocoa_window.h b/dlls/winemac.drv/cocoa_window.h
+--- a/dlls/winemac.drv/cocoa_window.h
++++ b/dlls/winemac.drv/cocoa_window.h
+@@ -83,6 +83,7 @@
+     BOOL autoFullScreen;            /* we put this window in a full-screen Space ourselves */
+     BOOL autoFullScreenSuppressed;  /* the user took it out again; leave it out until it stops covering the screen */
+     BOOL autoFullScreenExitPending; /* it stopped covering the screen while it was still on its way in */
++    BOOL roundedCorners;            /* FineWine: a window without a Mac title bar is given a Mac window's corners */
+ 
+     int draggingPhase;
+     NSPoint dragStartPosition;
+@@ -125,4 +126,9 @@
+ 
+     - (void) setRetinaMode:(BOOL)mode;
+ 
++    - (BOOL) finewineIsMaximized;
++    - (void) finewineRequestClose;
++    - (void) finewineRequestMinimize;
++    - (void) finewineRequestMaximize:(BOOL)maximize;
++
+ @end
+diff --git a/dlls/winemac.drv/cocoa_window.m b/dlls/winemac.drv/cocoa_window.m
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -290,6 +290,7 @@
+ 
+ @property (nonatomic) BOOL shapeChangedSinceLastDraw;
+ @property (readonly, nonatomic) BOOL needsTransparency;
++    - (void) wine_updateRoundedCorners;
+ 
+ @property (nonatomic) BOOL usePerPixelAlpha;
+ 
+@@ -999,6 +1000,8 @@
+     - (void) adjustFeaturesForState
+     {
+         NSUInteger style = [self styleMask];
++
++        [self wine_updateRoundedCorners];
+ 
+         if (style & NSWindowStyleMaskClosable)
+             [[self standardWindowButton:NSWindowCloseButton] setEnabled:!self.disabled];
+@@ -1993,13 +1996,58 @@
+         {
+             disabled = newValue;
+             [self adjustFeaturesForState];
++        }
++    }
++
++    /* FineWine: Windows programs that draw their own title bar (launchers, most games' windows)
++     * get a borderless Mac window, which has square corners where every Mac window's are round.
++     * Such a window is given round corners, unless it is not really an app window:
++     *   - one with a Mac title bar is rounded by macOS already;
++     *   - a full-screen one, or one covering its screen, has no corners to round;
++     *   - a small one is a menu, a tooltip or a splash image;
++     *   - one with a shape or per-pixel transparency of its own already looks as its program
++     *     wants.
++     * FINEWINE_ROUNDED_WINDOWS=0 turns it off. */
++    - (BOOL) wine_wantsRoundedCorners
++    {
++        static int enabled = -1;
++        WineContentView* view = self.contentView;
++        NSRect frame = self.frame;
++        NSScreen* screen = self.screen;
++
++        if (enabled < 0)
++        {
++            const char* setting = getenv("FINEWINE_ROUNDED_WINDOWS");
++            enabled = !(setting && setting[0] == '0');
+         }
++        if (!enabled) return NO;
++        if ([self styleMask] & (NSWindowStyleMaskTitled | NSWindowStyleMaskFullScreen)) return NO;
++        if (fullscreen || autoFullScreen) return NO;
++        if (NSWidth(frame) < 280 || NSHeight(frame) < 180) return NO;
++        if (screen && NSWidth(frame) >= NSWidth(screen.frame) && NSHeight(frame) >= NSHeight(screen.frame) - 40) return NO;
++        if ([self level] > NSFloatingWindowLevel) return NO;
++        if (view.layer.mask || [view hasShapeImage] || self.usePerPixelAlpha) return NO;
++        return YES;
++    }
++
++    - (void) wine_updateRoundedCorners
++    {
++        CALayer* layer = [[self contentView] layer];
++        BOOL want = [self wine_wantsRoundedCorners];
++
++        if (!layer || want == roundedCorners) return;
++        roundedCorners = want;
++        layer.cornerRadius = want ? 12 : 0;
++        layer.cornerCurve = kCACornerCurveContinuous;
++        layer.masksToBounds = want;
++        [self checkTransparency];
++        [self invalidateShadow];
+     }
+ 
+     - (BOOL) needsTransparency
+     {
+         WineContentView *view = self.contentView;
+-        return self.contentView.layer.mask || [view hasShapeImage] || self.usePerPixelAlpha ||
++        return roundedCorners || self.contentView.layer.mask || [view hasShapeImage] || self.usePerPixelAlpha ||
+                 (gl_surface_mode == GL_SURFACE_BEHIND && [view hasGLDescendant]);
+     }
+ 
+@@ -2040,6 +2088,7 @@
+         mask.path = newShape;
+         self.shapeChangedSinceLastDraw = TRUE;
+ 
++        [self wine_updateRoundedCorners];
+         [self checkTransparency];
+         [self checkEmptyShaped];
+     }
+@@ -2878,6 +2927,7 @@
+ 
+     - (void)windowDidResize:(NSNotification *)notification skipSizeMove:(BOOL)skipSizeMove
+     {
++        [self wine_updateRoundedCorners];
+         NSRect frame = self.wine_fractionalFrame;
+ 
+         if ([self inLiveResize])
+@@ -2919,6 +2969,25 @@
+         return NO;
+     }
+ 
++    /* FineWine: the application menu's window commands. Each asks the Windows program, as its
++     * own title bar buttons would, so they work for a window that has no Mac title bar too. */
++    - (BOOL) finewineIsMaximized { return maximized; }
++
++    - (void) finewineRequestClose { [self windowShouldClose:self]; }
++
++    - (void) finewineRequestMinimize { [self miniaturize:self]; }
++
++    - (void) finewineRequestMaximize:(BOOL)maximize
++    {
++        macdrv_event* event;
++
++        if ([self isMiniaturized]) [self deminiaturize:self];
++        if (maximize == maximized) return;
++        event = macdrv_create_event(maximize ? WINDOW_MAXIMIZE_REQUESTED : WINDOW_RESTORE_REQUESTED, self);
++        [queue postEvent:event];
++        macdrv_release_event(event);
++    }
++
+     - (BOOL) windowShouldZoom:(NSWindow*)window toFrame:(NSRect)newFrame
+     {
+         if (maximized)
+@@ -3464,6 +3533,7 @@
+ {
+     OnMainThread(^{
+         window.usePerPixelAlpha = use_per_pixel_alpha;
++        [window wine_updateRoundedCorners];
+         [window checkTransparency];
+     });
+ }

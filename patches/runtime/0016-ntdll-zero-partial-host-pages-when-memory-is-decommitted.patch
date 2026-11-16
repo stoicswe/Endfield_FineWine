@@ -1,0 +1,47 @@
+ntdll: zero partial host pages when memory is decommitted
+
+Memory that is decommitted and committed again must read as zeroes. decommit_pages only gets
+that for whole host pages, by mapping them afresh. Where the host has 16K pages (Apple silicon)
+the 4K pages at the ends of the range share a host page with committed memory and kept their
+contents. V8 hands 4K pages back and takes them again constantly; it then read old data as new
+objects and crashed (a Chromium-based launcher's renderer, page fault in libcef). They are now
+cleared by hand. tests/runtime/decommit.c checks it.
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index b61da59..12aa5e6 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -2097,7 +2115,33 @@ static NTSTATUS decommit_pages( struct file_view *view, char *base, size_t size
+     else host_end = ROUND_ADDR( base + size, host_page_mask );
+ 
+     if (host_start < host_end) anon_mmap_fixed( host_start, host_end - host_start, PROT_NONE, 0 );
++    /* FineWine: memory that is committed again after being decommitted must read as zeroes.
++     * Whole host pages get that from the fresh mapping above. Where the host's pages are larger
++     * than Windows' (16K on Apple silicon), the 4K pages at either end of the range share a host
++     * page with memory that stays committed and cannot be remapped, so they are cleared by hand.
++     * Without this they keep their old contents; V8, which hands 4K pages back and takes them
++     * again all the time, then reads stale data as fresh objects and crashes. */
++    if (host_page_mask != page_mask)
++    {
++        char *end = base + size;
++        char *head_end = (host_start < host_end) ? host_start : end;
++        char *tail_start = (host_start < host_end) ? host_end : end;
++
++        if (base < head_end)
++        {
++            char *page = ROUND_ADDR( base, host_page_mask );
++            if (!mprotect( page, ROUND_SIZE( base, head_end - base, host_page_mask ), PROT_READ | PROT_WRITE ))
++                memset( base, 0, head_end - base );
++        }
++        if (tail_start < end)
++        {
++            if (!mprotect( tail_start, ROUND_SIZE( tail_start, end - tail_start, host_page_mask ), PROT_READ | PROT_WRITE ))
++                memset( tail_start, 0, end - tail_start );
++        }
++    }
+     set_page_vprot_bits( base, size, 0, VPROT_COMMITTED );
++    /* the pages touched above go back to what the remaining committed pages ask for */
++    if (host_page_mask != page_mask) mprotect_range( base, size, 0, 0 );
+     if (host_start < host_end) kernel_writewatch_register_range( view, host_start, host_end - host_start );
+     return STATUS_SUCCESS;
+ }

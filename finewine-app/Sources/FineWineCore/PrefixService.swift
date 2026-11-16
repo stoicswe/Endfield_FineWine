@@ -67,6 +67,7 @@ public struct PrefixService {
         let prefix = try prefixes.create(name: name, runtimeID: runtime.id, profile: profile)
         do {
             try runChecked(try planner(for: prefix).plan(for: .initialize), what: "Setting up the prefix")
+            keepDesktopInPrefix(prefix)
             return try applySettings(to: prefix, appearance: appearance)
         } catch {
             try? prefixes.delete(prefix)
@@ -175,14 +176,22 @@ public struct PrefixService {
     /// Adds every program the installers' shortcuts point at and that isn't listed yet.
     /// Returns the updated prefix and how many programs were new.
     public func importDiscoveredPrograms(into prefix: Prefix) throws -> (prefix: Prefix, added: Int) {
+        // A prefix from before FineWine kept the desktop inside it has its shortcuts on the Mac desktop.
+        keepDesktopInPrefix(prefix)
         var updated = prefix
         var added = 0
-        let known = Set(prefix.metadata.programs.map { $0.windowsPath.lowercased() })
-        for found in ProgramScanner.scan(prefix: prefix.directory) where !known.contains(found.windowsPath.lowercased()) {
+        // The same executable with other arguments is another program (a launcher, and the
+        // launcher opened on one game).
+        func key(_ path: String, _ arguments: [String]) -> String { ([path.lowercased()] + arguments).joined(separator: "\u{0}") }
+        var known = Set(prefix.metadata.programs.map { key($0.windowsPath, $0.arguments) })
+        for found in ProgramScanner.scan(prefix: prefix.directory) {
+            let arguments = ProgramScanner.splitArguments(found.arguments)
+            guard known.insert(key(found.windowsPath, arguments)).inserted else { continue }
             updated.metadata.programs.append(Program(
                 name: found.name, windowsPath: found.windowsPath,
-                arguments: ProgramScanner.splitArguments(found.arguments),
-                workingDirectory: found.workingDirectory))
+                arguments: arguments,
+                workingDirectory: found.workingDirectory,
+                iconPath: found.iconPath.isEmpty ? nil : found.iconPath))
             added += 1
         }
         if added > 0 { try prefixes.save(updated) }
@@ -207,8 +216,9 @@ public struct PrefixService {
             throw FineWineError("That program is no longer in “\(prefix.name)”.")
         }
         let program = prefix.metadata.programs[index]
-        let icon = WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory)
-            .flatMap(ICNS.data(fromExecutable:))
+        // The icon the installer's shortcut named, if it named one; else the program's own.
+        let icon = program.iconPath.flatMap { WindowsPath.macURL(for: $0, inPrefix: prefix.directory) }.flatMap(ICNS.data(fromIconFile:))
+            ?? WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory).flatMap(ICNS.data(fromExecutable:))
         let url = try shortcuts.build(for: program, in: prefix, icon: icon)
         var updated = prefix
         updated.metadata.programs[index].shortcutPath = url.path
@@ -272,6 +282,8 @@ public struct PrefixService {
         // The folder the runtime writes its "this program rendered" marker into.
         try? FileManager.default.createDirectory(at: planner.gameMarker(for: program).deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)
+        keepDesktopInPrefix(prefix)
+        refreshEmulator(in: prefix, from: planner.runtime)
         if planner.steamAppID(for: program) != nil { try installSteamStandIn(from: planner.runtime, in: prefix) }
         return try runner.start(try planner.plan(for: program),
                                 logFile: logFile(for: prefix, name: program.name), onExit: onExit)
@@ -288,8 +300,65 @@ public struct PrefixService {
     @discardableResult
     public func launch(executable: URL, in prefix: Prefix,
                        onExit: @escaping @Sendable (Int32) -> Void = { _ in }) throws -> Int32 {
-        try runner.start(try planner(for: prefix).plan(forExecutableAt: executable),
-                         logFile: logFile(for: prefix, name: executable.lastPathComponent), onExit: onExit)
+        keepDesktopInPrefix(prefix)
+        let planner = try planner(for: prefix)
+        refreshEmulator(in: prefix, from: planner.runtime)
+        return try runner.start(try planner.plan(forExecutableAt: executable),
+                                logFile: logFile(for: prefix, name: executable.lastPathComponent), onExit: onExit)
+    }
+
+    // MARK: The x64 emulator
+
+    /// A prefix keeps its own copy of the x64 emulator (FEX, `xtajit64.dll`) in its system
+    /// folder, made when the prefix was set up, and Wine loads that copy. It is not a Wine
+    /// library, so updating the prefix does not replace it: a prefix would go on running the
+    /// emulator of the runtime it was created with. This brings it up to date.
+    @discardableResult
+    public func refreshEmulator(in prefix: Prefix, from runtime: WineRuntime) -> Bool {
+        let fm = FileManager.default
+        let source = runtime.root.appendingPathComponent("lib/wine/aarch64-windows/xtajit64.dll")
+        let target = prefix.directory.appendingPathComponent("drive_c/windows/system32/xtajit64.dll")
+        guard fm.fileExists(atPath: source.path), fm.fileExists(atPath: target.path),
+              !fm.contentsEqual(atPath: source.path, andPath: target.path) else { return false }
+        let staging = target.appendingPathExtension("new")
+        try? fm.removeItem(at: staging)
+        guard (try? fm.copyItem(at: source, to: staging)) != nil,
+              (try? fm.replaceItemAt(target, withItemAt: staging)) != nil else { return false }
+        return true
+    }
+
+    // MARK: The Windows desktop
+
+    /// Wine makes the Windows desktop folder a link to the Mac's Desktop, so an installer's
+    /// "desktop shortcut" lands on the Mac desktop as a `.lnk` file nothing can open. FineWine
+    /// gives the prefix a desktop folder of its own instead: shortcuts stay inside the prefix,
+    /// where they are found and turned into programs (and shortcut apps).
+    ///
+    /// For a prefix made before this, shortcuts already on the Mac desktop that point at
+    /// programs in this prefix are moved into it. Returns how many were moved.
+    @discardableResult
+    public func keepDesktopInPrefix(_ prefix: Prefix) -> Int {
+        let fm = FileManager.default
+        let usersFolder = prefix.directory.appendingPathComponent("drive_c/users")
+        var moved = 0
+        for user in (try? fm.contentsOfDirectory(at: usersFolder, includingPropertiesForKeys: nil)) ?? [] {
+            let desktop = user.appendingPathComponent("Desktop")
+            guard let linked = try? fm.destinationOfSymbolicLink(atPath: desktop.path) else { continue }
+            let macDesktop = URL(fileURLWithPath: linked, relativeTo: user)
+            guard (try? fm.removeItem(at: desktop)) != nil,
+                  (try? fm.createDirectory(at: desktop, withIntermediateDirectories: false)) != nil else { continue }
+            // Only shortcuts lying directly on the Mac desktop, and only ones whose program is
+            // in this prefix: nothing else there is FineWine's to touch.
+            for file in (try? fm.contentsOfDirectory(at: macDesktop, includingPropertiesForKeys: nil)) ?? []
+            where file.pathExtension.lowercased() == "lnk" {
+                guard let data = try? Data(contentsOf: file), let link = ShellLink(data: data),
+                      let target = WindowsPath.macURL(for: link.target, inPrefix: prefix.directory),
+                      fm.fileExists(atPath: target.path),
+                      target.resolvingSymlinksInPath().path.hasPrefix(prefix.directory.resolvingSymlinksInPath().path + "/") else { continue }
+                if (try? fm.moveItem(at: file, to: desktop.appendingPathComponent(file.lastPathComponent))) != nil { moved += 1 }
+            }
+        }
+        return moved
     }
 
     public func runWineboot(_ action: WinebootAction, in prefix: Prefix) throws {
