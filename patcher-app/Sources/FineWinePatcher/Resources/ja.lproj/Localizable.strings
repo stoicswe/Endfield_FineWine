@@ -65,7 +65,8 @@
 "setup.graphics.creating" = "パッチ適用版のコピーを作成中%1$@ — CrossOver を複製し、モジュールを導入、再署名と検証を実施しています。約1分かかります。";
 "setup.installer.title" = "GRYPHLINE 公式インストーラー";
 "setup.installer.desc" = "GRYPHLINE 公式サイト (endfield.gryphline.com) からダウンロードした Windows 版インストーラー (GRYPHLINK_*.exe) を選択し、新しいボトルにインストールします。";
-"setup.installer.open_page" = "エンドフィールド公式サイトを開く";
+"setup.installer.open_page" = "エンドフィールド公式サイトを開く（グローバル）";
+"setup.installer.open_page_cn" = "エンドフィールド公式サイトを開く（中国）";
 "setup.installer.drop_or_choose" = "ここに GRYPHLINK_*.exe をドロップ、または";
 "setup.installer.choose_button" = "インストーラーを選択…";
 "setup.installer.selected" = "選択中: %1$@";

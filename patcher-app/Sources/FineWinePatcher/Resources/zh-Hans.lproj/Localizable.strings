@@ -65,7 +65,8 @@
 "setup.graphics.creating" = "正在创建补丁副本%1$@ — 复制 CrossOver、安装补丁模块、重新签名并校验完整性。这大约需要一分钟。";
 "setup.installer.title" = "鹰角网络 (Gryphline) 官方安装程序";
 "setup.installer.desc" = "请选择从鹰角网络官网 (endfield.gryphline.com) 下载的 Windows 启动器安装包 (GRYPHLINK_*.exe)，以便将其安装到新容器中。";
-"setup.installer.open_page" = "打开终末地官网下载页";
+"setup.installer.open_page" = "打开终末地官网下载页（国际服）";
+"setup.installer.open_page_cn" = "打开终末地官网下载页（国服）";
 "setup.installer.drop_or_choose" = "将 GRYPHLINK_*.exe 拖放到此处，或";
 "setup.installer.choose_button" = "选择安装程序…";
 "setup.installer.selected" = "已选择：%1$@";

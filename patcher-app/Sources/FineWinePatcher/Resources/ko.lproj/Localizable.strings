@@ -65,7 +65,8 @@
 "setup.graphics.creating" = "패치 복사본 생성 중%1$@ — CrossOver 복제, 모듈 설치, 재서명 및 무결성 검증을 진행 중입니다. 약 1분 정도 소요됩니다.";
 "setup.installer.title" = "그리프라인 (Gryphline) 공식 설치 프로그램";
 "setup.installer.desc" = "그리프라인 공식 사이트(endfield.gryphline.com)에서 다운로드한 Windows 설치 프로그램(GRYPHLINK_*.exe)을 지정하여 새 바틀에 설치합니다.";
-"setup.installer.open_page" = "엔드필드 공식 다운로드 페이지 열기";
+"setup.installer.open_page" = "엔드필드 공식 다운로드 페이지 열기 (글로벌)";
+"setup.installer.open_page_cn" = "엔드필드 공식 다운로드 페이지 열기 (중국)";
 "setup.installer.drop_or_choose" = "여기에 GRYPHLINK_*.exe를 드래그하거나,";
 "setup.installer.choose_button" = "설치 파일 선택…";
 "setup.installer.selected" = "선택됨: %1$@";
