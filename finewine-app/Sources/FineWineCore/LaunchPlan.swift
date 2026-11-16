@@ -200,6 +200,12 @@ public struct LaunchPlanner {
             arguments.insert(SteamStandIn.windowsPath, at: 0)
             for name in ["SteamGameId", "SteamAppId"] where env[name] == nil { env[name] = steamID }
         }
+        // What macOS calls the program: the name it is listed under here. The runtime uses
+        // it for this executable only; anything the program starts names itself.
+        if env["FINEWINE_APP_NAME"] == nil, env["FINEWINE_APP_EXE"] == nil {
+            env["FINEWINE_APP_NAME"] = program.name
+            env["FINEWINE_APP_EXE"] = WindowsPath.lastComponent(program.windowsPath)
+        }
         // The program's own variables keep the last word, as everywhere else.
         for (name, value) in gameModeEnvironment(for: program) where env[name] == nil { env[name] = value }
         return LaunchPlan(executable: try wine(), arguments: arguments,

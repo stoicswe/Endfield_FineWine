@@ -1,0 +1,53 @@
+windows: guard the call-ret stack with whole host pages
+
+The call-ret stack had one 4K guard page on each side. Where the host has 16K pages the guard
+is committed along with the stack beside it, an underflow or overflow faults outside the range
+that is recognised as the call-ret stack, and the fault is delivered to the guest in a loop
+(seen with a Chromium-based launcher: millions of access violations, a blank window).
+
+diff --git a/Source/Windows/Common/CallRetStack.h b/Source/Windows/Common/CallRetStack.h
+index 215591b..b9ad7cf 100644
+--- a/Source/Windows/Common/CallRetStack.h
++++ b/Source/Windows/Common/CallRetStack.h
+@@ -7,6 +7,14 @@
+ #include <FEXCore/Debug/InternalThreadState.h>
+ 
+ namespace FEX::Windows::CallRetStack {
++// FineWine: the guard regions on both sides of the stack. They were one 4K page each, which only
++// works where the host's pages are 4K. On a host with 16K pages (Apple silicon) the stack's last
++// page is committed together with the "guard" next to it, so running off either end faults a
++// little way outside the allocation recorded here, HandleAccessViolation does not recognise the
++// address, and the fault is handed to the program as its own, again and again. 64K is the
++// granularity Windows allocates memory in and a multiple of every page size in use.
++constexpr uint64_t GUARD_SIZE = 0x10000;
++
+ struct CallRetStackInfo {
+   uint64_t AllocationBase;
+   uint64_t AllocationEnd;
+@@ -16,21 +24,21 @@ struct CallRetStackInfo {
+ CallRetStackInfo GetInfoThread(FEXCore::Core::InternalThreadState* Thread) {
+   uint64_t Base = reinterpret_cast<uint64_t>(Thread->CallRetStackBase);
+   // Leave some room from the base for the default location to allow for underflows without constant exceptions
+-  return {Base - FEXCore::Utils::FEX_PAGE_SIZE, Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + FEXCore::Utils::FEX_PAGE_SIZE,
++  return {Base - GUARD_SIZE, Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + GUARD_SIZE,
+           Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE / 4};
+ }
+ 
+ void InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
+   // Allocate the call-ret stack with guard pages on both sides
+-  const void* CallRetStackAlloc = ::VirtualAlloc(nullptr, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE,
++  const void* CallRetStackAlloc = ::VirtualAlloc(nullptr, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * GUARD_SIZE,
+                                                  MEM_RESERVE | MEM_TOP_DOWN, PAGE_NOACCESS);
+ 
+   FEXCore::Allocator::VirtualName("FEXMem_CallRetStacks", CallRetStackAlloc,
+-                                  FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE);
+-  FEXCore::Allocator::VirtualTHPControl(CallRetStackAlloc, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE,
++                                  FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * GUARD_SIZE);
++  FEXCore::Allocator::VirtualTHPControl(CallRetStackAlloc, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * GUARD_SIZE,
+                                         FEXCore::Allocator::THPControl::Disable);
+ 
+-  Thread->CallRetStackBase = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(CallRetStackAlloc) + FEXCore::Utils::FEX_PAGE_SIZE);
++  Thread->CallRetStackBase = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(CallRetStackAlloc) + GUARD_SIZE);
+   ::VirtualAlloc(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, MEM_COMMIT, PAGE_READWRITE);
+ 
+   Thread->CurrentFrame->State.callret_sp = GetInfoThread(Thread).DefaultLocation;

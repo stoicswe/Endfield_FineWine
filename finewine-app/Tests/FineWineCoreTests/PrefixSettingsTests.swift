@@ -307,4 +307,11 @@ final class PrefixSettingsTests: XCTestCase {
         XCTAssertEqual(PrefixRegistrySnapshot.read(prefix: URL(fileURLWithPath: "/nonexistent/pfx")),
                        PrefixRegistrySnapshot())
     }
+
+    func testRoundedWindowsAreOnUnlessTurnedOff() {
+        var settings = PrefixSettings()
+        XCTAssertFalse(settings.environmentVariables().contains { $0.0 == "FINEWINE_ROUNDED_WINDOWS" })
+        settings.roundedWindows = false
+        XCTAssertTrue(settings.environmentVariables().contains { $0.0 == "FINEWINE_ROUNDED_WINDOWS" && $0.1 == "0" })
+    }
 }

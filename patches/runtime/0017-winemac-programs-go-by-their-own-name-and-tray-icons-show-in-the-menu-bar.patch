@@ -1,0 +1,482 @@
+winemac: programs go by their own name, tray icons show in the menu bar, window commands in the application menu
+
+Every Wine program is the same Mac executable, so macOS called them all "wine" (or by the
+loader bundle's name) in the menu bar, the Dock, the app switcher and Activity Monitor. A
+program now gets the name FineWine lists it under (FINEWINE_APP_NAME, for the executable named
+by FINEWINE_APP_EXE), else the product name or description from its version information, else
+its file name. The name is stored before the Cocoa side starts and must not be handed to the
+main thread from there: that creates the application controller too early, and menus hang.
+
+Notification-area icons were given a custom view to draw in, which macOS no longer shows, so
+they were invisible. They now use the status item's button. FINEWINE_TRAY_LOG=1 reports what
+macOS made of an item.
+
+The application menu gains what Windows offers on a taskbar button: Restore, Minimize,
+Maximize and Close Window, for the front window. The Window menu is the Windows menu again
+(it had become the View menu). The window side of the commands is in the next patch.
+
+diff --git a/dlls/winemac.drv/macdrv_main.c b/dlls/winemac.drv/macdrv_main.c
+--- a/dlls/winemac.drv/macdrv_main.c
++++ b/dlls/winemac.drv/macdrv_main.c
+@@ -406,9 +406,165 @@
+     }
+ 
+     localized_strings = dict;
++}
++
++
++/* FineWine: what macOS calls this process. Every Wine program is the same Mac executable, so
++ * the menu bar, the Dock, the app switcher and Activity Monitor would all say "wine" (or the
++ * name of the loader's bundle). The program is given its own name instead:
++ *   - the name FineWine lists it under (FINEWINE_APP_NAME), if this is the program FineWine
++ *     started (FINEWINE_APP_EXE is its file name; programs it starts in turn inherit both);
++ *   - else the product name or description in the program's version information;
++ *   - else its file name without the extension. */
++static BOOL finewine_read_file( HANDLE file, UINT64 offset, void *buffer, ULONG size )
++{
++    IO_STATUS_BLOCK io;
++    LARGE_INTEGER pos;
++
++    pos.QuadPart = offset;
++    return !NtReadFile( file, 0, NULL, NULL, &io, buffer, size, &pos, NULL ) && io.Information == size;
++}
++
++static UINT finewine_u16( const BYTE *p ) { return p[0] | p[1] << 8; }
++static UINT finewine_u32( const BYTE *p ) { return p[0] | p[1] << 8 | p[2] << 16 | (UINT)p[3] << 24; }
++
++/* One string of a version resource: { length, value length in characters, type 1, key, padding, value }. */
++static BOOL finewine_version_string( const BYTE *data, UINT size, const WCHAR *key, WCHAR *out, UINT out_len )
++{
++    UINT key_bytes = (wcslen( key ) + 1) * sizeof(WCHAR), i, n, value, len;
++
++    for (i = 6; i + key_bytes < size; i += 2)
++    {
++        if (memcmp( data + i, key, key_bytes )) continue;
++        len = finewine_u16( data + i - 4 );
++        if (finewine_u16( data + i - 2 ) != 1 || len < 2 || len > 200) continue;
++        value = i + key_bytes;
++        if ((value - (i - 6)) % 4) value += 2;
++        for (n = 0; n < len - 1 && n < out_len - 1 && value + n * 2 + 2 <= size; n++)
++            if (!(out[n] = finewine_u16( data + value + n * 2 ))) break;
++        out[n] = 0;
++        while (n && out[n - 1] == ' ') out[--n] = 0;
++        if (n) return TRUE;
++    }
++    return FALSE;
+ }
+ 
++/* The program's own version resource, found through its resource table. */
++static BOOL finewine_product_name( HANDLE file, WCHAR *out, UINT out_len )
++{
++    static const WCHAR product[] = {'P','r','o','d','u','c','t','N','a','m','e',0};
++    static const WCHAR description[] = {'F','i','l','e','D','e','s','c','r','i','p','t','i','o','n',0};
++    BYTE dos[64], head[24], optional[240 + 96 * 40], dir[16], entry[8], leaf[8], *version;
++    UINT pe, sections, optional_size, dirs, rva, root = 0, level, offset = 0, count, i, size, pos = 0;
++    BOOL ret;
+ 
++    if (!finewine_read_file( file, 0, dos, sizeof(dos) ) || dos[0] != 'M' || dos[1] != 'Z') return FALSE;
++    pe = finewine_u32( dos + 0x3c );
++    if (!finewine_read_file( file, pe, head, sizeof(head) ) || finewine_u32( head ) != 0x4550) return FALSE;
++    sections = finewine_u16( head + 6 );
++    optional_size = finewine_u16( head + 20 );
++    if (sections > 96 || optional_size > 240 || optional_size < 128) return FALSE;
++    if (!finewine_read_file( file, pe + 24, optional, optional_size + sections * 40 )) return FALSE;
++    if (finewine_u16( optional ) == 0x10b) dirs = 96;
++    else if (finewine_u16( optional ) == 0x20b) dirs = 112;
++    else return FALSE;
++    if (dirs + 3 * 8 > optional_size || !(rva = finewine_u32( optional + dirs + 2 * 8 ))) return FALSE;
++
++#define FILE_OFFSET(r, result) do { \
++        UINT s_; (result) = 0; \
++        for (s_ = 0; s_ < sections; s_++) { \
++            const BYTE *sec_ = optional + optional_size + s_ * 40; \
++            UINT va_ = finewine_u32( sec_ + 12 ), vs_ = finewine_u32( sec_ + 8 ), rs_ = finewine_u32( sec_ + 16 ); \
++            if ((r) >= va_ && (r) < va_ + max( vs_, rs_ )) { (result) = finewine_u32( sec_ + 20 ) + ((r) - va_); break; } \
++        } } while (0)
++
++    FILE_OFFSET( rva, root );
++    if (!root) return FALSE;
++    /* type 16 (version information), then the first name, then the first language */
++    for (level = 0; level < 3; level++)
++    {
++        if (!finewine_read_file( file, root + offset, dir, sizeof(dir) )) return FALSE;
++        count = finewine_u16( dir + 12 ) + finewine_u16( dir + 14 );
++        for (i = 0; i < count && i < 4096; i++)
++        {
++            if (!finewine_read_file( file, root + offset + 16 + i * 8, entry, sizeof(entry) )) return FALSE;
++            if (level || finewine_u32( entry ) == 16) break;
++        }
++        if (i == count || i == 4096) return FALSE;
++        offset = finewine_u32( entry + 4 );
++        if (level < 2) { if (!(offset & 0x80000000)) return FALSE; }
++        else if (offset & 0x80000000) return FALSE;
++        offset &= 0x7fffffff;
++    }
++    if (!finewine_read_file( file, root + offset, leaf, sizeof(leaf) )) return FALSE;
++    size = finewine_u32( leaf + 4 );
++    FILE_OFFSET( finewine_u32( leaf ), pos );
++#undef FILE_OFFSET
++    if (!pos || !size || size > 0x40000 || !(version = malloc( size ))) return FALSE;
++    ret = finewine_read_file( file, pos, version, size ) &&
++          (finewine_version_string( version, size, product, out, out_len ) ||
++           finewine_version_string( version, size, description, out, out_len ));
++    free( version );
++    return ret;
++}
++
++static void finewine_name_application(void)
++{
++    UNICODE_STRING *image = &NtCurrentTeb()->Peb->ProcessParameters->ImagePathName;
++    const WCHAR *path = image->Buffer, *end = path + image->Length / sizeof(WCHAR), *base = path, *p;
++    const char *given = getenv( "FINEWINE_APP_NAME" ), *given_exe = getenv( "FINEWINE_APP_EXE" );
++    WCHAR name[128];
++    CFStringRef string = NULL;
++    UINT len, i;
++
++    if (!path || path == end) return;
++    for (p = path; p < end; p++) if (*p == '\\' || *p == '/') base = p + 1;
++    len = end - base;
++
++    if (given && *given && given_exe && strlen( given_exe ) == len)
++    {
++        for (i = 0; i < len; i++)
++            if (base[i] >= 0x80 || tolower( (unsigned char)given_exe[i] ) != tolower( base[i] )) break;
++        if (i == len) string = CFStringCreateWithCString( NULL, given, kCFStringEncodingUTF8 );
++    }
++    if (!string)
++    {
++        static const WCHAR prefix[] = {'\\','?','?','\\'};
++        WCHAR nt_path[1024];
++        UNICODE_STRING nt_name;
++        OBJECT_ATTRIBUTES attr;
++        IO_STATUS_BLOCK io;
++        HANDLE file;
++
++        if (image->Length + sizeof(prefix) < sizeof(nt_path))
++        {
++            memcpy( nt_path, prefix, sizeof(prefix) );
++            memcpy( nt_path + ARRAY_SIZE(prefix), path, image->Length );
++            nt_name.Buffer = nt_path;
++            nt_name.Length = nt_name.MaximumLength = sizeof(prefix) + image->Length;
++            InitializeObjectAttributes( &attr, &nt_name, OBJ_CASE_INSENSITIVE, 0, NULL );
++            if (!NtOpenFile( &file, GENERIC_READ | SYNCHRONIZE, &attr, &io, FILE_SHARE_READ | FILE_SHARE_DELETE,
++                             FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE ))
++            {
++                if (finewine_product_name( file, name, ARRAY_SIZE(name) ))
++                    string = CFStringCreateWithCharacters( NULL, (const UniChar *)name, wcslen( name ) );
++                NtClose( file );
++            }
++        }
++    }
++    if (!string)
++    {
++        for (p = end; p > base; p--) if (p[-1] == '.') { len = p - 1 - base; break; }
++        if (len) string = CFStringCreateWithCharacters( NULL, (const UniChar *)base, len );
++    }
++    if (string)
++    {
++        macdrv_set_application_name( string );
++        CFRelease( string );
++    }
++}
++
++
+ /***********************************************************************
+  *              macdrv_init
+  */
+@@ -430,6 +586,7 @@
+     init_win_context();
+     setup_options();
+     load_strings(params->strings);
++    finewine_name_application();
+ 
+     if (macdrv_start_cocoa_app(NtGetTickCount()))
+     {
+diff --git a/dlls/winemac.drv/macdrv_cocoa.h b/dlls/winemac.drv/macdrv_cocoa.h
+--- a/dlls/winemac.drv/macdrv_cocoa.h
++++ b/dlls/winemac.drv/macdrv_cocoa.h
+@@ -191,6 +191,7 @@
+ extern void macdrv_window_rejected_focus(const struct macdrv_event *event);
+ extern void macdrv_beep(void);
+ extern void macdrv_set_application_icon(CFArrayRef images);
++extern void macdrv_set_application_name(CFStringRef name);
+ extern void macdrv_quit_reply(int reply);
+ extern bool macdrv_using_input_method(void);
+ extern void macdrv_set_mouse_capture_window(WineWindow *window);
+diff --git a/dlls/winemac.drv/cocoa_app.m b/dlls/winemac.drv/cocoa_app.m
+--- a/dlls/winemac.drv/cocoa_app.m
++++ b/dlls/winemac.drv/cocoa_app.m
+@@ -18,6 +18,7 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
++#include <dlfcn.h>
+ #import "config.h"
+ #import "macdrv.h"
+ 
+@@ -112,6 +113,39 @@
+ 
+ @end
+ 
++
++// FineWine: the program's own name, and making macOS use it.
++static NSString* finewineApplicationName;
++
++static void finewine_apply_application_name(void)
++{
++    // LaunchServices keeps the name the Dock, the app switcher, Force Quit and Activity
++    // Monitor show. There is no public call to change it for a running process; these are
++    // the ones browsers use to name their helper processes. Looked up at run time, so a
++    // macOS without them only loses the renaming.
++    typedef CFTypeRef (*GetASN)(void);
++    typedef OSStatus (*SetItem)(int, CFTypeRef, CFStringRef, CFTypeRef, CFDictionaryRef*);
++    static GetASN getASN;
++    static SetItem setItem;
++    static CFStringRef* displayNameKey;
++    static dispatch_once_t once;
++
++    if (![finewineApplicationName length]) return;
++
++    // The application menu's title in the menu bar comes from the process name.
++    [[NSProcessInfo processInfo] setProcessName:finewineApplicationName];
++
++    dispatch_once(&once, ^{
++        getASN = (GetASN)dlsym(RTLD_DEFAULT, "_LSGetCurrentApplicationASN");
++        setItem = (SetItem)dlsym(RTLD_DEFAULT, "_LSSetApplicationInformationItem");
++        displayNameKey = (CFStringRef*)dlsym(RTLD_DEFAULT, "_kLSDisplayNameKey");
++    });
++    if (getASN && setItem && displayNameKey && *displayNameKey)
++    {
++        CFTypeRef asn = getASN();
++        if (asn) setItem(-2 /* kLSDefaultSessionID */, asn, *displayNameKey, (CFStringRef)finewineApplicationName, NULL);
++    }
++}
+ 
+ @implementation WineApplicationController
+ 
+@@ -244,9 +278,13 @@
+ 
+             mainMenu = [[[NSMenu alloc] init] autorelease];
+ 
++            // FineWine: the program goes by its own name (see macdrv_set_application_name).
++            finewine_apply_application_name();
++
+             // Application menu
+             submenu = [[[NSMenu alloc] initWithTitle:WineLocalizedString(STRING_MENU_WINE)] autorelease];
+             bundleName = [[NSBundle mainBundle] objectForInfoDictionaryKey:(NSString*)kCFBundleNameKey];
++            if ([finewineApplicationName length]) bundleName = finewineApplicationName;
+ 
+             if ([bundleName length])
+                 title = [NSString stringWithFormat:WineLocalizedString(STRING_MENU_ITEM_HIDE_APPNAME), bundleName];
+@@ -262,6 +300,20 @@
+             item = [submenu addItemWithTitle:WineLocalizedString(STRING_MENU_ITEM_SHOW_ALL)
+                                       action:@selector(unhideAllApplications:)
+                                keyEquivalent:@""];
++
++            [submenu addItem:[NSMenuItem separatorItem]];
++
++            // FineWine: what Windows offers when a program's taskbar button is right-clicked,
++            // for the program's front window: restore, minimize, maximize, close. No keyboard
++            // shortcuts: Command-W and Command-M are too easy to hit in a game.
++            item = [submenu addItemWithTitle:@"Restore" action:@selector(finewineRestoreWindow:) keyEquivalent:@""];
++            [item setTarget:self];
++            item = [submenu addItemWithTitle:@"Minimize" action:@selector(finewineMinimizeWindow:) keyEquivalent:@""];
++            [item setTarget:self];
++            item = [submenu addItemWithTitle:@"Maximize" action:@selector(finewineMaximizeWindow:) keyEquivalent:@""];
++            [item setTarget:self];
++            item = [submenu addItemWithTitle:@"Close Window" action:@selector(finewineCloseWindow:) keyEquivalent:@""];
++            [item setTarget:self];
+ 
+             [submenu addItem:[NSMenuItem separatorItem]];
+ 
+@@ -313,9 +365,16 @@
+             [mainMenu addItem:item];
+ 
+             [NSApp setMainMenu:mainMenu];
+-            [NSApp setWindowsMenu:submenu];
++            // FineWine: the Window menu, which is not the last one made any more.
++            [NSApp setWindowsMenu:[[mainMenu itemAtIndex:1] submenu]];
+ 
+             [NSApp setApplicationIconImage:self.applicationIcon];
++
++            // The Dock and the app switcher take the name once the process is a regular app;
++            // LaunchServices can be a moment behind, so it is said again shortly after.
++            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
++                finewine_apply_application_name();
++            });
+         }
+     }
+ 
+@@ -765,6 +824,43 @@
+             apply_metal_hud([[window contentView] layer], show);
+     }
+ 
++    // FineWine: the window the application menu's window commands act on: the key window,
++    // else the front one, else a minimized one (so that Restore has something to restore).
++    - (WineWindow*) finewineMenuWindow
++    {
++        // Wine's windows are panels, which -[NSApplication orderedWindows] leaves out; the
++        // controller's own notion of the front window is used.
++        NSWindow* window = [NSApp keyWindow];
++        if (![window isKindOfClass:[WineWindow class]]) window = [self frontWineWindow];
++        if (!window)
++            for (NSWindow* w in [NSApp windows])
++                if ([w isKindOfClass:[WineWindow class]] && ([w isVisible] || [w isMiniaturized])) { window = w; break; }
++        return (WineWindow*)window;
++    }
++
++    - (void) finewineRestoreWindow:(id)sender
++    {
++        WineWindow* window = [self finewineMenuWindow];
++        if ([window isMiniaturized]) [window deminiaturize:sender];
++        else [window finewineRequestMaximize:NO];
++    }
++
++    - (void) finewineMinimizeWindow:(id)sender
++    {
++        [[self finewineMenuWindow] finewineRequestMinimize];
++    }
++
++    - (void) finewineMaximizeWindow:(id)sender
++    {
++        [[self finewineMenuWindow] finewineRequestMaximize:YES];
++    }
++
++    - (void) finewineCloseWindow:(id)sender
++    {
++        // As clicking the window's close button: the program is asked, and may ask to save.
++        [[self finewineMenuWindow] finewineRequestClose];
++    }
++
+     - (void) toggleMetalHUD:(id)sender
+     {
+         if (![self isMetalHUDAvailable]) return;
+@@ -778,6 +874,17 @@
+ 
+     - (BOOL) validateMenuItem:(NSMenuItem *)menuItem
+     {
++        SEL action = [menuItem action];
++        if (action == @selector(finewineRestoreWindow:) || action == @selector(finewineMinimizeWindow:) ||
++            action == @selector(finewineMaximizeWindow:) || action == @selector(finewineCloseWindow:))
++        {
++            WineWindow* window = [self finewineMenuWindow];
++            if (!window) return NO;
++            if (action == @selector(finewineRestoreWindow:)) return [window isMiniaturized] || [window finewineIsMaximized];
++            if (action == @selector(finewineMinimizeWindow:)) return ![window isMiniaturized];
++            if (action == @selector(finewineMaximizeWindow:)) return ![window finewineIsMaximized];
++            return YES;
++        }
+         if ([menuItem action] == @selector(toggleMetalHUD:))
+         {
+             [menuItem setTitle:[self isMetalHUDShown] ? @"Hide Metal HUD" : @"Show Metal HUD"];
+@@ -2700,6 +2807,22 @@
+     });
+ 
+     return ret;
++}
++
++/***********************************************************************
++ *              macdrv_set_application_name
++ *
++ * FineWine: the name macOS shows for this process, in place of the loader's.
++ */
++void macdrv_set_application_name(CFStringRef name)
++{
++    // Called once, before the Cocoa side of the process is started, so nothing reads the name
++    // yet. It must stay that simple: handing this to the main thread (OnMainThreadAsync) from
++    // here creates the application controller on this thread, ahead of Cocoa's own start-up
++    // on the main one, and then no menu in the menu bar opens: the program hangs in the menu's
++    // event loop.
++    if (!finewineApplicationName)
++        finewineApplicationName = [(NSString*)name copy];
+ }
+ 
+ /***********************************************************************
+diff --git a/dlls/winemac.drv/cocoa_status_item.m b/dlls/winemac.drv/cocoa_status_item.m
+--- a/dlls/winemac.drv/cocoa_status_item.m
++++ b/dlls/winemac.drv/cocoa_status_item.m
+@@ -56,8 +56,18 @@
+         if (self)
+         {
+             item = [[statusBar statusItemWithLength:NSSquareStatusItemLength] retain];
+-            // This is a retain cycle which is broken in -removeFromStatusBar.
+-            [item setView:self];
++            // FineWine: the item shows its image in its own button. It used to be given this
++            // view to draw in (-setView:), which macOS deprecated long ago and no longer shows:
++            // the tray icon was there, with nothing to see or click.
++            // The button's target is a retain cycle which is broken in -removeFromStatusBar.
++            {
++                NSStatusBarButton* button = [item button];
++                [button setTarget:self];
++                [button setAction:@selector(statusButtonEvent:)];
++                [button sendActionOn:NSEventMaskLeftMouseDown | NSEventMaskLeftMouseUp |
++                                     NSEventMaskRightMouseDown | NSEventMaskRightMouseUp |
++                                     NSEventMaskOtherMouseDown | NSEventMaskOtherMouseUp];
++            }
+ 
+             queue = inQueue;
+ 
+@@ -89,7 +99,18 @@
+         {
+             [image release];
+             image = [inImage retain];
+-            [self setNeedsDisplay:YES];
++            [[item button] setImage:image];
++            // FINEWINE_TRAY_LOG=1 says what macOS made of the item: on current macOS a menu bar
++            // item is drawn by the system, not in a window of this process, so nothing outside
++            // the process can tell whether it is there.
++            if (getenv("FINEWINE_TRAY_LOG"))
++            {
++                NSStatusItem* shown = item;
++                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
++                    fprintf(stderr, "finewine: tray item visible=%d image=%s button=%s\n", (int)[shown isVisible],
++                            [[shown button] image] ? "yes" : "no", [shown button] ? "yes" : "no");
++                });
++            }
+         }
+     }
+ 
+@@ -99,7 +120,7 @@
+         {
+             NSStatusBar* statusBar = [NSStatusBar systemStatusBar];
+             [statusBar removeStatusItem:item];
+-            [item setView:nil];
++            [[item button] setTarget:nil];
+ 
+             [queue discardEventsPassingTest:^BOOL (macdrv_event* event){
+                 return ((event->type == STATUS_ITEM_MOUSE_BUTTON && event->status_item_mouse_button.item == self) ||
+@@ -110,6 +131,16 @@
+         }
+     }
+ 
++    - (void) statusButtonEvent:(id)sender
++    {
++        NSEvent* event = [NSApp currentEvent];
++        NSEventMask mask = NSEventMaskLeftMouseDown | NSEventMaskLeftMouseUp |
++                           NSEventMaskRightMouseDown | NSEventMaskRightMouseUp |
++                           NSEventMaskOtherMouseDown | NSEventMaskOtherMouseUp;
++        if (event && (NSEventMaskFromType([event type]) & mask))
++            [self postMouseButtonEvent:event];
++    }
++
+     - (void) postMouseButtonEvent:(NSEvent*)nsevent;
+     {
+         macdrv_event* event;
+@@ -270,7 +301,8 @@
+         if (cgimage)
+         {
+             NSSize size;
+-            CGFloat maxSize = [[NSStatusBar systemStatusBar] thickness];
++            // FineWine: the size menu bar icons are drawn at, not the full height of the bar.
++            CGFloat maxSize = 18;
+             BOOL changed = FALSE;
+ 
+             image = [[NSImage alloc] initWithCGImage:cgimage size:NSZeroSize];
+@@ -302,6 +334,6 @@
+ 
+     if (![tip length]) tip = nil;
+     OnMainThreadAsync(^{
+-        [statusItem setToolTip:tip];
++        [[statusItem.item button] setToolTip:tip];
+     });
+ }

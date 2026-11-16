@@ -14,10 +14,14 @@ public struct Program: Codable, Equatable, Identifiable, Sendable {
     public var environment: [EnvironmentVariable]
     /// The generated shortcut app's path, if one exists.
     public var shortcutPath: String?
+    /// A Windows file to take the icon from in place of the executable's own: what the
+    /// installer's shortcut named, when it named one.
+    public var iconPath: String?
 
     public init(id: UUID = UUID(), name: String, windowsPath: String, arguments: [String] = [],
                 workingDirectory: String = "", environment: [EnvironmentVariable] = [],
-                shortcutPath: String? = nil) {
+                shortcutPath: String? = nil, iconPath: String? = nil) {
+        self.iconPath = iconPath
         self.id = id
         self.name = name
         self.windowsPath = windowsPath

@@ -85,13 +85,14 @@ enum Bytes {
 /// Builds `.lnk` data the way Windows lays it out.
 enum LinkBuilder {
     static func make(target: String, name: String? = nil, workingDirectory: String? = nil,
-                     arguments: String? = nil, unicode: Bool = true, withIDList: Bool = true,
+                     arguments: String? = nil, icon: String? = nil, unicode: Bool = true, withIDList: Bool = true,
                      unicodeLinkInfo: Bool = false) -> Data {
         var flags = 0x02   // HasLinkInfo
         if withIDList { flags |= 0x01 }
         if name != nil { flags |= 0x04 }
         if workingDirectory != nil { flags |= 0x10 }
         if arguments != nil { flags |= 0x20 }
+        if icon != nil { flags |= 0x40 }
         if unicode { flags |= 0x80 }
 
         var out: [UInt8] = Bytes.le32(0x4C)
@@ -124,7 +125,7 @@ enum LinkBuilder {
             out += ansi + [0]
         }
 
-        for string in [name, workingDirectory, arguments].compactMap({ $0 }) {
+        for string in [name, workingDirectory, arguments, icon].compactMap({ $0 }) {
             if unicode {
                 out += Bytes.le16(string.utf16.count) + Bytes.utf16(string)
             } else {

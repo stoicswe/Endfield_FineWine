@@ -6,6 +6,8 @@ public struct ShellLink: Equatable, Sendable {
     public var arguments: String
     public var workingDirectory: String
     public var description: String
+    /// The file the shortcut takes its icon from, when it names one other than its target.
+    public var iconLocation: String
 
     /// Parses the Shell Link binary format ([MS-SHLLINK]). Returns `nil` for data that isn't a
     /// shortcut or that doesn't name a local file.
@@ -97,6 +99,7 @@ public struct ShellLink: Equatable, Sendable {
         self.description = strings[0x04] ?? ""
         self.workingDirectory = strings[0x10] ?? ""
         self.arguments = strings[0x20] ?? ""
+        self.iconLocation = strings[0x40] ?? ""
     }
 }
 
@@ -106,6 +109,8 @@ public struct DiscoveredProgram: Equatable, Sendable {
     public var windowsPath: String
     public var arguments: String
     public var workingDirectory: String
+    /// The shortcut's own icon file, if it names one (an `.ico`, or another program).
+    public var iconPath: String = ""
 }
 
 public enum ProgramScanner {
@@ -122,8 +127,9 @@ public enum ProgramScanner {
         return folders
     }
 
-    /// Programs that shortcuts in the prefix point at: `.exe` targets only, one entry per
-    /// executable, uninstallers left out, sorted by name.
+    /// Programs that shortcuts in the prefix point at: `.exe` targets only, uninstallers left
+    /// out, sorted by name. One entry per executable and set of arguments: a launcher and
+    /// "the launcher, opened on this game" are two programs to the user.
     public static func scan(prefix: URL) -> [DiscoveredProgram] {
         let fm = FileManager.default
         var found: [String: DiscoveredProgram] = [:]
@@ -133,15 +139,38 @@ public enum ProgramScanner {
                 guard let data = try? Data(contentsOf: file), let link = ShellLink(data: data) else { continue }
                 let name = file.deletingPathExtension().lastPathComponent
                 guard isProgram(name: name, target: link.target) else { continue }
-                let key = link.target.lowercased()
+                let key = link.target.lowercased() + "\u{0}" + link.arguments.trimmingCharacters(in: .whitespaces)
                 if found[key] == nil {
                     found[key] = DiscoveredProgram(name: name, windowsPath: link.target,
                                                    arguments: link.arguments,
-                                                   workingDirectory: link.workingDirectory)
+                                                   workingDirectory: link.workingDirectory,
+                                                   iconPath: expandingVariables(in: link.iconLocation))
                 }
             }
         }
         return found.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// The Windows folders that icon paths in shortcuts are commonly written against.
+    static let folderVariables: [String: String] = [
+        "programfiles": #"C:\Program Files"#, "programw6432": #"C:\Program Files"#,
+        "programfiles(x86)": #"C:\Program Files (x86)"#, "programdata": #"C:\ProgramData"#,
+        "allusersprofile": #"C:\ProgramData"#, "systemroot": #"C:\windows"#, "windir": #"C:\windows"#,
+        "systemdrive": "C:", "public": #"C:\users\Public"#,
+    ]
+
+    /// A path from a shortcut made usable: `%ProgramFiles%\Game\game.ico` spelled out, and
+    /// forward slashes turned into backslashes. A variable that is not known is left as it is.
+    static func expandingVariables(in path: String) -> String {
+        var out = "", rest = Substring(path)
+        while let open = rest.firstIndex(of: "%") {
+            out += rest[..<open]
+            let after = rest[rest.index(after: open)...]
+            guard let close = after.firstIndex(of: "%") else { rest = rest[open...]; break }
+            if let value = folderVariables[after[..<close].lowercased()] { out += value } else { out += rest[open...close] }
+            rest = after[after.index(after: close)...]
+        }
+        return (out + rest).replacingOccurrences(of: "/", with: "\\")
     }
 
     static func isProgram(name: String, target: String) -> Bool {

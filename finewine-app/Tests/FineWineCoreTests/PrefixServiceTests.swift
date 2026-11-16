@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 @testable import FineWineCore
 
 final class PrefixServiceTests: XCTestCase {
@@ -167,6 +168,56 @@ final class PrefixServiceTests: XCTestCase {
         XCTAssertEqual(prefix.metadata.programs[0].id, original.id)
         XCTAssertEqual(prefix.metadata.programs[0].name, "Game (renamed)")
         XCTAssertEqual(prefix.metadata.programs[0].arguments, ["-x"])
+    }
+
+    func testTheWindowsDesktopIsKeptInThePrefixAndItsShortcutsBroughtBack() throws {
+        let f = Fixture()
+        let prefix = try f.prefixWithGame()
+        let fm = FileManager.default
+        // As Wine sets a prefix up: the Windows desktop is a link to the Mac's.
+        let macDesktop = f.sandbox.root.appendingPathComponent("MacDesktop")
+        let winDesktop = prefix.driveC.appendingPathComponent("users/me/Desktop")
+        try fm.createDirectory(at: macDesktop, withIntermediateDirectories: true)
+        try fm.createDirectory(at: winDesktop.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: winDesktop, withDestinationURL: macDesktop)
+        // An installer's shortcut to a program in this prefix, one to a program that is not, and a file of the user's.
+        f.sandbox.write(LinkBuilder.make(target: #"C:\Game\Game.exe"#), to: macDesktop.appendingPathComponent("Game.lnk"))
+        f.sandbox.write(LinkBuilder.make(target: #"C:\Elsewhere\Other.exe"#), to: macDesktop.appendingPathComponent("Other.lnk"))
+        f.sandbox.write("mine", to: macDesktop.appendingPathComponent("notes.txt"))
+
+        XCTAssertEqual(f.service.keepDesktopInPrefix(prefix), 1)
+        XCTAssertNil(try? fm.destinationOfSymbolicLink(atPath: winDesktop.path), "a folder of its own now")
+        XCTAssertTrue(fm.fileExists(atPath: winDesktop.appendingPathComponent("Game.lnk").path))
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: macDesktop.path).sorted(), ["Other.lnk", "notes.txt"])
+        XCTAssertEqual(f.service.keepDesktopInPrefix(prefix), 0, "nothing left to do the second time")
+    }
+
+    func testAnIconFileBecomesAnAppIconAndAMissingOneDoesNot() throws {
+        let sandbox = Sandbox()
+        // An .ico with one PNG image in it, as modern icons are stored.
+        let image = NSImage(size: NSSize(width: 64, height: 64))
+        image.lockFocus(); NSColor.systemPurple.setFill(); NSRect(x: 0, y: 0, width: 64, height: 64).fill(); image.unlockFocus()
+        let png = try XCTUnwrap(ICNS.png(from: image, pixelSize: 64))
+        var ico: [UInt8] = [0, 0, 1, 0, 1, 0, 64, 64, 0, 0, 1, 0, 32, 0]
+        ico += Bytes.le32(png.count) + Bytes.le32(22)
+        let file = sandbox.root.appendingPathComponent("gameicon.ico")
+        sandbox.write(Data(ico) + png, to: file)
+        let icns = try XCTUnwrap(ICNS.data(fromIconFile: file))
+        XCTAssertEqual(String(decoding: icns.prefix(4), as: UTF8.self), "icns")
+        XCTAssertNil(ICNS.data(fromIconFile: sandbox.root.appendingPathComponent("missing.ico")))
+    }
+
+    func testAPrefixGetsTheRuntimesEmulatorWhenItsOwnCopyIsOlder() throws {
+        let f = Fixture()
+        let prefix = try f.prefixWithGame()
+        let inRuntime = f.runtime.root.appendingPathComponent("lib/wine/aarch64-windows/xtajit64.dll")
+        let inPrefix = prefix.driveC.appendingPathComponent("windows/system32/xtajit64.dll")
+        f.sandbox.write("new emulator", to: inRuntime)
+        XCTAssertFalse(f.service.refreshEmulator(in: prefix, from: f.runtime), "a prefix without one is not given one")
+        f.sandbox.write("old emulator", to: inPrefix)
+        XCTAssertTrue(f.service.refreshEmulator(in: prefix, from: f.runtime))
+        XCTAssertEqual(try String(contentsOf: inPrefix, encoding: .utf8), "new emulator")
+        XCTAssertFalse(f.service.refreshEmulator(in: prefix, from: f.runtime), "nothing to do when they match")
     }
 
     func testImportDiscoveredProgramsAddsOnlyNewOnes() throws {

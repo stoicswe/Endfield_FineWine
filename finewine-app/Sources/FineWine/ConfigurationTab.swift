@@ -119,6 +119,10 @@ struct ConfigurationTab: View {
                     }
                     .labelsHidden().fixedSize()
                 }
+                Toggle(isOn: $draft.roundedWindows) {
+                    Text("Round window corners")
+                    Text("Windows that draw their own title bar, as launchers and many games do, get the round corners of a Mac window. Full-screen windows, menus and windows with a shape of their own are left as they are.")
+                }
                 Toggle(isOn: $draft.gameMode) {
                     Text("Game Mode")
                     Text("Programs that use Direct3D, Vulkan or OpenGL are started as games, so macOS turns Game Mode on while one is full screen. A program started by a launcher is recognised from its second run on.")

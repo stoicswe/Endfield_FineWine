@@ -94,6 +94,13 @@ final class GameModeLaunchTests: XCTestCase {
         XCTAssertTrue(f.planner.gameMarker(for: f.program).path.hasPrefix(f.prefix.directory.path), "the marker belongs to the prefix")
     }
 
+    func testAProgramIsGivenItsListedNameForMacOS() throws {
+        let f = Fixture()
+        let env = try f.planner.plan(for: f.program).environment
+        XCTAssertEqual(env["FINEWINE_APP_NAME"], "Game")
+        XCTAssertEqual(env["FINEWINE_APP_EXE"], "Game.exe")
+    }
+
     func testAProgramThatDoesNotRenderIsLearnedFromItsMarker() throws {
         let f = Fixture(imports: ["KERNEL32.dll", "USER32.dll"])       // a launcher, say
         var env = try f.planner.plan(for: f.program).environment
