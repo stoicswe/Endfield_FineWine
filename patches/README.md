@@ -186,6 +186,12 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
   private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
   in a command list, to be carried out by MoltenVK as MetalFX.
+- `0021-server-report-a-connected-socket-s-real-local-port.patch`: `getsockname()` on a socket
+  that was connected without being bound returned port 0 on macOS. libcurl's loopback socket
+  pair check then failed, and with it every name lookup of a Unity game.
+- `0020-ntdll-step-past-addresses-macos-will-not-map.patch`: a search for free memory "above
+  4 GB" stopped at its first step, because macOS refuses everything below the program's own
+  image with an error Wine took for out of memory.
 - `0019-winemac-give-dxmt-the-interface-it-presents-through.patch`: exports the
   `macdrv_functions` structure DXMT looks up to put its Metal view into a window. Without it
   no Direct3D 10 or 11 program could present ("Failed to create metal view").
