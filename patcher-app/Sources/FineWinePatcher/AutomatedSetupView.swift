@@ -36,7 +36,10 @@ struct AutomatedSetupView: View {
     @State private var settings = BottleSettings()
     @State private var existingBottles: Set<String> = []
 
+    /// Where the Windows launcher is downloaded: the global site (Gryphline) and the
+    /// mainland China one (Hypergryph).
     private let downloadPage = URL(string: "https://endfield.gryphline.com")!
+    private let downloadPageCN = URL(string: "https://endfield.hypergryph.com/#home")!
     private let gptkPage = URL(string: "https://developer.apple.com/games/game-porting-toolkit/")!
 
     var body: some View {
@@ -340,8 +343,13 @@ struct AutomatedSetupView: View {
                     Text(l10n.tr("setup.installer.desc"))
                         .font(.callout)
                         .fixedSize(horizontal: false, vertical: true)
-                    Button(l10n.tr("setup.installer.open_page")) {
-                        NSWorkspace.shared.open(downloadPage)
+                    HStack(spacing: 8) {
+                        Button(l10n.tr("setup.installer.open_page")) {
+                            NSWorkspace.shared.open(downloadPage)
+                        }
+                        Button(l10n.tr("setup.installer.open_page_cn")) {
+                            NSWorkspace.shared.open(downloadPageCN)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

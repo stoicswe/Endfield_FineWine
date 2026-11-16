@@ -65,7 +65,8 @@
 "setup.graphics.creating" = "Creating the patched copy%1$@ — copying CrossOver, installing the modules, re-sealing and verifying it. This can take about a minute.";
 "setup.installer.title" = "Gryphline Installer";
 "setup.installer.desc" = "Point at the Windows installer you downloaded from Gryphline (endfield.gryphline.com) to install the launcher and game into the new bottle.";
-"setup.installer.open_page" = "Open Endfield download page";
+"setup.installer.open_page" = "Open Endfield download page (Global)";
+"setup.installer.open_page_cn" = "Open Endfield download page (CN)";
 "setup.installer.drop_or_choose" = "Drop GRYPHLINK_*.exe here, or";
 "setup.installer.choose_button" = "Choose Installer…";
 "setup.installer.selected" = "Selected: %1$@";
