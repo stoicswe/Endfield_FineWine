@@ -1,0 +1,273 @@
+d3d11: upscale a picture smaller than its window with MetalFX
+
+A program that renders smaller than its window (a lower resolution chosen in a game, or any
+program while Wine's Retina mode is off) had its picture stretched to the window by the window
+server, which blurs it. Every swap chain is now the kind that can upscale with MetalFX's
+spatial scaler, and does so whenever its buffers are between 5% and 4x smaller than the window
+is in display pixels, in both directions: the picture is upscaled to exactly the window's
+pixels. A program that upscales by itself (DLSS and the like) hands over a picture of the
+window's size already and is left alone, as are multisampled swap chains. The window's size is
+looked at again every 30 frames, since a window can change size without its buffers being
+resized. DXMT_METALFX_SPATIAL_SWAPCHAIN=1 still gives the fixed factor it always did;
+FINEWINE_METALFX_AUTO=0 turns the automatic upscaling off.
+
+The Metal bridge reports a layer's size in display pixels for this (two fields at the end of
+WMTLayerProps, filled in by getProps).
+
+diff --git a/src/d3d11/d3d11_swapchain.cpp b/src/d3d11/d3d11_swapchain.cpp
+--- a/src/d3d11/d3d11_swapchain.cpp
++++ b/src/d3d11/d3d11_swapchain.cpp
+@@ -140,7 +140,12 @@
+     }
+ 
+     if constexpr (EnableMetalFX) {
+-      scale_factor = std::max(Config::getInstance().getOption<float>("d3d11.metalSpatialUpscaleFactor", 2), 1.0f);
++      /* FineWine: with DXMT_METALFX_SPATIAL_SWAPCHAIN=1 the picture is upscaled by a fixed
++       * factor, as before. Otherwise the factor is whatever brings the back buffer to the
++       * size of the window in display pixels, worked out in ChooseUpscaledSize(). */
++      fx_fixed_ = env::getEnvVar("DXMT_METALFX_SPATIAL_SWAPCHAIN") == "1";
++      if (fx_fixed_)
++        scale_factor = std::max(Config::getInstance().getOption<float>("d3d11.metalSpatialUpscaleFactor", 2), 1.0f);
+     }
+ 
+     presenter = Rc(new Presenter(pDevice->GetMTLDevice(), layer_weak_,
+@@ -501,6 +506,10 @@
+       backbuffer_desc_.Height = desc_.Height;
+     }
+ 
++    if constexpr (EnableMetalFX) {
++      ChooseUpscaledSize(fx_width_, fx_height_);
++    }
++
+     ApplyLayerProps();
+ 
+     backbuffer_desc_.Format = desc_.Format;
+@@ -515,24 +524,8 @@
+     backbuffer_->Release();
+ 
+     if constexpr (EnableMetalFX) {
+-      D3D11_TEXTURE2D_DESC1 upscaled_desc_ = backbuffer_desc_;
+-      upscaled_desc_.Height *= scale_factor;
+-      upscaled_desc_.Width *= scale_factor;
+-      upscaled_backbuffer_ = nullptr;
+-      if (FAILED(dxmt::CreateDeviceTexture2D(
+-              device_, &upscaled_desc_, nullptr, reinterpret_cast<ID3D11Texture2D1 **>(&upscaled_backbuffer_)
+-          )))
++      if (FAILED(CreateUpscaler()))
+         return E_FAIL;
+-
+-      WMTFXSpatialScalerInfo info;
+-      info.input_height = desc_.Height;
+-      info.input_width = desc_.Width;
+-      info.output_height = desc_.Height * scale_factor;
+-      info.output_width = desc_.Width * scale_factor;
+-      info.color_format = backbuffer_->texture()->pixelFormat();
+-      info.output_format =upscaled_backbuffer_->texture()->pixelFormat();
+-      metalfx_scaler = new SpatialScaler(device_->GetMTLDevice(), info);
+-      D3D11_ASSERT(metalfx_scaler && "otherwise metalfx failed to initialize");
+     }
+ 
+     return S_OK;
+@@ -578,7 +571,108 @@
+ 
+     return S_OK;
+   };
++
++  /* FineWine: the size the picture is upscaled to with MetalFX before it is shown: the back
++   * buffer's own size when there is nothing to do.
++   *
++   * A program that renders smaller than its window (a lower resolution chosen in a game, or
++   * any program while Wine's Retina mode is off) used to have its picture stretched by the
++   * window server, which blurs it. It is now upscaled to the window's size in display pixels
++   * by MetalFX's spatial scaler instead. A program that upscales by itself (DLSS and the like)
++   * already hands over a picture of the window's size, so it is left alone. Only enlargement
++   * between 5% and 4x in both directions counts; FINEWINE_METALFX_AUTO=0 turns it off. */
++  void ChooseUpscaledSize(uint32_t &width, uint32_t &height) {
++    width = desc_.Width;
++    height = desc_.Height;
++    if constexpr (EnableMetalFX) {
++      if (!desc_.Width || !desc_.Height)
++        return;
++      if (fx_fixed_) {
++        width = desc_.Width * scale_factor;
++        height = desc_.Height * scale_factor;
++        return;
++      }
++      if (desc_.SampleDesc.Count > 1)
++        return;
++      WMTLayerProps props = {};
++      layer_weak_.getProps(props);
++      double x = props.native_width / desc_.Width, y = props.native_height / desc_.Height;
++      if (x < 1.05 || y < 1.05 || x > 4.0 || y > 4.0)
++        return;
++      width = (uint32_t)(props.native_width + 0.5);
++      height = (uint32_t)(props.native_height + 0.5);
++    }
++  }
++
++  /* The texture MetalFX writes to and the scaler, for the sizes chosen; neither when the
++   * picture is shown as it is. */
++  HRESULT CreateUpscaler() {
++    if constexpr (EnableMetalFX) {
++      upscaled_backbuffer_ = nullptr;
++      metalfx_scaler = nullptr;
++      if (fx_width_ == desc_.Width && fx_height_ == desc_.Height)
++        return S_OK;
++      if (!backbuffer_)
++        return S_OK;
++
++      D3D11_TEXTURE2D_DESC1 upscaled_desc_ = backbuffer_desc_;
++      upscaled_desc_.Height = fx_height_;
++      upscaled_desc_.Width = fx_width_;
++      if (FAILED(dxmt::CreateDeviceTexture2D(
++              device_, &upscaled_desc_, nullptr, reinterpret_cast<ID3D11Texture2D1 **>(&upscaled_backbuffer_)
++          )))
++        return E_FAIL;
++
++      WMTFXSpatialScalerInfo info;
++      info.input_height = desc_.Height;
++      info.input_width = desc_.Width;
++      info.output_height = fx_height_;
++      info.output_width = fx_width_;
++      info.color_format = backbuffer_->texture()->pixelFormat();
++      info.output_format = upscaled_backbuffer_->texture()->pixelFormat();
++      metalfx_scaler = new SpatialScaler(device_->GetMTLDevice(), info);
++      if (metalfx_scaler->scaler().handle)
++        Logger::info(str::format("MetalFX spatial upscaling ", desc_.Width, "x", desc_.Height, " -> ", fx_width_, "x", fx_height_));
++      if (!metalfx_scaler->scaler().handle) {
++        /* MetalFX would not make a scaler for these sizes: show the picture as it is */
++        WARN("MetalFX spatial scaler unavailable for ", desc_.Width, "x", desc_.Height, " -> ", fx_width_, "x", fx_height_);
++        metalfx_scaler = nullptr;
++        upscaled_backbuffer_ = nullptr;
++        fx_width_ = desc_.Width;
++        fx_height_ = desc_.Height;
++        ApplyLayerProps();
++      }
++    }
++    return S_OK;
++  }
++
++  /* The window may change size without the program resizing its buffers (it enters a
++   * full-screen Space, say), so the choice is looked at again now and then. */
++  void RecheckUpscaledSize() {
++    if constexpr (EnableMetalFX) {
++      if (fx_fixed_ || (++fx_recheck_ % 30))
++        return;
++      uint32_t width, height;
++      ChooseUpscaledSize(width, height);
++      if (width == fx_width_ && height == fx_height_)
++        return;
++      fx_width_ = width;
++      fx_height_ = height;
++      ApplyLayerProps();
++      CreateUpscaler();
++    }
++  }
+ 
++  double LayerWidth() {
++    if constexpr (EnableMetalFX) { if (fx_width_) return fx_width_; }
++    return desc_.Width;
++  }
++
++  double LayerHeight() {
++    if constexpr (EnableMetalFX) { if (fx_height_) return fx_height_; }
++    return desc_.Height;
++  }
++
+   void ApplyLayerProps() {
+     auto target_color_space =
+         ConvertColorSpace(desc_.Format == DXGI_FORMAT_R16G16B16A16_FLOAT
+@@ -586,8 +680,8 @@
+                               : colorspace_,
+                           LayerSupportEDR());
+     if (presenter->changeLayerProperties(
+-            ConvertSwapChainFormat(desc_.Format), target_color_space, desc_.Width * scale_factor,
+-            desc_.Height * scale_factor, desc_.SampleDesc.Count
++            ConvertSwapChainFormat(desc_.Format), target_color_space, LayerWidth(), LayerHeight(),
++            desc_.SampleDesc.Count
+         ))
+       device_context_->WaitUntilGPUIdle();
+   };
+@@ -779,7 +873,13 @@
+       auto output = static_cast<MTLDXGIOutput *>(target_.ptr());
+       presenter->changeGammaRamp(output->GetGammaRamp());
+     }
++    bool upscaling = false;
+     if constexpr (EnableMetalFX) {
++      RecheckUpscaledSize();
++      upscaling = metalfx_scaler.ptr() != nullptr && upscaled_backbuffer_.ptr() != nullptr;
++    }
++    if constexpr (EnableMetalFX) {
++      if (upscaling)
+       chunk->emitcc([
+         this, vsync_duration, backbuffer = backbuffer_->texture(),
+         sync_state = SyncFrame(++presentation_count_),
+@@ -797,7 +897,8 @@
+         ReleaseSemaphore(present_semaphore_, 1, nullptr);
+         this->UpdateStatistics(ctx.queue().statistics, ctx.currentFrameId());
+       });
+-    } else {
++    }
++    if (!upscaling) {
+       chunk->emitcc([
+         this, vsync_duration, state = presenter->synchronizeLayerProperties(),
+         sync_state = SyncFrame(++presentation_count_),
+@@ -1091,6 +1192,9 @@
+   std::conditional<EnableMetalFX, Rc<SpatialScaler>, std::monostate>::type metalfx_scaler;
+   std::conditional<EnableMetalFX, Com<D3D11ResourceCommon>, std::monostate>::type upscaled_backbuffer_;
+   float scale_factor = 1.0;
++  /* FineWine: see ChooseUpscaledSize() */
++  bool fx_fixed_ = false;
++  uint32_t fx_width_ = 0, fx_height_ = 0, fx_recheck_ = 0;
+ };
+ 
+ HRESULT
+@@ -1124,7 +1228,9 @@
+   if (ConvertSwapChainFormat(pDesc->Format) == WMTPixelFormatInvalid) {
+     return E_INVALIDARG;
+   }
+-  if (env::getEnvVar("DXMT_METALFX_SPATIAL_SWAPCHAIN") == "1") {
++  /* FineWine: also when nothing asked for it, so that a picture smaller than its window is
++   * upscaled by MetalFX (ChooseUpscaledSize); such a swap chain costs nothing otherwise. */
++  if (env::getEnvVar("DXMT_METALFX_SPATIAL_SWAPCHAIN") == "1" || env::getEnvVar("FINEWINE_METALFX_AUTO") != "0") {
+     if (pDevice->GetMTLDevice().supportsFXSpatialScaler()) {
+       *ppSwapChain = new MTLD3D11SwapChain<true>(
+           pFactory, pDevice, layer_factory.ptr(), hWnd, pDesc, pFullscreenDesc
+diff --git a/src/winemetal/winemetal.h b/src/winemetal/winemetal.h
+--- a/src/winemetal/winemetal.h
++++ b/src/winemetal/winemetal.h
+@@ -1773,6 +1773,9 @@
+   bool display_sync_enabled;
+   bool framebuffer_only;
+   enum WMTPixelFormat pixel_format;
++  /* FineWine: the size of the layer on screen in display pixels; filled in by getProps only */
++  double native_width;
++  double native_height;
+ };
+ 
+ WINEMETAL_API void MetalLayer_setProps(obj_handle_t layer, const struct WMTLayerProps *props);
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -1666,6 +1666,21 @@
+   props->drawable_height = layer.drawableSize.height;
+   props->drawable_width = layer.drawableSize.width;
+   props->pixel_format = layer.pixelFormat;
++  {
++    /* FineWine: how many display pixels the layer covers, which is not its drawable size
++     * when a program renders smaller than its window (or Wine's Retina mode is off). */
++    CGSize size = layer.bounds.size;
++    CGFloat scale = 0;
++    id owner = layer.delegate;
++    if ([owner isKindOfClass:[NSView class]])
++      scale = [[(NSView *)owner window] backingScaleFactor];
++    if (scale <= 0)
++      scale = [[NSScreen mainScreen] backingScaleFactor];
++    if (scale <= 0)
++      scale = 1;
++    props->native_width = size.width * scale;
++    props->native_height = size.height * scale;
++  }
+   return STATUS_SUCCESS;
+ }
+ 

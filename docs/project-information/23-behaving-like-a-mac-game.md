@@ -32,9 +32,22 @@ Details of the default:
   needs nothing from us.
 
 **On a display with a camera housing** a full-screen Space ends below it, as for every Mac
-app. Here that is 1512x949 of 1512x982 points. The game is told its window is that size. A
-game that insists on the full height will be told otherwise by macOS; this was stable in the
-test and has not been tried with a real game.
+app: 1512x949 of 1512x982 points on a 14-inch MacBook Pro. Zenless Zone Zero (Unity) sized its
+window to the whole display and kept it so, while macOS kept the window at the Space's size:
+the bottom of the picture was cut off and clicks landed 33 points low. In this mode the
+display therefore *is*, for Windows programs, the part below the housing
+(`patches/runtime/0025`): it is reported at that height (3024x1898 pixels), and Windows'
+screen coordinates start there, so pointer positions agree. A first attempt changed the
+reported height alone and made the click offset permanent; the coordinate shift is the part
+that matters. `FINEWINE_KEEP_CAMERA_ROWS=1` turns it off. Tested with a full-screen test
+window (size, position and pointer agree on both sides); not yet seen with the game.
+
+**A picture smaller than its window is upscaled with MetalFX** (`patches/dxmt/0004`, Direct3D
+10 and 11). When a game renders at a lower resolution than its window has display pixels (a
+resolution picked in the game, or any program while Retina mode is off), DXMT upscales it to
+the window's pixels with MetalFX's spatial scaler instead of leaving the stretch to the
+window server. A game whose own upscaler is on already produces a window-sized picture, so
+nothing is done to it. `FINEWINE_METALFX_AUTO=0` turns it off.
 
 **Tested** with `tests/runtime/fullscreen.c`, which covers the display, waits, goes windowed
 and exits, while a probe read what macOS did: Wine's own mode puts the window at level 26

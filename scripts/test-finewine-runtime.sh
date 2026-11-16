@@ -214,6 +214,16 @@ elif "$MINGWA" -O1 -o "$WORK/d3dwin-arm64.exe" "$REPO/tests/runtime/d3d11-window
   two="$(WINEDLLPATH="$RT/lib/dxmt" "$RT/bin/wine" "$WORK/d3dwin-x64.exe" 0 0 </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
   case "$one|$two" in "d3d11-window: ok|d3d11-window: ok") pass "Direct3D 11 presents into a window through DXMT (swap chain, clear, present, read back): ARM64 and x64" ;;
     *) fail "Direct3D 11 could not present into a window (ARM64: '$one', x64: '$two')" ;; esac
+  # A picture smaller than its window in display pixels is upscaled by MetalFX, unless that is turned off.
+  mkdir -p "$WORK/fxlog"
+  small="$(DXMT_LOG_PATH="$WORK/fxlog" DXMT_LOG_LEVEL=info WINEDLLPATH="$RT/lib/dxmt" "$RT/bin/wine" "$WORK/d3dwin-x64.exe" 0 0 240 160 </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+  scaled="$(cat "$WORK"/fxlog/*.log 2>/dev/null | grep -c 'MetalFX spatial upscaling 240x160' || true)"
+  rm -f "$WORK"/fxlog/*.log
+  FINEWINE_METALFX_AUTO=0 DXMT_LOG_PATH="$WORK/fxlog" DXMT_LOG_LEVEL=info WINEDLLPATH="$RT/lib/dxmt" "$RT/bin/wine" "$WORK/d3dwin-x64.exe" 0 0 240 160 </dev/null >/dev/null 2>&1 || true
+  plain="$(cat "$WORK"/fxlog/*.log 2>/dev/null | grep -c 'MetalFX spatial upscaling' || true)"
+  if [ "$small" = "d3d11-window: ok" ] && [ "$scaled" -ge 1 ] && [ "$plain" -eq 0 ]; then
+    pass "a Direct3D 11 picture smaller than its window is upscaled with MetalFX, and not when that is turned off"
+  else fail "MetalFX upscaling of a small picture: program said '$small', upscaled $scaled time(s), and $plain time(s) when turned off"; fi
 else
   fail "could not build tests/runtime/d3d11-window.c"; tail -n 3 "$WORK/d3dwin-build.log"
 fi

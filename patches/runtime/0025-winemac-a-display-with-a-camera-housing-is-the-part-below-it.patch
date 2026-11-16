@@ -1,0 +1,314 @@
+winemac: a display with a camera housing is the part below it
+
+A full-screen Space on a display with a camera housing ends below the housing: 1512x949 points
+of 1512x982 on a 14-inch MacBook Pro. A game told the display is 1512x982 sizes its window to
+that and keeps it so; macOS keeps the window at 1512x949. The bottom of the picture was cut
+off, and every click landed 33 points below the pointer, because the window was not where
+Windows thought it was.
+
+When full-screen windows get a Space of their own (FINEWINE_FULLSCREEN=space) the display is
+now, for Windows programs, the part below the housing:
+
+ - it is reported at that height (3024x1898 pixels there), and so are its display modes of
+   the current size;
+ - Windows' screen coordinates start there. Quartz measures from the very top of the
+   display, so every position that passes between the two (pointer events, moving the
+   pointer, the desktop rectangle, the flip to Cocoa's coordinates) is moved by the height
+   left out. The event calls are wrapped in cocoa_app.h so that no caller is missed;
+ - a window counts as covering the display when it covers that part.
+
+A window covering "the display" is then exactly the size of its Space: nothing is cut off or
+rescaled, and positions agree. The rows left out only ever hold the menu bar. An earlier
+attempt changed the reported height alone; windows were then placed 33 points too high and
+clicks were off by as much. The other full-screen modes report the whole display.
+FINEWINE_KEEP_CAMERA_ROWS=1 turns this off.
+
+diff --git a/dlls/winemac.drv/cocoa_display.m b/dlls/winemac.drv/cocoa_display.m
+--- a/dlls/winemac.drv/cocoa_display.m
++++ b/dlls/winemac.drv/cocoa_display.m
+@@ -862,8 +862,89 @@
+ 
+     data = CFDataCreate(NULL, edid, 128);
+     return data;
++}
++
++/***********************************************************************
++ *              macdrv_finewine_display_top_inset
++ *
++ * FineWine: how many points the top of a display loses to its camera housing, when
++ * full-screen windows get a Space of their own; 0 otherwise.
++ *
++ * A full-screen Space on such a display ends below the housing: 1512x949 points of 1512x982.
++ * A game told the display is 1512x982 sizes its window to that, macOS keeps the window at
++ * 1512x949, and the bottom of the picture is cut off and clicks land 33 points low. So in
++ * that mode the display is, for Windows programs, the part below the housing: it is reported
++ * at that height, its display modes of the current size likewise, and Windows' screen
++ * coordinates start there (macdrv_finewine_primary_top_inset). A window covering "the
++ * display" then is exactly the size of its Space: nothing is cut off or rescaled, and
++ * positions agree. The rows beside the housing only ever hold the menu bar.
++ * FINEWINE_KEEP_CAMERA_ROWS=1 turns this off.
++ */
++extern int macdrv_finewine_fullscreen_mode(void);   /* cocoa_window.m; 2 is "a Space of its own" */
++
++static int finewine_screen_top_inset(NSScreen* screen)
++{
++    int inset = 0;
++
++    if (macdrv_finewine_fullscreen_mode() != 2) return 0;
++    if (getenv("FINEWINE_KEEP_CAMERA_ROWS")) return 0;
++    if (@available(macOS 12.0, *))
++    {
++        CGFloat housing = screen.safeAreaInsets.top;
++        if (housing > 0)
++        {
++            /* A full-screen Space starts where the menu bar ends, which on these displays
++             * is a point below the housing (33 against 32 on a 14-inch MacBook Pro). The
++             * menu bar's height is read off the screen when the bar is shown; when it is
++             * hidden, the housing plus that point is used. */
++            CGFloat bar = NSMaxY(screen.frame) - NSMaxY(screen.visibleFrame);
++            inset = (int)ceil(bar > housing ? bar : housing + 1);
++            if (inset >= NSHeight(screen.frame) / 2) inset = 0;
++        }
++    }
++    return inset;
++}
++
++int macdrv_finewine_display_top_inset(CGDirectDisplayID display_id)
++{
++    int inset = 0;
++@autoreleasepool
++{
++    for (NSScreen* screen in [NSScreen screens])
++    {
++        if ([[screen deviceDescription][@"NSScreenNumber"] unsignedIntValue] != display_id) continue;
++        inset = finewine_screen_top_inset(screen);
++        break;
++    }
+ }
++    return inset;
++}
+ 
++/* The same for the primary display, which is where Windows' screen coordinates start: they
++ * begin this many points below the top of the Mac's. Asked for with every mouse event, so
++ * the answer is kept until the displays change. */
++static int finewine_primary_inset = -1;
++
++int macdrv_finewine_primary_top_inset(void)
++{
++    int inset = finewine_primary_inset;
++    if (inset < 0)
++    {
++@autoreleasepool
++{
++        NSArray<NSScreen*>* screens = [NSScreen screens];
++        inset = [screens count] ? finewine_screen_top_inset(screens[0]) : 0;
++        finewine_primary_inset = inset;
++}
++    }
++    return inset;
++}
++
++void macdrv_finewine_displays_changed(void)
++{
++    finewine_primary_inset = -1;
++}
++
+ /***********************************************************************
+  *              macdrv_get_monitors
+  *
+@@ -937,8 +1018,17 @@
+                     primary_index = monitor_count;
+ 
+                 monitors[monitor_count].id = display_ids[i];
+-                monitors[monitor_count].rc_monitor = cgrect_win_from_mac(convert_display_rect(screen.frame, primary_frame));
+-                monitors[monitor_count].rc_work = cgrect_win_from_mac(convert_display_rect(screen.visibleFrame, primary_frame));
++                {
++                    /* FineWine: see macdrv_finewine_display_top_inset(). The display is
++                     * reported without the rows its camera housing is in, and everything
++                     * is measured from below the primary display's. */
++                    NSRect frame = screen.frame, visible = screen.visibleFrame, primary = primary_frame;
++                    frame.size.height -= macdrv_finewine_display_top_inset(display_ids[i]);
++                    primary.size.height -= macdrv_finewine_primary_top_inset();
++                    visible = NSIntersectionRect(visible, frame);
++                    monitors[monitor_count].rc_monitor = cgrect_win_from_mac(convert_display_rect(frame, primary));
++                    monitors[monitor_count].rc_work = cgrect_win_from_mac(convert_display_rect(visible, primary));
++                }
+ 
+                 vendor_number = CGDisplayVendorNumber(monitors[monitor_count].id);
+                 model_number = CGDisplayModelNumber(monitors[monitor_count].id);
+diff --git a/dlls/winemac.drv/macdrv_cocoa.h b/dlls/winemac.drv/macdrv_cocoa.h
+--- a/dlls/winemac.drv/macdrv_cocoa.h
++++ b/dlls/winemac.drv/macdrv_cocoa.h
+@@ -192,6 +192,9 @@
+ extern void macdrv_beep(void);
+ extern void macdrv_set_application_icon(CFArrayRef images);
+ extern void macdrv_set_application_name(CFStringRef name);
++extern int macdrv_finewine_display_top_inset(CGDirectDisplayID display_id);
++extern int macdrv_finewine_primary_top_inset(void);
++extern void macdrv_finewine_displays_changed(void);
+ extern void macdrv_quit_reply(int reply);
+ extern bool macdrv_using_input_method(void);
+ extern void macdrv_set_mouse_capture_window(WineWindow *window);
+diff --git a/dlls/winemac.drv/display.c b/dlls/winemac.drv/display.c
+--- a/dlls/winemac.drv/display.c
++++ b/dlls/winemac.drv/display.c
+@@ -91,6 +91,22 @@
+ }
+ 
+ 
++/* FineWine: the points to take off the height of a display mode: those the camera housing
++ * costs a full-screen Space (macdrv_finewine_display_top_inset), for modes of the size the
++ * display has now. Other modes are left alone. */
++static int finewine_mode_height_inset(CGDirectDisplayID display_id, CGDisplayModeRef display_mode)
++{
++    int inset = macdrv_finewine_display_top_inset(display_id);
++    CGDisplayModeRef current;
++    BOOL same;
++
++    if (inset <= 0 || !(current = CGDisplayCopyDisplayMode(display_id))) return 0;
++    same = CGDisplayModeGetWidth(current) == CGDisplayModeGetWidth(display_mode) &&
++           CGDisplayModeGetHeight(current) == CGDisplayModeGetHeight(display_mode);
++    CFRelease(current);
++    return (same && inset < CGDisplayModeGetHeight(display_mode) / 2) ? inset : 0;
++}
++
+ static void display_mode_to_devmode_fields(CGDirectDisplayID display_id, CGDisplayModeRef display_mode, DEVMODEW *devmode)
+ {
+     uint32_t io_flags;
+@@ -112,7 +128,7 @@
+         devmode->dmFields |= DM_BITSPERPEL;
+ 
+     devmode->dmPelsWidth = CGDisplayModeGetWidth(display_mode);
+-    devmode->dmPelsHeight = CGDisplayModeGetHeight(display_mode);
++    devmode->dmPelsHeight = CGDisplayModeGetHeight(display_mode) - finewine_mode_height_inset(display_id, display_mode);
+     devmode->dmFields |= DM_PELSWIDTH | DM_PELSHEIGHT;
+ 
+     devmode->dmDisplayFlags = 0;
+@@ -681,7 +697,7 @@
+            mode->dmPelsHeight == 0;
+ }
+ 
+-static CGDisplayModeRef find_best_display_mode(DEVMODEW *devmode, CFArrayRef display_modes, int bpp, struct display_mode_descriptor *desc)
++static CGDisplayModeRef find_best_display_mode(CGDirectDisplayID display_id, DEVMODEW *devmode, CFArrayRef display_modes, int bpp, struct display_mode_descriptor *desc)
+ {
+     CFIndex count, i, best;
+     CGDisplayModeRef best_display_mode;
+@@ -696,7 +712,8 @@
+         uint32_t io_flags = CGDisplayModeGetIOFlags(display_mode);
+         int mode_bpp = display_mode_bits_per_pixel(display_mode);
+         size_t width = CGDisplayModeGetWidth(display_mode);
+-        size_t height = CGDisplayModeGetHeight(display_mode);
++        /* the height the mode was reported with (see finewine_mode_height_inset) */
++        size_t height = CGDisplayModeGetHeight(display_mode) - finewine_mode_height_inset(display_id, display_mode);
+         double refresh_rate = CGDisplayModeGetRefreshRate(display_mode);
+         if (!refresh_rate)
+             refresh_rate = 60;
+@@ -782,7 +799,7 @@
+         TRACE(" %sinterlaced", mode->dmDisplayFlags & DM_INTERLACED ? "" : "non-");
+         TRACE("\n");
+ 
+-        if (!(best_display_mode = find_best_display_mode(mode, display_modes, bpp, desc)))
++        if (!(best_display_mode = find_best_display_mode(CGMainDisplayID(), mode, display_modes, bpp, desc)))
+         {
+             ERR("No matching mode found %ux%ux%d @%u!\n", mode->dmPelsWidth, mode->dmPelsHeight,
+                 bpp, mode->dmDisplayFrequency);
+diff --git a/dlls/winemac.drv/cocoa_app.h b/dlls/winemac.drv/cocoa_app.h
+--- a/dlls/winemac.drv/cocoa_app.h
++++ b/dlls/winemac.drv/cocoa_app.h
+@@ -154,3 +154,30 @@
+ 
+ 
+ void OnMainThreadAsync(dispatch_block_t block);
++
++/* FineWine: Windows' screen coordinates start below the primary display's camera housing
++ * when full-screen windows get a Space of their own (macdrv_finewine_display_top_inset in
++ * cocoa_display.m). Quartz measures from the very top, so every position that passes
++ * between the two is moved by that much, here, in one place. */
++static inline CGPoint finewine_CGEventGetLocation(CGEventRef event)
++{
++    CGPoint point = CGEventGetLocation(event);
++    point.y -= macdrv_finewine_primary_top_inset();
++    return point;
++}
++
++static inline void finewine_CGEventSetLocation(CGEventRef event, CGPoint point)
++{
++    point.y += macdrv_finewine_primary_top_inset();
++    CGEventSetLocation(event, point);
++}
++
++static inline CGError finewine_CGWarpMouseCursorPosition(CGPoint point)
++{
++    point.y += macdrv_finewine_primary_top_inset();
++    return CGWarpMouseCursorPosition(point);
++}
++
++#define CGEventGetLocation finewine_CGEventGetLocation
++#define CGEventSetLocation finewine_CGEventSetLocation
++#define CGWarpMouseCursorPosition finewine_CGWarpMouseCursorPosition
+diff --git a/dlls/winemac.drv/cocoa_app.m b/dlls/winemac.drv/cocoa_app.m
+--- a/dlls/winemac.drv/cocoa_app.m
++++ b/dlls/winemac.drv/cocoa_app.m
+@@ -593,7 +593,8 @@
+                 CGRect* rect;
+                 NSScreen* screen;
+ 
+-                primaryScreenHeight = NSHeight([screens[0] frame]);
++                /* FineWine: less the rows Windows' coordinates leave out at the top */
++                primaryScreenHeight = NSHeight([screens[0] frame]) - macdrv_finewine_primary_top_inset();
+                 primaryScreenHeightValid = TRUE;
+ 
+                 size = count * sizeof(CGRect);
+@@ -631,7 +632,7 @@
+         // We don't use -primaryScreenHeight here so there's no chance of having
+         // out-of-date cached info.  This method is called infrequently enough
+         // that getting the screen height each time is not prohibitively expensive.
+-        rect->origin.y = NSMaxY([[NSScreen screens][0] frame]) - NSMaxY(*rect);
++        rect->origin.y = NSMaxY([[NSScreen screens][0] frame]) - macdrv_finewine_primary_top_inset() - NSMaxY(*rect);
+     }
+ 
+     - (WineWindow*) frontWineWindow
+@@ -2439,6 +2440,7 @@
+     {
+         NSDictionary *userInfo;
+ 
++        macdrv_finewine_displays_changed();
+         primaryScreenHeightValid = FALSE;
+         [self sendDisplaysChanged:FALSE];
+         [self adjustWindowLevels];
+diff --git a/dlls/winemac.drv/cocoa_window.m b/dlls/winemac.drv/cocoa_window.m
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -114,7 +114,11 @@
+ {
+     for (NSScreen* screen in screens)
+     {
+-        if (NSContainsRect(rect, [screen frame]))
++        /* FineWine: less the rows of a camera housing, when those are not part of what
++         * Windows programs are shown (macdrv_finewine_display_top_inset). */
++        NSRect frame = [screen frame];
++        frame.size.height -= macdrv_finewine_display_top_inset([[screen deviceDescription][@"NSScreenNumber"] unsignedIntValue]);
++        if (NSContainsRect(rect, frame))
+             return screen;
+     }
+     return nil;
+diff --git a/dlls/winemac.drv/gdi.c b/dlls/winemac.drv/gdi.c
+--- a/dlls/winemac.drv/gdi.c
++++ b/dlls/winemac.drv/gdi.c
+@@ -69,7 +69,15 @@
+     }
+ 
+     for (i = 0; i < count; i++)
+-        desktop_rect = CGRectUnion(desktop_rect, CGDisplayBounds(displayIDs[i]));
++    {
++        /* FineWine: without a camera housing's rows, and measured from below the primary
++         * display's (macdrv_finewine_display_top_inset in cocoa_display.m) */
++        CGRect bounds = CGDisplayBounds(displayIDs[i]);
++        int inset = macdrv_finewine_display_top_inset(displayIDs[i]);
++        bounds.origin.y += inset - macdrv_finewine_primary_top_inset();
++        bounds.size.height -= inset;
++        desktop_rect = CGRectUnion(desktop_rect, bounds);
++    }
+     desktop_rect = cgrect_win_from_mac(desktop_rect);
+ }
+ 
