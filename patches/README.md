@@ -186,6 +186,13 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
   private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
   in a command list, to be carried out by MoltenVK as MetalFX.
+- `0026-winemac-dwmapi-show-what-dxmt-draws-in-windows-that-also-paint-and-keep-their-transparency.patch`:
+  two fixes for launcher windows drawn with Direct3D through DXMT. A window that was also
+  painted the ordinary way (Qt fills its window once) had DXMT's view hidden for good and stayed
+  white; DXMT's views are no longer hidden by a paint. And a translucent window that asks
+  Windows' compositor to honour its alpha (`DwmEnableBlurBehindWindow`) had its see-through
+  margin drawn black; dwmapi marks such windows and the Mac driver makes them and their Metal
+  layer non-opaque. The second is `patches/x64/stage1-macos/0009` and `0010` done for this Wine.
 - `0025-winemac-a-display-with-a-camera-housing-is-the-part-below-it.patch`: with full-screen
   windows in a Space of their own, a display with a camera housing is reported without the rows
   the housing is in (3024x1898 on a 14-inch MacBook Pro) and Windows' screen coordinates start

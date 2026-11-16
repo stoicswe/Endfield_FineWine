@@ -184,6 +184,49 @@ public struct PrefixService {
         return left
     }
 
+    // MARK: Installers FineWine carries out itself
+
+    /// Installs from an NSIS installer by carrying out its script, in place of running the
+    /// installer, which is a 32-bit program (see `NSISScript`). The programs it finds are
+    /// added to the prefix. Returns the prefix as it is afterwards, and what was done.
+    public func installNSIS(_ installer: URL, in prefix: Prefix,
+                            progress: (@Sendable (String) -> Void)? = nil) throws -> (prefix: Prefix, report: NSISInstallReport) {
+        let users = prefix.driveC.appendingPathComponent("users")
+        let user = ((try? FileManager.default.contentsOfDirectory(atPath: users.path)) ?? [])
+            .filter { $0.lowercased() != "public" && !$0.hasPrefix(".") }.sorted().first ?? NSUserName()
+        progress?("Reading the installer…")
+        let archive = try NSISArchive(url: installer) { fraction in
+            progress?("Unpacking the installer… \(Int(fraction * 100))%")
+        }
+        let script = try NSISScript(archive: archive, driveC: prefix.driveC, userName: user, installer: installer,
+                                    productName: InstallName.prefixName(for: installer, existing: []))
+        let report = try script.install { file in progress?("Installing \(file)") }
+
+        if !report.registryFile.isEmpty {
+            progress?("Writing the registry entries…")
+            let file = prefix.driveC.appendingPathComponent("users/\(user)/Temp/finewine-install.reg")
+            try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // regedit reads UTF-16 with a byte-order mark
+            var data = Data([0xFF, 0xFE])
+            data.append(report.registryFile.data(using: .utf16LittleEndian) ?? Data())
+            if (try? data.write(to: file)) != nil, let plan = try? planner(for: prefix).plan(importingRegistryFile: file) {
+                _ = try? runner.run(plan)
+            }
+            try? FileManager.default.removeItem(at: file)
+        }
+
+        var updated = prefix
+        for found in report.programs {
+            let stem = String((found.windowsPath.split(separator: "\\").last ?? "Program").dropLast(4))
+            let name = found.name ?? (report.programs.count == 1 ? prefix.name : stem)
+            let folder = found.windowsPath.split(separator: "\\").dropLast().joined(separator: "\\")
+            updated = try addProgram(Program(name: name, windowsPath: found.windowsPath,
+                                             arguments: found.arguments.isEmpty ? [] : found.arguments.split(separator: " ").map(String.init),
+                                             workingDirectory: folder), to: updated)
+        }
+        return (updated, report)
+    }
+
     // MARK: Programs
 
     /// Adds a program to the prefix's list; one with the same executable is updated instead.

@@ -6,6 +6,12 @@ import FineWineCore
 struct MenuBarView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openSettings) private var openSettings
+    /// How tall the list of prefixes may get, as the user last set it.
+    @AppStorage("MenuPanelListHeight") private var listLimit: Double = 520
+    @State private var dragOffset: Double = 0
+    @State private var contentHeight: Double = 200
+
+    private static let heightRange: ClosedRange<Double> = 140...900
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -28,6 +34,9 @@ struct MenuBarView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .glassCard(padding: 12)
             } else {
+                // The list is as tall as its cards up to a height the user sets by dragging the
+                // handle below it. (Left to itself a scroll view in this panel takes almost no
+                // height at all, and the cards were cut off.)
                 ScrollView {
                     GlassEffectContainer(spacing: 10) {
                         VStack(spacing: 10) {
@@ -37,15 +46,44 @@ struct MenuBarView: View {
                         }
                     }
                     .padding(1)
+                    .background(GeometryReader { proxy in
+                        Color.clear.preference(key: ListHeightKey.self, value: proxy.size.height)
+                    })
                 }
                 .scrollIndicators(.never)
-                .frame(maxHeight: 420)
+                .onPreferenceChange(ListHeightKey.self) { contentHeight = $0 }
+                .frame(height: max(60, min(contentHeight, listLimit + dragOffset)))
+                resizeHandle
             }
             footer
         }
         .padding(14)
-        .frame(width: 340)
+        .frame(width: 380)
         .onAppear { model.reload() }
+    }
+
+    /// A bar to drag: down for a taller list, up for a shorter one. Only shown when there is
+    /// more list than fits, or the list has been made shorter than it could be.
+    @ViewBuilder private var resizeHandle: some View {
+        if contentHeight > 120 {
+            Capsule()
+                .fill(.secondary.opacity(0.45))
+                .frame(width: 44, height: 5)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 3)
+                .contentShape(Rectangle())
+                .gesture(DragGesture()
+                    .onChanged { value in
+                        dragOffset = min(Self.heightRange.upperBound, max(Self.heightRange.lowerBound, listLimit + value.translation.height)) - listLimit
+                    }
+                    .onEnded { _ in
+                        listLimit += dragOffset
+                        dragOffset = 0
+                    })
+                .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
+                .help("Drag to make the list taller or shorter")
+                .accessibilityLabel("List height")
+        }
     }
 
     private var header: some View {
@@ -70,6 +108,9 @@ struct MenuBarView: View {
             }
             .buttonStyle(.glassProminent).tint(Look.wine)
             Spacer()
+            Button("🍷 Donate") { NSWorkspace.shared.open(Links.wineDonate) }
+                .buttonStyle(.glass)
+                .help("Wine, which FineWine runs Windows programs with, is paid for by donations. Opens winehq.org/donate.")
             Button {
                 openSettings()
                 NSApp.activate()
@@ -143,4 +184,9 @@ private struct MenuPrefixCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(padding: 12)
     }
+}
+
+private struct ListHeightKey: PreferenceKey {
+    static let defaultValue: Double = 0
+    static func reduce(value: inout Double, nextValue: () -> Double) { value = max(value, nextValue()) }
 }

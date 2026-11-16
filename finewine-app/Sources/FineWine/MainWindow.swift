@@ -67,6 +67,7 @@ struct MainWindow: View {
                         }
                     }
                     .tag(prefix.id)
+                    .contextMenu { PrefixContextMenu(prefix: prefix) }
                 }
             }
         }
@@ -202,6 +203,17 @@ struct NewPrefixSheet: View {
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
 
+    private var discordStatus: String {
+        if !model.showsDiscordPresence { return "Turned off." }
+        if model.discordApplicationID.isEmpty { return "Needed before anything can be shown." }
+        switch model.discordState {
+        case .idle: return "Ready. Nothing is being played."
+        case .noDiscord: return "Discord isn't running on this Mac."
+        case .refused: return "Discord refused this Application ID."
+        case .showing(let game): return "Showing “\(game)”."
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -218,6 +230,31 @@ struct SettingsView: View {
                         if let folder = Panels.chooseFolder(message: "Choose a Wine runtime folder") { model.addRuntime(from: folder) }
                     }
                     .buttonStyle(.glass)
+                }
+
+                Card(title: "Discord", symbol: "bubble.left.and.bubble.right",
+                     footnote: "The activity is filed under a Discord application, whose name and picture you choose: make one at discord.com/developers (New Application), and paste its Application ID here. Nothing is sent anywhere but to the Discord app on this Mac.") {
+                    Toggle(isOn: Binding(get: { model.showsDiscordPresence }, set: { model.showsDiscordPresence = $0 })) {
+                        Text("Show what I'm playing in Discord")
+                        Text("While a program started from FineWine is running, its name is your Discord activity, with how long you have been playing. Wine's own tools and installers are never shown.")
+                    }
+                    Divider()
+                    Row(label: "Application ID", detail: discordStatus) {
+                        TextField("Application ID", text: Binding(get: { model.discordApplicationID },
+                                                                 set: { model.discordApplicationID = $0 }))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 200)
+                            .labelsHidden()
+                    }
+                }
+
+                Card(title: "Support Wine", symbol: "heart",
+                     footnote: "FineWine is not part of the Wine project and takes no share of donations.") {
+                    Row(label: "Donate to WineHQ", detail: "FineWine runs Windows programs with Wine, which is free software written by volunteers and paid for by donations. If FineWine is useful to you, consider supporting the people who make it possible.") {
+                        Button("🍷 Donate") { NSWorkspace.shared.open(Links.wineDonate) }
+                            .buttonStyle(.glassProminent).tint(Look.wine)
+                            .help("Opens winehq.org/donate in your browser")
+                    }
                 }
 
                 Card(title: "Status", symbol: "hourglass") {
@@ -317,5 +354,65 @@ private struct RuntimeRow: View {
         guard !users.isEmpty else { return effect }
         let names = users.map(\.name).joined(separator: ", ")
         return effect + " These prefixes use it and will need another runtime: \(names)."
+    }
+}
+
+enum Links {
+    /// Where the Wine project takes donations.
+    static let wineDonate = URL(string: "https://www.winehq.org/donate")!
+}
+
+/// What a right-click on a prefix in the sidebar offers: the things done to a prefix as a
+/// whole, without first selecting it and finding the right tab.
+struct PrefixContextMenu: View {
+    @EnvironmentObject private var model: AppModel
+    let prefix: Prefix
+
+    var body: some View {
+        let busy = model.busy[prefix.id] != nil
+        Button("Run Installer…") {
+            if let url = Panels.chooseExecutable(message: "Choose a Windows installer or program to run in “\(prefix.name)”") {
+                model.selection = prefix.id
+                model.runInstaller(url, in: prefix)
+            }
+        }
+        .disabled(busy)
+        Button("Find Installed Programs") {
+            model.selection = prefix.id
+            model.findInstalledPrograms(in: prefix)
+        }
+        .disabled(busy)
+        Divider()
+        Button("Configure…") { model.show(prefixID: prefix.id, section: "configuration") }
+        Menu("Wine Tools") {
+            ForEach(WineTool.allCases) { tool in
+                Button(tool.displayName) { Task { await model.open(tool, in: prefix) } }
+            }
+        }
+        .disabled(busy)
+        Divider()
+        Button("Show C: Drive in Finder") { NSWorkspace.shared.open(prefix.driveC) }
+        Button("Show Logs in Finder") {
+            let logs = model.service.logFile(for: prefix, name: "x").deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+            NSWorkspace.shared.open(logs)
+        }
+        Divider()
+        Button("Shut Down") { Task { await model.shutDown(prefix) } }.disabled(busy || !model.isRunning(prefix))
+        Button("Force Shut Down") { Task { await model.forceShutDown(prefix) } }.disabled(busy)
+        Divider()
+        Button("Rename…") {
+            if let name = Panels.askForName(title: "Rename “\(prefix.name)”", current: prefix.name) { model.rename(prefix, to: name) }
+        }
+        .disabled(busy)
+        Button("Duplicate") { Task { await model.duplicate(prefix) } }.disabled(busy)
+        Button("Delete…", role: .destructive) {
+            if Panels.confirm(title: "Delete “\(prefix.name)”?",
+                              message: "The prefix, everything installed in it and its shortcut apps are deleted. This can't be undone.",
+                              action: "Delete Prefix") {
+                Task { await model.delete(prefix) }
+            }
+        }
+        .disabled(busy)
     }
 }

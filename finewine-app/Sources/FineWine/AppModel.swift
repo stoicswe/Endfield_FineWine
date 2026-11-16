@@ -33,6 +33,15 @@ final class AppModel: ObservableObject {
     /// A tab of the prefix view to switch to (`configuration`, …), consumed by that view.
     @Published var requestedSection: String?
 
+    /// What Discord was last told, for the settings to show.
+    @Published var discordState: DiscordConnection.State = .idle
+    /// The program last started in each prefix, and when: what "is being played" there.
+    private var playing: [UUID: (name: String, since: Date)] = [:]
+    private var discordTimer: Timer?
+    private lazy var discord = DiscordConnection { state in
+        Task { @MainActor in AppModel.shared.discordState = state }
+    }
+
     /// True once a file or link has been handed to FineWine to open. A first run that starts
     /// that way does not show the manager window.
     var wasAskedToOpenSomething = false
@@ -193,6 +202,84 @@ final class AppModel: ObservableObject {
             try $0.forceShutDown(prefix)
         }
         running[prefix.id] = nil
+    }
+
+    // MARK: Discord
+
+    private static let discordEnabledKey = "DiscordPresence"
+    private static let discordApplicationKey = "DiscordApplicationID"
+
+    /// Whether the game being played is shown as the user's Discord activity. Off until the
+    /// user turns it on: it tells other people what they are doing.
+    var showsDiscordPresence: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.discordEnabledKey) }
+        set {
+            objectWillChange.send()
+            UserDefaults.standard.set(newValue, forKey: Self.discordEnabledKey)
+            refreshDiscord()
+        }
+    }
+
+    /// The id of the Discord application the activity is filed under.
+    var discordApplicationID: String {
+        get { UserDefaults.standard.string(forKey: Self.discordApplicationKey) ?? "" }
+        set {
+            objectWillChange.send()
+            UserDefaults.standard.set(newValue.filter(\.isNumber), forKey: Self.discordApplicationKey)
+            refreshDiscord()
+        }
+    }
+
+    /// A program was started from FineWine: it is what is being played in its prefix until
+    /// nothing runs there any more.
+    private func notePlaying(_ program: Program, in prefix: Prefix) {
+        playing[prefix.id] = (program.name, Date())
+        refreshDiscord()
+        guard discordTimer == nil else { return }
+        let timer = Timer(timeInterval: 15, repeats: true) { _ in
+            Task { @MainActor in AppModel.shared.refreshDiscord() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        discordTimer = timer
+    }
+
+    /// Works out what is being played now and tells Discord, or clears the activity.
+    func refreshDiscord() {
+        guard showsDiscordPresence, !discordApplicationID.isEmpty, !playing.isEmpty else {
+            discord.show(game: nil, since: nil, others: 0, applicationID: "")
+            if playing.isEmpty { discordTimer?.invalidate(); discordTimer = nil }
+            if !showsDiscordPresence || discordApplicationID.isEmpty { discordState = .idle }
+            return
+        }
+        let sessions = playing
+        let known = prefixes
+        let service = UncheckedBox(service)
+        let applicationID = discordApplicationID
+        Task { @MainActor in
+            // Which sessions still have something running, and what: a launcher may have
+            // started the game and gone.
+            let current = await Task.detached(priority: .utility) { () -> [(id: UUID, game: String, since: Date)] in
+                sessions.compactMap { id, session in
+                    guard let prefix = known.first(where: { $0.id == id }) else { return nil }
+                    let running = service.value.runningProgramNames(in: prefix)
+                    // a program takes a while to appear after it is started
+                    if running.isEmpty { return Date().timeIntervalSince(session.since) < 60 ? (id, session.name, session.since) : nil }
+                    guard let game = DiscordPresence.game(started: session.name, running: running,
+                                                          listed: prefix.metadata.programs.map(\.name)) else { return nil }
+                    return (id, game, session.since)
+                }
+            }.value
+            for id in sessions.keys where !current.contains(where: { $0.id == id }) {
+                // only forget a session nobody restarted meanwhile
+                if playing[id]?.since == sessions[id]?.since { playing[id] = nil }
+            }
+            guard let latest = current.max(by: { $0.since < $1.since }) else {
+                discord.show(game: nil, since: nil, others: 0, applicationID: "")
+                discordTimer?.invalidate(); discordTimer = nil
+                return
+            }
+            discord.show(game: latest.game, since: latest.since, others: current.count - 1, applicationID: applicationID)
+        }
     }
 
     // MARK: Quitting
@@ -356,6 +443,7 @@ final class AppModel: ObservableObject {
             })
             box.pid = pid
             track(pid, in: prefix.id)
+            notePlaying(program, in: prefix)
         } catch {
             StatusSplash.shared.hide(status)
             show(error, title: "“\(program.name)” couldn't be started")
@@ -396,6 +484,7 @@ final class AppModel: ObservableObject {
 
     /// Runs an installer, then looks for the programs it added.
     func runInstaller(_ url: URL, in prefix: Prefix) {
+        if WindowsExecutable.is32BitProgram(url) { return install32Bit(url, in: prefix) }
         let box = PIDBox()
         let prefixID = prefix.id
         let status = startingStatus(url.deletingPathExtension().lastPathComponent, in: prefix)
@@ -409,6 +498,55 @@ final class AppModel: ObservableObject {
         } catch {
             StatusSplash.shared.hide(status)
             show(error, title: "“\(url.lastPathComponent)” couldn't be started")
+        }
+    }
+
+    /// A 32-bit program cannot run in FineWine's runtime. Most installers are 32-bit all the
+    /// same, whatever they install; one made with NSIS is carried out by FineWine itself, from
+    /// the script inside it. Anything else is explained to the user.
+    private func install32Bit(_ url: URL, in prefix: Prefix) {
+        let name = url.deletingPathExtension().lastPathComponent
+        guard NSISArchive.isNSISInstaller(url) else {
+            alert = AppAlert(title: "“\(url.lastPathComponent)” is a 32-bit program",
+                             message: "FineWine can run 64-bit Windows programs only: an Apple silicon Mac gives a program no memory where a 32-bit one needs it. 32-bit installers made with NSIS are installed by FineWine itself; this one is of another kind. Look for a 64-bit installer or a portable (zip) download of the program.")
+            openMainWindow()
+            return
+        }
+        let prefixID = prefix.id
+        Task { @MainActor in
+            busy[prefixID] = "Installing…"
+            let token = StatusSplash.shared.show(title: "Installing \(prefix.name)",
+                                                 message: "Reading the installer…")
+            let service = UncheckedBox(service)
+            let outcome: Result<(prefix: Prefix, report: NSISInstallReport), Error> = await Task.detached(priority: .userInitiated) {
+                Result { try service.value.installNSIS(url, in: prefix) { stage in
+                    Task { @MainActor in StatusSplash.shared.update(token, message: stage) }
+                } }
+            }.value
+            busy[prefixID] = nil
+            switch outcome {
+            case .failure(let error):
+                StatusSplash.shared.hide(token)
+                alert = AppAlert(title: "“\(name)” couldn't be installed",
+                                 message: "This installer is a 32-bit program, which FineWine cannot run, so FineWine tried to carry out its install script itself.\n\n" + error.localizedDescription)
+                openMainWindow()
+            case .success(let result):
+                let before = Set(prefix.metadata.programs.map(\.id))
+                replace(result.prefix)
+                let added = result.prefix.metadata.programs.filter { !before.contains($0.id) }
+                nameAfterInstalledPrograms(prefixID, added: added)
+                for program in added {
+                    if let current = self.prefix(prefixID) { createShortcut(for: program.id, in: current) }
+                }
+                let installed = self.prefix(prefixID)?.name ?? prefix.name
+                StatusSplash.shared.update(token, message: added.isEmpty
+                    ? "Installed, but FineWine found no program to list. Add it in Manage Prefixes."
+                    : "Installed. Start it from the FineWine menu or its app in Applications.")
+                StatusSplash.shared.retitle(token, "\(installed) is installed")
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                StatusSplash.shared.hide(token)
+                if added.isEmpty { show(prefixID: prefixID) }
+            }
         }
     }
 
@@ -657,6 +795,32 @@ final class PIDBox: @unchecked Sendable {
 }
 
 enum Panels {
+    /// Asks for a name in a small dialog. Nil when cancelled or left empty.
+    @MainActor static func askForName(title: String, current: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = title
+        let field = NSTextField(string: current)
+        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty || name == current ? nil : name
+    }
+
+    /// Asks before something that cannot be undone.
+    @MainActor static func confirm(title: String, message: String, action: String) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: action).hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     /// Asks for an installer or other Windows executable.
     @MainActor static func chooseExecutable(in directory: URL? = nil, message: String) -> URL? {
         let panel = NSOpenPanel()

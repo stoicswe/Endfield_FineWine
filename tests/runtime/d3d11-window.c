@@ -31,7 +31,14 @@ int main(int argc, char **argv)
     cls.hInstance = GetModuleHandleA(NULL);
     cls.lpszClassName = "FineWineD3D11Window";
     RegisterClassA(&cls);
-    hwnd = CreateWindowA(cls.lpszClassName, "Direct3D 11 window", WS_OVERLAPPEDWINDOW | WS_VISIBLE, x, y, 480, 320, NULL, NULL, cls.hInstance, NULL);
+    /* D3D11_WINDOW_LAYERED in the environment makes it a layered window, opaque (1) or drawn
+     * with UpdateLayeredWindow first (2): launchers with translucent windows have those. */
+    {
+        const char *layered = getenv("D3D11_WINDOW_LAYERED");
+        hwnd = CreateWindowExA(layered ? WS_EX_LAYERED : 0, cls.lpszClassName, "Direct3D 11 window",
+                               (layered ? WS_POPUP : WS_OVERLAPPEDWINDOW) | WS_VISIBLE, x, y, 480, 320, NULL, NULL, cls.hInstance, NULL);
+        if (layered && hwnd) SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+    }
 
     desc.BufferCount = 2;
     desc.BufferDesc.Width = argc > 4 ? atoi(argv[3]) : 480;

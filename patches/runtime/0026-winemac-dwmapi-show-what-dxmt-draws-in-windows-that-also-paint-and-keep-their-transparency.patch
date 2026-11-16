@@ -1,0 +1,459 @@
+winemac, dwmapi: show what DXMT draws in windows that also paint, and keep their transparency
+
+Two things kept a launcher's Direct3D window from looking as it does on Windows. Both showed
+with the GRYPHLINK launcher (Qt 5 drawing through ANGLE on Direct3D 11, in a translucent
+window with round corners); neither is particular to it.
+
+A blank window. The Mac driver hides a window's client view (the one Direct3D, OpenGL or
+Vulkan draws into) whenever the window is painted the ordinary way, so that the paint is not
+covered. Wine's own Direct3D and OpenGL announce each frame they present, which shows the view
+again. DXMT presents straight to Metal and announces nothing, so one ordinary paint (Qt fills
+its window once as it starts) left the view hidden for good: a white window with frames being
+presented into it. A view DXMT presents into is no longer hidden by a paint. And when another
+client surface leaves a window (a second swap chain, a surface made only to probe OpenGL or
+Vulkan), DXMT's most recent view on that window is shown again.
+
+A black margin. A translucent window drawn with Direct3D relies on Windows' compositor (DWM)
+to honour the alpha in its swap chain, and asks for that with DwmEnableBlurBehindWindow. Wine
+has no compositor, and the margin around the launcher's rounded window came out black. dwmapi
+now marks such a window (a window property, and a SetWindowPos that changes nothing so the
+driver notices), and the driver makes the window and its Metal layer non-opaque, so the Mac's
+window server composites the alpha instead. DXMT declares every layer opaque, so the layer is
+a subclass that knows better. Such a window is not given FineWine's own round corners: it
+draws its shape itself. This is the fix patches/x64/stage1-macos 0009 and 0010 made for
+CrossOver's Wine, done again for this one.
+
+diff --git a/dlls/winemac.drv/window.c b/dlls/winemac.drv/window.c
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -298,10 +298,43 @@
+         macdrv_window_use_per_pixel_alpha(data->cocoa_window, per_pixel_alpha);
+         data->per_pixel_alpha = per_pixel_alpha;
+     }
++}
++
++
++/***********************************************************************
++ *              window_composites_alpha
++ *
++ * FineWine: Wine has no DWM to composite the alpha of a window that asked it to blur behind
++ * the window, as a launcher's rounded or translucent Direct3D window does (Qt asks for it for
++ * every translucent window that draws with OpenGL or ANGLE). dwmapi marks those windows, and
++ * the window server composites them instead. Without this the see-through margin of such a
++ * window is drawn black.
++ */
++static BOOL window_composites_alpha(HWND hwnd)
++{
++    static const WCHAR prop[] = {'_','_','w','i','n','e','_','d','w','m','_','b','l','u','r','_','b','e','h','i','n','d',0};
++    return NtUserGetProp(hwnd, prop) != NULL;
+ }
+ 
+ 
+ /***********************************************************************
++ *              sync_window_composite_alpha
++ */
++static void sync_window_composite_alpha(struct macdrv_win_data *data)
++{
++    BOOL composite_alpha;
++
++    if (!data->cocoa_window) return;
++    composite_alpha = window_composites_alpha(data->hwnd);
++    if (!data->composite_alpha == !composite_alpha) return;
++
++    TRACE("setting window %p/%p composite-alpha to %d\n", data->hwnd, data->cocoa_window, composite_alpha);
++    macdrv_window_composite_alpha(data->cocoa_window, composite_alpha);
++    data->composite_alpha = composite_alpha;
++}
++
++
++/***********************************************************************
+  *              sync_window_min_max_info
+  */
+ static void sync_window_min_max_info(HWND hwnd)
+@@ -490,6 +523,8 @@
+     /* set the window opacity */
+     if (!NtUserGetLayeredWindowAttributes(data->hwnd, &key, &alpha, &layered_flags)) layered_flags = 0;
+     sync_window_opacity(data, alpha, FALSE, layered_flags);
++    data->composite_alpha = FALSE;
++    sync_window_composite_alpha(data);
+ 
+ done:
+     if (win_rgn) NtGdiDeleteObjectApp(win_rgn);
+@@ -1071,6 +1106,8 @@
+ 
+     if (surface->metal_swapchain) macdrv_destroy_swapchain(surface->metal_swapchain);
+ }
++
++static void finewine_dxmt_show_remaining(HWND hwnd, struct client_surface *leaving, BOOL detaching);
+ 
+ static void macdrv_client_surface_detach(struct client_surface *client)
+ {
+@@ -1091,6 +1128,8 @@
+ 
+         macdrv_dispose_view(surface->cocoa_view);
+     }
++    /* FineWine: a view of DXMT's on this window that this one had hidden is shown again */
++    finewine_dxmt_show_remaining(client->hwnd, client, TRUE);
+ }
+ 
+ static void macdrv_client_surface_update(struct client_surface *client)
+@@ -1647,6 +1686,10 @@
+ 
+     TRACE("win %p/%p new_rects %s style %08x flags %08x surface %p\n", hwnd, data->cocoa_window,
+           debugstr_window_rects(new_rects), new_style, swp_flags, surface);
++
++    /* FineWine: dwmapi asks for this with a SetWindowPos() that changes nothing, when a
++     * program turns "blur behind" on or off for the window. */
++    sync_window_composite_alpha(data);
+ 
+     if (!data->cocoa_window) goto done;
+ 
+@@ -2238,9 +2281,56 @@
+     WineContentView        *client_view;
+     WineMetalView          *metal_view;
+     struct client_surface  *surface;
++    unsigned int            order;               /* later ones are higher */
+ } finewine_dxmt_views[32];
++static unsigned int finewine_dxmt_order;
+ static pthread_mutex_t finewine_dxmt_mutex = PTHREAD_MUTEX_INITIALIZER;
++
++/* A window shows one client view at a time, the one last presented, and hides the one before.
++ * Programs make more than one on a window and let some go again: a second swap chain, or an
++ * OpenGL or Vulkan surface made only to see what the graphics card can do (Qt does both when
++ * it starts). The view DXMT is drawing into is hidden when the other appears, and nothing
++ * shows it again when the other goes: the window stays blank while frames are presented into
++ * it. So whenever a client surface leaves a window, the most recent view of DXMT's that is
++ * left on that window is shown.
++ * Called with `detaching` from a surface's detach function, where Wine holds the lock that
++ * guards every surface: nothing can go away meanwhile, and no reference may be taken. */
++static void finewine_dxmt_show_remaining(HWND hwnd, struct client_surface *leaving, BOOL detaching)
++{
++    struct client_surface *remaining = NULL;
++    unsigned int i, order = 0;
+ 
++    pthread_mutex_lock(&finewine_dxmt_mutex);
++    for (i = 0; i < ARRAY_SIZE(finewine_dxmt_views); i++)
++        if (finewine_dxmt_views[i].surface && finewine_dxmt_views[i].metal_view &&
++            finewine_dxmt_views[i].surface != leaving && finewine_dxmt_views[i].surface->hwnd == hwnd &&
++            finewine_dxmt_views[i].order >= order)
++        {
++            remaining = finewine_dxmt_views[i].surface;
++            order = finewine_dxmt_views[i].order;
++        }
++    if (remaining && !detaching) client_surface_add_ref(remaining);
++    pthread_mutex_unlock(&finewine_dxmt_mutex);
++    if (!remaining) return;
++    macdrv_client_surface_update(remaining);
++    macdrv_client_surface_present(remaining, 0);
++    if (!detaching) client_surface_release(remaining);
++}
++
++/* Whether a client view is one DXMT is presenting into (see macdrv_surface_flush). */
++BOOL macdrv_finewine_is_dxmt_view(WineContentView *view)
++{
++    unsigned int i;
++    BOOL ret = FALSE;
++
++    pthread_mutex_lock(&finewine_dxmt_mutex);
++    for (i = 0; i < ARRAY_SIZE(finewine_dxmt_views) && !ret; i++)
++        ret = finewine_dxmt_views[i].surface && finewine_dxmt_views[i].metal_view &&
++              finewine_dxmt_views[i].client_view == view;
++    pthread_mutex_unlock(&finewine_dxmt_mutex);
++    return ret;
++}
++
+ static struct finewine_dxmt_win_data *finewine_dxmt_get_win_data(HWND hwnd)
+ {
+     struct finewine_dxmt_win_data *ret;
+@@ -2263,6 +2353,7 @@
+         finewine_dxmt_views[i].surface = client;
+         finewine_dxmt_views[i].client_view = ret->client_cocoa_view;
+         finewine_dxmt_views[i].metal_view = NULL;
++        finewine_dxmt_views[i].order = ++finewine_dxmt_order;
+         break;
+     }
+     pthread_mutex_unlock(&finewine_dxmt_mutex);
+@@ -2333,7 +2424,12 @@
+         }
+     pthread_mutex_unlock(&finewine_dxmt_mutex);
+     macdrv_view_release_metal_view(metal_view);
+-    if (surface) client_surface_release(surface);
++    if (surface)
++    {
++        HWND hwnd = surface->hwnd;
++        client_surface_release(surface);
++        finewine_dxmt_show_remaining(hwnd, NULL, FALSE);
++    }
+ }
+ 
+ /* The members and their order are DXMT's (src/winemetal/unix/winemetal_unix.c); it uses the
+diff --git a/dlls/winemac.drv/surface.c b/dlls/winemac.drv/surface.c
+--- a/dlls/winemac.drv/surface.c
++++ b/dlls/winemac.drv/surface.c
+@@ -124,7 +124,12 @@
+      * content in the window_surface */
+     if ((data = get_win_data(window_surface->hwnd)))
+     {
+-        if (data->client_view)
++        /* FineWine: not a view DXMT presents into. Wine's own Direct3D and OpenGL say so each
++         * time they present, which shows their view again; DXMT presents straight to Metal and
++         * never says, so a view of its that was hidden here stayed hidden: one ordinary paint
++         * (Qt fills its window once when it starts) and the window was blank for good, with
++         * frames still being presented into it. */
++        if (data->client_view && !macdrv_finewine_is_dxmt_view(data->client_view))
+         {
+             macdrv_set_view_hidden(data->client_view, TRUE);
+             data->client_view = NULL;
+diff --git a/dlls/winemac.drv/macdrv.h b/dlls/winemac.drv/macdrv.h
+--- a/dlls/winemac.drv/macdrv.h
++++ b/dlls/winemac.drv/macdrv.h
+@@ -196,6 +196,7 @@
+ extern BOOL macdrv_WindowPosChanging(HWND hwnd, UINT swp_flags, BOOL shaped, const struct window_rects *rects);
+ extern BOOL macdrv_GetWindowStyleMasks(HWND hwnd, UINT style, UINT ex_style, UINT *style_mask, UINT *ex_style_mask);
+ extern struct client_surface *macdrv_CreateClientSurface(HWND hwnd, int pixel_format, BOOL raw);
++extern BOOL macdrv_finewine_is_dxmt_view(WineContentView *view);
+ extern BOOL macdrv_CreateWindowSurface(HWND hwnd, BOOL layered, const RECT *surface_rect, struct window_surface **surface);
+ extern void macdrv_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UINT swp_flags,
+                                     const struct window_rects *new_rects, struct window_surface *surface);
+@@ -240,6 +241,7 @@
+     unsigned int        layered : 1;            /* is window layered and with valid attributes? */
+     unsigned int        ulw_layered : 1;        /* has UpdateLayeredWindow() been called for window? */
+     unsigned int        per_pixel_alpha : 1;    /* is window using per-pixel alpha? */
++    unsigned int        composite_alpha : 1;    /* FineWine: does the window server composite its Metal alpha? */
+     unsigned int        minimized : 1;          /* is window minimized? */
+     unsigned int        fullscreen : 1;         /* is the window visible rect fullscreen? (unrelated to native AppKit/Cocoa fullscreen) */
+ };
+diff --git a/dlls/winemac.drv/macdrv_cocoa.h b/dlls/winemac.drv/macdrv_cocoa.h
+--- a/dlls/winemac.drv/macdrv_cocoa.h
++++ b/dlls/winemac.drv/macdrv_cocoa.h
+@@ -492,6 +492,7 @@
+ extern void macdrv_set_window_shape(WineWindow *window, const CGRect *rects, int count);
+ extern void macdrv_set_window_alpha(WineWindow *window, CGFloat alpha);
+ extern void macdrv_window_use_per_pixel_alpha(WineWindow *window, bool use_per_pixel_alpha);
++extern void macdrv_window_composite_alpha(WineWindow *window, bool composite_alpha);
+ extern void macdrv_set_window_mask(WineWindow *window, CGRect rect);
+ extern void macdrv_give_cocoa_window_focus(WineWindow *window, bool activate);
+ extern void macdrv_set_window_min_max_sizes(WineWindow *window, CGSize min_size, CGSize max_size);
+diff --git a/dlls/winemac.drv/cocoa_window.m b/dlls/winemac.drv/cocoa_window.m
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -237,10 +237,27 @@
+ }
+ 
+     - (id) initWithFrame:(NSRect)frame device:(id<MTLDevice>)device;
++    - (void) updateCompositesAlpha;
+ 
+ @end
+ 
++/* FineWine: a Metal layer that stays see-through where its picture is, when its window is one
++ * Windows would have composited (see macdrv_window_composite_alpha). DXMT declares every
++ * layer opaque; it cannot know. */
++@interface WineMetalLayer : CAMetalLayer
++@property (atomic) BOOL compositesAlpha;
++@end
+ 
++@implementation WineMetalLayer
++    @synthesize compositesAlpha;
++
++    - (void) setOpaque:(BOOL)opaque
++    {
++        [super setOpaque:opaque && !self.compositesAlpha];
++    }
++@end
++
++
+ @interface WineContentView : WineBaseView <NSTextInput, NSViewLayerContentScaleDelegate>
+ {
+     CGRect surfaceRect;
+@@ -272,6 +289,8 @@
+     - (void) wine_setBackingSize:(const int*)newBackingSize;
+ 
+     - (WineMetalView*) newMetalViewWithDevice:(id<MTLDevice>)device;
++    - (BOOL) hasMetalDescendant;
++    - (void) updateCompositesAlpha;
+     - (void) addCALayerHostViewWithContextId:(CAContextID)contextId;
+     - (void) removeCALayerHostView:(CAContextID)contextId;
+ 
+@@ -297,6 +316,7 @@
+     - (void) wine_updateRoundedCorners;
+ 
+ @property (nonatomic) BOOL usePerPixelAlpha;
++@property (nonatomic) BOOL compositesAlpha;
+ 
+ @property (assign, nonatomic) void* ime_update;
+ @property (nonatomic) BOOL commandDone;
+@@ -412,7 +432,15 @@
+             return;
+ 
+         if (window.closing)
++            return;
++
++        /* FineWine: the window surface sits behind the Metal view and has no alpha, so it
++         * would show (white) wherever the swap chain's picture is transparent. */
++        if (window.compositesAlpha && [self hasMetalDescendant])
++        {
++            layer.contents = nil;
+             return;
++        }
+ 
+         imageRect = layer.bounds;
+         imageRect.origin.x *= layer.contentsScale;
+@@ -574,6 +602,29 @@
+         }
+     }
+ 
++    - (BOOL) hasMetalDescendant
++    {
++        if (_metalView)
++            return YES;
++        for (WineContentView* view in [self subviews])
++        {
++            if ([view isKindOfClass:[WineContentView class]] && [view hasMetalDescendant])
++                return YES;
++        }
++        return NO;
++    }
++
++    - (void) updateCompositesAlpha
++    {
++        [_metalView updateCompositesAlpha];
++        for (WineContentView* view in [self subviews])
++        {
++            if ([view isKindOfClass:[WineContentView class]])
++                [view updateCompositesAlpha];
++        }
++        [self setNeedsDisplay:YES];
++    }
++
+     - (WineMetalView*) newMetalViewWithDevice:(id<MTLDevice>)device
+     {
+         if (_metalView) return _metalView;
+@@ -583,6 +634,11 @@
+         [self setAutoresizesSubviews:YES];
+         [self addSubview:view positioned:NSWindowBelow relativeTo:nil];
+         _metalView = view;
++        if (((WineWindow*)self.window).compositesAlpha)
++        {
++            [view updateCompositesAlpha];
++            [[self.window contentView] setNeedsDisplay:YES];
++        }
+ 
+         [(WineWindow*)self.window windowDidDrawContent];
+ 
+@@ -861,7 +917,7 @@
+ 
+     - (CALayer*) makeBackingLayer
+     {
+-        CAMetalLayer *layer = [CAMetalLayer layer];
++        WineMetalLayer *layer = [WineMetalLayer layer];
+         layer.device = _device;
+         layer.framebufferOnly = YES;
+         layer.magnificationFilter = kCAFilterNearest;
+@@ -879,7 +935,31 @@
+ 
+     - (BOOL) isOpaque
+     {
+-        return YES;
++        return !((WineWindow*)self.window).compositesAlpha;
++    }
++
++    /* FineWine: see macdrv_window_composite_alpha. */
++    - (void) updateCompositesAlpha
++    {
++        BOOL compositesAlpha = ((WineWindow*)self.window).compositesAlpha;
++        WineMetalLayer* layer = (WineMetalLayer*)self.layer;
++
++        if (![layer isKindOfClass:[WineMetalLayer class]]) return;
++        layer.compositesAlpha = compositesAlpha;
++        layer.backgroundColor = CGColorGetConstantColor(compositesAlpha ? kCGColorClear : kCGColorBlack);
++        layer.opaque = !compositesAlpha;
++    }
++
++    /* The view is made before it is in its window, which is where the answer comes from. */
++    - (void) viewDidMoveToWindow
++    {
++        [super viewDidMoveToWindow];
++        [self updateCompositesAlpha];
++        if (((WineWindow*)self.window).compositesAlpha)
++        {
++            [[self.window contentView] setNeedsDisplay:YES];
++            [(WineWindow*)self.window checkTransparency];
++        }
+     }
+ 
+ @end
+@@ -892,7 +972,7 @@
+     @synthesize disabled, noForeground, preventsAppActivation, floating, fullscreen, fakingClose, closing, latentParentWindow, hwnd, queue;
+     @synthesize drawnSinceShown;
+     @synthesize shapeChangedSinceLastDraw;
+-    @synthesize usePerPixelAlpha;
++    @synthesize usePerPixelAlpha, compositesAlpha;
+     @synthesize ime_update, commandDone;
+     @synthesize contentViewMaskLayer;
+ 
+@@ -2031,6 +2111,7 @@
+         if (screen && NSWidth(frame) >= NSWidth(screen.frame) && NSHeight(frame) >= NSHeight(screen.frame) - 40) return NO;
+         if ([self level] > NSFloatingWindowLevel) return NO;
+         if (view.layer.mask || [view hasShapeImage] || self.usePerPixelAlpha) return NO;
++        if (self.compositesAlpha) return NO;   /* such a window draws its own shape */
+         return YES;
+     }
+ 
+@@ -2052,6 +2133,7 @@
+     {
+         WineContentView *view = self.contentView;
+         return roundedCorners || self.contentView.layer.mask || [view hasShapeImage] || self.usePerPixelAlpha ||
++                self.compositesAlpha ||
+                 (gl_surface_mode == GL_SURFACE_BEHIND && [view hasGLDescendant]);
+     }
+ 
+@@ -3565,6 +3647,27 @@
+ {
+     OnMainThread(^{
+         [window setAlphaValue:alpha];
++    });
++}
++}
++
++/***********************************************************************
++ *              macdrv_window_composite_alpha
++ *
++ * FineWine: make the window's Metal views non-opaque, so the window server composites
++ * their alpha as Windows' DWM would have. For windows that asked for "blur behind", which is
++ * how a program with a translucent or rounded Direct3D window (a Qt launcher) gets one.
++ */
++void macdrv_window_composite_alpha(WineWindow *window, bool composite_alpha)
++{
++@autoreleasepool
++{
++    OnMainThread(^{
++        window.compositesAlpha = composite_alpha;
++        [(WineContentView*)window.contentView updateCompositesAlpha];
++        [window wine_updateRoundedCorners];
++        [window checkTransparency];
++        [window invalidateShadow];
+     });
+ }
+ }
+diff --git a/dlls/dwmapi/dwmapi_main.c b/dlls/dwmapi/dwmapi_main.c
+--- a/dlls/dwmapi/dwmapi_main.c
++++ b/dlls/dwmapi/dwmapi_main.c
+@@ -163,6 +163,18 @@
+ HRESULT WINAPI DwmEnableBlurBehindWindow(HWND hWnd, const DWM_BLURBEHIND *pBlurBuf)
+ {
+     FIXME("%p %p\n", hWnd, pBlurBuf);
++
++    /* HACK: There is no DWM to composite the window's alpha.  Mark the window, so
++     * the Mac driver can have the window server do it, and let the driver know
++     * through a no-op SetWindowPos().  The call still fails as before. */
++    if (pBlurBuf && (pBlurBuf->dwFlags & DWM_BB_ENABLE) &&
++        !GetPropW(hWnd, L"__wine_dwm_blur_behind") != !pBlurBuf->fEnable)
++    {
++        if (pBlurBuf->fEnable) SetPropW(hWnd, L"__wine_dwm_blur_behind", ULongToHandle(1));
++        else RemovePropW(hWnd, L"__wine_dwm_blur_behind");
++        SetWindowPos(hWnd, 0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
++                     SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING);
++    }
+ 
+     return E_NOTIMPL;
+ }
