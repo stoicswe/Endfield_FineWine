@@ -28,8 +28,14 @@ final class AppModel: ObservableObject {
     @Published var busy: [UUID: String] = [:]
     @Published var alert: AppAlert?
     @Published var isCreatingPrefix = false
+    /// The prefix being made for a file opened from Finder, shown while it is set up.
+    @Published var settingUpPrefixName: String?
     /// A tab of the prefix view to switch to (`configuration`, …), consumed by that view.
     @Published var requestedSection: String?
+
+    /// True once a file or link has been handed to FineWine to open. A first run that starts
+    /// that way does not show the manager window.
+    var wasAskedToOpenSomething = false
 
     /// Set by the menu bar label, which is the one view that always exists.
     var openMainWindow: () -> Void = {}
@@ -304,7 +310,10 @@ final class AppModel: ObservableObject {
         do {
             let pid = try service.launch(executable: url, in: prefix, onExit: exitHandler(prefixID: prefixID, pidBox: box) {
                 if let current = AppModel.shared.prefix(prefixID) {
+                    let before = Set(current.metadata.programs.map(\.id))
                     AppModel.shared.findInstalledPrograms(in: current, quietly: true)
+                    let added = AppModel.shared.prefix(prefixID)?.metadata.programs.filter { !before.contains($0.id) } ?? []
+                    AppModel.shared.nameAfterInstalledPrograms(prefixID, added: added)
                 }
             })
             box.pid = pid
@@ -370,8 +379,39 @@ final class AppModel: ObservableObject {
 
     // MARK: Opening files from Finder
 
+    private static let openedFilePolicyKey = "OpenedFilePolicy"
+
+    /// What happens to a file opened from outside any prefix: a prefix of its own, made without
+    /// asking, or a question.
+    var openedFilePolicy: OpenedFilePolicy {
+        get { UserDefaults.standard.string(forKey: Self.openedFilePolicyKey).flatMap(OpenedFilePolicy.init) ?? .autoCreate }
+        set {
+            objectWillChange.send()
+            UserDefaults.standard.set(newValue.rawValue, forKey: Self.openedFilePolicyKey)
+        }
+    }
+
+    /// Names of prefixes that are being made for opened files, so that two files opened at
+    /// once don't get the same name.
+    private var pendingPrefixNames: [String] = []
+    /// Prefixes made for an opened file whose name was only guessed from the file's name. Once
+    /// the installer has finished, such a prefix is named after what it installed.
+    private var guessedPrefixNames: [UUID: String] = [:]
+
+    /// Gives a prefix with a guessed name the name of what was installed into it, unless the
+    /// user has renamed it meanwhile or nothing recognisable was installed.
+    private func nameAfterInstalledPrograms(_ prefixID: UUID, added: [Program]) {
+        guard let guessed = guessedPrefixNames.removeValue(forKey: prefixID),
+              let prefix = prefix(prefixID), prefix.name == guessed,
+              let found = InstallName.installedName(programs: added.map { ($0.name, $0.windowsPath) }) else { return }
+        let name = InstallName.unique(found, among: prefixes.filter { $0.id != prefixID }.map(\.name))
+        guard name != prefix.name, let renamed = try? service.prefixes.rename(prefix, to: name) else { return }
+        replace(renamed)
+    }
+
     /// Runs a Windows executable or installer opened from Finder: straight away when it lives
-    /// in a prefix, otherwise after asking which prefix to use.
+    /// in a prefix; otherwise in a new prefix named after it, or wherever the user says,
+    /// depending on `openedFilePolicy`.
     func open(executable url: URL) {
         reload()
         switch WindowsExecutable.route(for: url, prefixes: prefixes) {
@@ -379,15 +419,49 @@ final class AppModel: ObservableObject {
             alert = AppAlert(title: "FineWine can't open “\(url.lastPathComponent)”",
                              message: "It opens Windows programs and installers (.exe and .msi files).")
             openMainWindow()
-        case .needsPrefix:
-            alert = AppAlert(title: "Create a prefix first",
-                             message: "“\(url.lastPathComponent)” needs a prefix to run in. Create one, then open the file again.")
-            openMainWindow()
         case .run(let prefix):
             runInstaller(url, in: prefix)
             if alert != nil { openMainWindow() }
-        case .choose(let candidates):
-            guard let prefix = Panels.choosePrefix(for: url, from: candidates, preselected: selection) else { return }
+        case .needsPrefix, .choose:
+            let hint = InstallName.prefixHint(for: url, existing: prefixes.map(\.name) + pendingPrefixNames)
+            let name = hint.name
+            if openedFilePolicy == .autoCreate {
+                run(url, inNewPrefixNamed: name, renameAfterInstall: !hint.isFromInstaller)
+            } else {
+                switch Panels.choosePrefix(for: url, newPrefixName: name, from: prefixes, preselected: selection) {
+                case .none: return
+                case .new: run(url, inNewPrefixNamed: name, renameAfterInstall: !hint.isFromInstaller)
+                case .existing(let prefix):
+                    runInstaller(url, in: prefix)
+                    if alert != nil { openMainWindow() }
+                }
+            }
+        }
+    }
+
+    /// Makes a prefix for an opened file, with the first usable runtime (the built-in one when
+    /// the app has it), and runs the file in it. No window is opened for this: the program's
+    /// own window is what the user is waiting for. The menu bar panel, and the manager window
+    /// if it happens to be open, say what is being set up; only a failure opens the manager.
+    private func run(_ url: URL, inNewPrefixNamed name: String, renameAfterInstall: Bool) {
+        guard let runtime = usableRuntimes.first else {
+            alert = AppAlert(title: "No Wine runtime",
+                             message: "“\(url.lastPathComponent)” needs a prefix to run in, and there is no usable runtime to make one with. Add one in Settings, then open the file again.")
+            openMainWindow()
+            return
+        }
+        pendingPrefixNames.append(name)
+        Task { @MainActor in
+            settingUpPrefixName = name
+            let created = await createPrefix(name: name, runtime: runtime, profile: nil)
+            pendingPrefixNames.removeAll { $0 == name }
+            settingUpPrefixName = pendingPrefixNames.first
+            guard created, let prefix = prefixes.first(where: { $0.name == name }) else {
+                openMainWindow()      // the reason is in an alert, which the manager window shows
+                return
+            }
+            selection = prefix.id
+            if renameAfterInstall { guessedPrefixNames[prefix.id] = name }
             runInstaller(url, in: prefix)
             if alert != nil { openMainWindow() }
         }
@@ -494,21 +568,36 @@ enum Panels {
         return panel.runModal() == .OK ? panel.url : nil
     }
 
-    /// Asks which prefix a file opened from Finder should run in. Returns `nil` on Cancel.
-    @MainActor static func choosePrefix(for file: URL, from prefixes: [Prefix], preselected: UUID?) -> Prefix? {
+    enum PrefixChoice {
+        case new
+        case existing(Prefix)
+    }
+
+    /// Asks where a file opened from Finder should run: in a new prefix with the given name
+    /// (the first choice, and the one selected), or in one that exists. Returns `nil` on Cancel.
+    @MainActor static func choosePrefix(for file: URL, newPrefixName: String, from prefixes: [Prefix],
+                                        preselected: UUID?) -> PrefixChoice? {
         let alert = NSAlert()
         alert.messageText = "Run “\(file.lastPathComponent)” with FineWine?"
         alert.informativeText = "Choose the prefix to run it in. Only run programs you trust: they get the same access to your files as FineWine has."
         alert.addButton(withTitle: "Run")
         alert.addButton(withTitle: "Cancel")
-        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 280, height: 26), pullsDown: false)
-        popup.addItems(withTitles: prefixes.map(\.name))
-        if let index = prefixes.firstIndex(where: { $0.id == preselected }) { popup.selectItem(at: index) }
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26), pullsDown: false)
+        // Items are added one by one: addItems(withTitles:) drops titles that repeat.
+        popup.menu?.addItem(NSMenuItem(title: "New prefix “\(newPrefixName)”", action: nil, keyEquivalent: ""))
+        if !prefixes.isEmpty { popup.menu?.addItem(.separator()) }
+        for prefix in prefixes {
+            let item = NSMenuItem(title: prefix.name, action: nil, keyEquivalent: "")
+            item.representedObject = prefix.id
+            popup.menu?.addItem(item)
+        }
+        popup.selectItem(at: 0)
         alert.accessoryView = popup
         NSApp.activate()
-        guard alert.runModal() == .alertFirstButtonReturn,
-              prefixes.indices.contains(popup.indexOfSelectedItem) else { return nil }
-        return prefixes[popup.indexOfSelectedItem]
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        guard let id = popup.selectedItem?.representedObject as? UUID,
+              let prefix = prefixes.first(where: { $0.id == id }) else { return .new }
+        return .existing(prefix)
     }
 
     @MainActor static func chooseFolder(message: String) -> URL? {

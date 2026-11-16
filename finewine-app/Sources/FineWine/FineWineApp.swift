@@ -21,6 +21,10 @@ struct FineWineApp: App {
         }
         .defaultSize(width: 980, height: 680)
         .windowToolbarStyle(.unified)
+        // SwiftUI shows a window scene whenever the app is handed a file or a link. Opening a
+        // Windows program, or a shortcut app's finewine:// link, must not bring the manager up:
+        // the delegate handles those, and the manager is opened only when there is a reason.
+        .handlesExternalEvents(matching: [])
 
         Settings {
             SettingsView().environmentObject(model)
@@ -42,8 +46,13 @@ struct MenuBarLabel: View {
                     openWindow(id: "main")
                     NSApp.activate()
                 }
-                // First run: nothing to launch yet, so start in the manager.
-                if model.prefixes.isEmpty { model.openMainWindow() }
+                // First run: nothing to launch yet, so start in the manager. Not when FineWine was
+                // started to open a file, though: that file is about to get a prefix by itself,
+                // and the manager would only be in the way. The check waits a moment because the
+                // file arrives just after launch.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    if model.prefixes.isEmpty, !model.wasAskedToOpenSomething { model.openMainWindow() }
+                }
             }
     }
 }
@@ -71,7 +80,16 @@ extension MenuBarLabel {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Started by opening a file or a finewine:// link, as opposed to being started itself.
+        if let event = NSAppleEventManager.shared().currentAppleEvent,
+           event.eventID == AEEventID(kAEOpenDocuments) || event.eventID == AEEventID(kAEGetURL) {
+            MainActor.assumeIsolated { AppModel.shared.wasAskedToOpenSomething = true }
+        }
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
+        MainActor.assumeIsolated { AppModel.shared.wasAskedToOpenSomething = true }
         Task { @MainActor in
             for url in urls {
                 // Files come from Finder ("Open With", or a double-click once FineWine is the

@@ -89,6 +89,21 @@ else
   else
     fail "could not build the x64 test programs"; tail -n 3 "$WORK/x64-build.log"
   fi
+  # 32-bit programs cannot run here (no memory below 4 GB). An installer that starts the 32-bit
+  # setup program of a runtime Wine has built in must see it succeed; any other 32-bit program
+  # must still fail to start, and say so.
+  MINGW32="$REPO/build/llvm-mingw/bin/i686-w64-mingw32-clang"
+  if [ -x "$MINGW32" ] && mkdir -p "$WORK/redist" \
+     && "$MINGW32" -O1 -o "$WORK/redist/vc_redist.x64.exe" "$REPO/tests/runtime/x64-hello.c" >"$WORK/redist-build.log" 2>&1 \
+     && cp "$WORK/redist/vc_redist.x64.exe" "$WORK/redist/other32.exe" \
+     && "$MINGW" -O1 -municode -o "$WORK/redist/start.exe" "$REPO/tests/runtime/start-and-wait.c" >>"$WORK/redist-build.log" 2>&1; then
+    one="$("$RT/bin/wine" "$WORK/redist/start.exe" vc_redist.x64.exe </dev/null 2>/dev/null | tr -d '\r')"
+    two="$("$RT/bin/wine" "$WORK/redist/start.exe" other32.exe </dev/null 2>/dev/null | tr -d '\r')"
+    case "$one|$two" in "started, exit code 0|could not start"*) pass "32-bit setup programs of built-in runtimes are reported as installed; other 32-bit programs fail to start" ;;
+      *) fail "32-bit stand-in: runtime setup gave '$one', another 32-bit program gave '$two'" ;; esac
+  else
+    echo "  - 32-bit stand-in check skipped: could not build its test programs"
+  fi
   # The stand-in for the Steam client: a program started through it finds Steam "running".
   STEAM="$RT/share/finewine/steam/steam.exe"
   if [ ! -f "$STEAM" ]; then

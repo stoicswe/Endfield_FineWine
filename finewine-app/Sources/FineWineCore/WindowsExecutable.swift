@@ -40,8 +40,8 @@ public enum WindowsExecutable {
     public static func route(for url: URL, prefixes: [Prefix]) -> Route {
         guard isSupported(url) else { return .unsupported }
         if let owner = owningPrefix(of: url, among: prefixes) { return .run(in: owner) }
-        // Anything from outside a prefix (a download, say) is confirmed first, even with a
-        // single prefix, so a stray double-click never runs an installer unasked.
+        // Anything from outside a prefix (a download, say) gets a prefix of its own or a
+        // question, as the user has set (OpenedFilePolicy); the app decides which.
         return prefixes.isEmpty ? .needsPrefix : .choose(from: prefixes)
     }
 }
