@@ -220,6 +220,13 @@ struct SettingsView: View {
                     .buttonStyle(.glass)
                 }
 
+                Card(title: "Status", symbol: "hourglass") {
+                    Toggle(isOn: Binding(get: { model.showsStatusWindow }, set: { model.showsStatusWindow = $0 })) {
+                        Text("Show a status window while things start")
+                        Text("A small window in the middle of the display says what FineWine is doing while a prefix is set up or changed and while a program starts, until the program's own window appears. Click it to hide it.")
+                    }
+                }
+
                 Card(title: "Windows files", symbol: "doc.badge.gearshape",
                      footnote: "A program that is already inside a prefix always runs there. FineWine appears under Open With for these files whether or not it is their default app.") {
                     Row(label: "When a program is opened", detail: "A .exe or .msi from outside any prefix, such as a downloaded installer. FineWine can make a prefix for it, named after what it installs, or ask whether to make one or use a prefix you have.") {
