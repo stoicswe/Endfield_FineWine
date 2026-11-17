@@ -481,9 +481,12 @@ Next steps:
   3. Right-click Arknights: Endfield → Properties → Compatibility →
      "Force the use of a specific Steam Play compatibility tool" →
      select "$DISPLAY_NAME".
-  4. Add  -force-d3d11  to the game's Launch Options (Properties → General)
-     for the best graphics path (DX12 doesn't work; Vulkan is also supported).
-  5. Launch the game from Steam.
+  4. In the game's Launch Options (Properties → General), enter ONLY:
+     -force-d3d11
+     (Do NOT add %command% or env vars like CX_GRAPHICS_BACKEND; optimal defaults are already set!)
+  5. If the NotProton app shows "$BUILD_NAME, not supported", this is normal for custom runners.
+     Do NOT click Remove.
+  6. Launch the game from Steam.
 
 Standalone mode (scripts/launch-endfield.sh) still works independently.
 See docs/notproton.md for the full guide and troubleshooting.
