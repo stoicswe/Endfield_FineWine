@@ -130,6 +130,10 @@ public struct LaunchPlanner {
             overrides += spec.overrides.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
         }
 
+        // A language for non-Unicode programs is set through LC_CTYPE, which an inherited
+        // LC_ALL would override.
+        if prefix.metadata.settings.nonUnicodeLanguage.unixLocale != nil { env.removeValue(forKey: "LC_ALL") }
+
         var userOverrides: String?
         for (name, value) in prefix.metadata.settings.environmentVariables() + extra.map({ ($0.name, $0.value) }) {
             guard EnvironmentVariable.isValidName(name) else { continue }

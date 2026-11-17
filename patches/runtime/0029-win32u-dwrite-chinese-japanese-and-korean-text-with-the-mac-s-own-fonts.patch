@@ -1,0 +1,314 @@
+win32u, dwrite: Chinese, Japanese and Korean text with the Mac's own fonts
+
+Windows programs name Windows' East Asian fonts ("MS Gothic", "Microsoft YaHei", "Malgun
+Gothic", ...) and Wine's font links and DirectWrite's fallback name them or Linux's Noto CJK
+fonts. A Mac has none of these, so in a FineWine prefix every font, Wine's own dialog fonts
+included, drew Chinese, Japanese and Korean characters as empty boxes, through GDI and through
+DirectWrite (Chromium-based launchers) alike. The code pages were never the problem: 932, 936,
+949 and 950 convert correctly, and the ANSI code page follows the locale.
+
+- wine.inf: HKCU\Software\Wine\Fonts\Replacements maps each Windows East Asian font name to the
+  Mac font that stands in for it (Hiragino Sans and Hiragino Mincho for Japanese, Hiragino Sans
+  GB, Songti SC and Heiti SC for Simplified Chinese, Heiti TC and Songti TC for Traditional,
+  Apple SD Gothic Neo for Korean; PingFang and Kaiti first when the user has downloaded them).
+  GDI and DirectWrite both read the key; a real font of the Windows name, if installed, wins.
+  With those names present, Wine's existing font links resolve, so every font falls back to
+  them for characters it does not have.
+- win32u: when MS Shell Dlg is set to a font none of Wine's link lists is keyed on, the list is
+  picked by the ANSI code page instead of none at all, and the System font takes Microsoft Sans
+  Serif's links when Tahoma (substituted) has none. Windows orders its links by the system
+  locale too; the order decides which language's forms shared Han characters take.
+- dwrite: after each Noto CJK font in the system fallback comes the font Windows falls back to
+  (Yu Gothic UI, Microsoft YaHei, Microsoft JhengHei, Malgun Gothic), which the replacements
+  above make the Mac's fonts. A region locale ("zh-CN", "ko-KR") now finds the mappings made for
+  its script or language ("zh-Hans", "ko"); only exact names matched before, so Chinese and
+  Korean text took the locale-neutral (Japanese) forms.
+
+Checked by tests/runtime/cjk.c in Endfield_FineWine (scripts/test-finewine-runtime.sh).
+
+diff --git a/dlls/dwrite/analyzer.c b/dlls/dwrite/analyzer.c
+index a0bc41e..9598465 100644
+--- a/dlls/dwrite/analyzer.c
++++ b/dlls/dwrite/analyzer.c
+@@ -224,6 +224,10 @@ const char *debugstr_sa_script(UINT16 script)
+     return script < Script_LastId ? debugstr_fourcc(dwritescripts_properties[script].props.isoScriptCode) : "undefined";
+ }
+ 
++/* FineWine: after each Noto CJK font (what a Linux system has) comes the font Windows falls back
++ * to for that language. A Mac has neither, but the prefix maps the Windows names to the Mac's own
++ * Chinese, Japanese and Korean fonts (HKCU\Software\Wine\Fonts\Replacements, from wine.inf),
++ * so text that DirectWrite draws, Chromium's included, finds them. */
+ static const struct fallback_description
+ {
+     const char *ranges;
+@@ -284,7 +288,7 @@ system_fallback_config[] =
+     { "1100-11FF, 3130-318F, "
+       "3200-321F, 3260-327F, "
+       "A960-A97F, AC00-D7FF, "
+-      "D7B0-D7FF",              L"Noto Sans CJK KR" },
++      "D7B0-D7FF",              L"Noto Sans CJK KR, Malgun Gothic, Microsoft YaHei" },
+ 
+     { "1680-169F",              L"Noto Sans Ogham" },
+ 
+@@ -332,27 +336,27 @@ system_fallback_config[] =
+ 
+     /* CJK Radicals Supplement - 2E80-2EFF */
+ 
+-    { "2E80-2EFF",              L"Noto Sans CJK SC", L"zh-Hans" },
+-    { "2E80-2EFF",              L"Noto Sans CJK TC", L"zh-Hant" },
+-    { "2E80-2EFF",              L"Noto Sans CJK KR", L"ko" },
++    { "2E80-2EFF",              L"Noto Sans CJK SC, Microsoft YaHei, Yu Gothic UI", L"zh-Hans" },
++    { "2E80-2EFF",              L"Noto Sans CJK TC, Microsoft JhengHei, Microsoft YaHei", L"zh-Hant" },
++    { "2E80-2EFF",              L"Noto Sans CJK KR, Malgun Gothic, Microsoft YaHei", L"ko" },
+ 
+     /* CJK Symbols and Punctuation - 3000-303F
+        Hiragana                    - 3040-309F
+        Katakana                    - 30A0-30FF
+        Katakana Phonetic Ext.      - 31F0-31FF */
+ 
+-    { "3000-30FF, 31F0-31FF",   L"Noto Sans CJK SC", L"zh-Hans" },
+-    { "3000-30FF, 31F0-31FF",   L"Noto Sans CJK TC", L"zh-Hant" },
+-    { "3000-30FF, 31F0-31FF",   L"Noto Sans CJK KR", L"ko" },
+-    { "3000-30FF, 31F0-31FF",   L"Noto Sans CJK JP" },
++    { "3000-30FF, 31F0-31FF",   L"Noto Sans CJK SC, Microsoft YaHei, Yu Gothic UI", L"zh-Hans" },
++    { "3000-30FF, 31F0-31FF",   L"Noto Sans CJK TC, Microsoft JhengHei, Microsoft YaHei", L"zh-Hant" },
++    { "3000-30FF, 31F0-31FF",   L"Noto Sans CJK KR, Malgun Gothic, Microsoft YaHei", L"ko" },
++    { "3000-30FF, 31F0-31FF",   L"Noto Sans CJK JP, Yu Gothic UI, Microsoft YaHei" },
+ 
+     /* CJK Unified Ext A - 3400-4DBF
+        CJK Unified       - 4E00-9FFF */
+ 
+-    { "3400-4DBF, 4E00-9FFF",   L"Noto Sans CJK SC", L"zh-Hans" },
+-    { "3400-4DBF, 4E00-9FFF",   L"Noto Sans CJK TC", L"zh-Hant" },
+-    { "3400-4DBF, 4E00-9FFF",   L"Noto Sans CJK KR", L"ko" },
+-    { "3400-4DBF, 4E00-9FFF",   L"Noto Sans CJK JP" },
++    { "3400-4DBF, 4E00-9FFF",   L"Noto Sans CJK SC, Microsoft YaHei, Yu Gothic UI", L"zh-Hans" },
++    { "3400-4DBF, 4E00-9FFF",   L"Noto Sans CJK TC, Microsoft JhengHei, Microsoft YaHei", L"zh-Hant" },
++    { "3400-4DBF, 4E00-9FFF",   L"Noto Sans CJK KR, Malgun Gothic, Microsoft YaHei", L"ko" },
++    { "3400-4DBF, 4E00-9FFF",   L"Noto Sans CJK JP, Yu Gothic UI, Microsoft YaHei" },
+ 
+     { "A000-A4CF",              L"Noto Sans Yi" },
+     { "A4D0-A4FF",              L"Noto Sans Lisu" },
+@@ -368,30 +372,30 @@ system_fallback_config[] =
+ 
+     /* CJK Compatibility Ideographs - F900-FAFF */
+ 
+-    { "F900-FAFF",              L"Noto Sans CJK SC", L"zh-Hans" },
+-    { "F900-FAFF",              L"Noto Sans CJK TC", L"zh-Hant" },
+-    { "F900-FAFF",              L"Noto Sans CJK KR", L"ko" },
+-    { "F900-FAFF",              L"Noto Sans CJK JP" },
++    { "F900-FAFF",              L"Noto Sans CJK SC, Microsoft YaHei, Yu Gothic UI", L"zh-Hans" },
++    { "F900-FAFF",              L"Noto Sans CJK TC, Microsoft JhengHei, Microsoft YaHei", L"zh-Hant" },
++    { "F900-FAFF",              L"Noto Sans CJK KR, Malgun Gothic, Microsoft YaHei", L"ko" },
++    { "F900-FAFF",              L"Noto Sans CJK JP, Yu Gothic UI, Microsoft YaHei" },
+ 
+     /* Vertical Forms - FE10-FE1F */
+ 
+-    { "FE10-FE1F",              L"Noto Sans CJK SC", L"zh-Hans" },
+-    { "FE10-FE1F",              L"Noto Sans CJK KR", L"ko" },
+-    { "FE10-FE1F",              L"Noto Sans CJK TC" },
++    { "FE10-FE1F",              L"Noto Sans CJK SC, Microsoft YaHei, Yu Gothic UI", L"zh-Hans" },
++    { "FE10-FE1F",              L"Noto Sans CJK KR, Malgun Gothic, Microsoft YaHei", L"ko" },
++    { "FE10-FE1F",              L"Noto Sans CJK TC, Microsoft JhengHei, Microsoft YaHei" },
+ 
+     /* CJK Compatibility Forms - FE30-FE4F
+        Small Form Variants     - FE50-FE6F */
+ 
+-    { "FE30-FE6F",              L"Noto Sans CJK SC", L"zh-Hans" },
+-    { "FE30-FE6F",              L"Noto Sans CJK KR", L"ko" },
+-    { "FE30-FE6F",              L"Noto Sans CJK JP", L"ja" },
+-    { "FE30-FE6F",              L"Noto Sans CJK TC" },
++    { "FE30-FE6F",              L"Noto Sans CJK SC, Microsoft YaHei, Yu Gothic UI", L"zh-Hans" },
++    { "FE30-FE6F",              L"Noto Sans CJK KR, Malgun Gothic, Microsoft YaHei", L"ko" },
++    { "FE30-FE6F",              L"Noto Sans CJK JP, Yu Gothic UI, Microsoft YaHei", L"ja" },
++    { "FE30-FE6F",              L"Noto Sans CJK TC, Microsoft JhengHei, Microsoft YaHei" },
+ 
+     /* Halfwidth and Fullwidth Forms */
+-    { "FF00-FFEF",              L"Noto Sans CJK SC", L"zh-Hans" },
+-    { "FF00-FFEF",              L"Noto Sans CJK TC", L"zh-Hant" },
+-    { "FF00-FFEF",              L"Noto Sans CJK KR", L"ko" },
+-    { "FF00-FFEF",              L"Noto Sans CJK JP" },
++    { "FF00-FFEF",              L"Noto Sans CJK SC, Microsoft YaHei, Yu Gothic UI", L"zh-Hans" },
++    { "FF00-FFEF",              L"Noto Sans CJK TC, Microsoft JhengHei, Microsoft YaHei", L"zh-Hant" },
++    { "FF00-FFEF",              L"Noto Sans CJK KR, Malgun Gothic, Microsoft YaHei", L"ko" },
++    { "FF00-FFEF",              L"Noto Sans CJK JP, Yu Gothic UI, Microsoft YaHei" },
+ 
+     { "1F800-1F8FF",            L"Noto Sans Symbols2, Noto Sans Symbols 2" },
+ };
+@@ -552,6 +556,8 @@ static struct fallback_locale * font_fallback_get_locale(const struct list *loca
+         const WCHAR *locale_name, bool use_neutral)
+ {
+     struct fallback_locale *locale, *neutral = NULL;
++    WCHAR parent[LOCALE_NAME_MAX_LENGTH];
++    const WCHAR *dash;
+ 
+     LIST_FOR_EACH_ENTRY(locale, locales, struct fallback_locale, entry)
+     {
+@@ -559,6 +565,30 @@ static struct fallback_locale * font_fallback_get_locale(const struct list *loca
+         if (use_neutral && !*locale->name) neutral = locale;
+     }
+ 
++    /* FineWine: programs pass a region locale ("zh-CN", "ja-JP", "ko-KR") where the mappings are
++     * made for a script or a language ("zh-Hans", "ja", "ko"); with only exact names matching,
++     * Chinese and Korean text fell back as if it had no locale and shared Han characters took
++     * their Japanese forms. Try the script (Chinese) or the language, as Windows does. */
++    parent[0] = 0;
++    if (!wcsnicmp(locale_name, L"zh", 2) && (!locale_name[2] || locale_name[2] == '-'))
++    {
++        if (wcsstr(locale_name, L"Hant") || wcsstr(locale_name, L"hant") ||
++            !wcsicmp(locale_name, L"zh-TW") || !wcsicmp(locale_name, L"zh-HK") || !wcsicmp(locale_name, L"zh-MO"))
++            wcscpy(parent, L"zh-Hant");
++        else
++            wcscpy(parent, L"zh-Hans");
++    }
++    else if ((dash = wcschr(locale_name, '-')) && dash - locale_name < ARRAY_SIZE(parent))
++    {
++        memcpy(parent, locale_name, (dash - locale_name) * sizeof(WCHAR));
++        parent[dash - locale_name] = 0;
++    }
++    if (parent[0] && wcsicmp(parent, locale_name))
++    {
++        LIST_FOR_EACH_ENTRY(locale, locales, struct fallback_locale, entry)
++            if (!wcsicmp(locale->name, parent)) return locale;
++    }
++
+     return neutral;
+ }
+ 
+diff --git a/dlls/win32u/font.c b/dlls/win32u/font.c
+index 97936e9..9842a31 100644
+--- a/dlls/win32u/font.c
++++ b/dlls/win32u/font.c
+@@ -2074,6 +2074,8 @@ static void load_system_links(void)
+ 
+     if ((shelldlg_name = get_gdi_font_subst( ms_shell_dlgW, -1, NULL )))
+     {
++        BOOL matched = FALSE;
++
+         for (i = 0; i < ARRAY_SIZE(font_links_defaults_list); i++)
+         {
+             const WCHAR *subst = get_gdi_font_subst( font_links_defaults_list[i].shelldlg, -1, NULL );
+@@ -2081,12 +2083,35 @@ static void load_system_links(void)
+             if ((!facename_compare( font_links_defaults_list[i].shelldlg, shelldlg_name, -1 ) ||
+                  (subst && !facename_compare( subst, shelldlg_name, -1 ))))
+             {
++                matched = TRUE;
+                 for (j = 0; j < ARRAY_SIZE(font_links_list); j++)
+                     populate_system_links( font_links_list[j], font_links_defaults_list[i].substitutes );
+                 if (!facename_compare(shelldlg_name, font_links_defaults_list[i].substitutes[0], -1))
+                     populate_system_links( shelldlg_name, font_links_defaults_list[i].substitutes );
+             }
+         }
++
++        /* FineWine: when MS Shell Dlg is set to a font of the user's choosing (FineWine sets it
++         * to the Mac's dialog font), none of the lists above matched and no font had anything to
++         * fall back to for characters it lacks: Chinese, Japanese and Korean text drew as empty
++         * boxes. Pick the list by the ANSI code page instead, as Windows orders its own links by
++         * the system locale (the order decides how Han characters shared by the languages look). */
++        if (!matched)
++        {
++            switch (ansi_cp.CodePage)
++            {
++            case 932: i = 1; break;
++            case 936: i = 2; break;
++            case 949: i = 3; break;
++            case 950: i = 4; break;
++            default:  i = 0; break;
++            }
++            TRACE( "MS Shell Dlg is %s, using the links for code page %u\n",
++                   debugstr_w(shelldlg_name), ansi_cp.CodePage );
++            for (j = 0; j < ARRAY_SIZE(font_links_list); j++)
++                populate_system_links( font_links_list[j], font_links_defaults_list[i].substitutes );
++            populate_system_links( shelldlg_name, font_links_defaults_list[i].substitutes );
++        }
+     }
+     else WARN( "could not find FontSubstitute for MS Shell Dlg\n" );
+ 
+@@ -2099,7 +2124,10 @@ static void load_system_links(void)
+         add_gdi_font_link_entry( system_font_link, face->family->family_name, face->fs );
+         TRACE("Found Tahoma in %s index %u\n", debugstr_w(face->file), face->face_index);
+     }
+-    if ((font_link = find_gdi_font_link( tahomaW )))
++    /* FineWine: Tahoma has no links of its own when it is substituted (FineWine sets it to the
++     * Mac's dialog font); take Microsoft Sans Serif's then, which every other font falls back to. */
++    if ((font_link = find_gdi_font_link( tahomaW )) ||
++        (font_link = find_gdi_font_link( microsoft_sans_serifW )))
+     {
+         struct gdi_font_link_entry *entry;
+         LIST_FOR_EACH_ENTRY( entry, &font_link->links, struct gdi_font_link_entry, entry )
+diff --git a/loader/wine.inf.in b/loader/wine.inf.in
+index 9288b58..6a7f6e5 100644
+--- a/loader/wine.inf.in
++++ b/loader/wine.inf.in
+@@ -63,6 +63,7 @@ AddReg=\
+     Debugger,\
+     DirectX,\
+     Fonts,\
++    FontReplacements,\
+     LicenseInformation,\
+     MCI,\
+     Misc,\
+@@ -1221,6 +1222,63 @@ HKLM,Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Time Zones,"SymbolicL
+ HKLM,Software\Wow6432Node\Policies,"SymbolicLinkValue",0x60000,"\Registry\Machine\Software\Policies"
+ HKLM,Software\Wow6432Node\Registered Applications,"SymbolicLinkValue",0x60000,"\Registry\Machine\Software\Registered Applications"
+ 
++[FontReplacements]
++; FineWine: Windows' Chinese, Japanese and Korean fonts, which a Mac does not have, are the
++; Mac's own fonts under the Windows names, for GDI and for DirectWrite alike. Programs that ask
++; for "MS Gothic" or "Microsoft YaHei" get a font that has the characters instead of Arial,
++; and Wine's font links (which name these fonts) give every other font something to fall back
++; to. The first font of each list that is installed is used (PingFang and the Kaiti fonts only
++; when the user has downloaded them); a real font of the Windows name, if installed, wins.
++; 0x10000 = REG_MULTI_SZ.
++; Japanese, gothic
++HKCU,Software\Wine\Fonts\Replacements,"MS UI Gothic",0x10000,"Hiragino Sans W3","Hiragino Sans","Hiragino Kaku Gothic ProN W3","Hiragino Kaku Gothic ProN","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"MS Gothic",0x10000,"Hiragino Sans W3","Hiragino Sans","Hiragino Kaku Gothic ProN W3","Hiragino Kaku Gothic ProN","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"MS PGothic",0x10000,"Hiragino Sans W3","Hiragino Sans","Hiragino Kaku Gothic ProN W3","Hiragino Kaku Gothic ProN","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"Meiryo",0x10000,"Hiragino Sans W3","Hiragino Sans","Hiragino Kaku Gothic ProN W3","Hiragino Kaku Gothic ProN","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"Meiryo UI",0x10000,"Hiragino Sans W3","Hiragino Sans","Hiragino Kaku Gothic ProN W3","Hiragino Kaku Gothic ProN","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"Yu Gothic",0x10000,"Hiragino Sans W3","Hiragino Sans","Hiragino Kaku Gothic ProN W3","Hiragino Kaku Gothic ProN","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"Yu Gothic UI",0x10000,"Hiragino Sans W3","Hiragino Sans","Hiragino Kaku Gothic ProN W3","Hiragino Kaku Gothic ProN","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"Yu Gothic Medium",0x10000,"Hiragino Sans W3","Hiragino Sans","Hiragino Kaku Gothic ProN W3","Hiragino Kaku Gothic ProN","Arial Unicode MS"
++; Japanese, mincho
++HKCU,Software\Wine\Fonts\Replacements,"MS Mincho",0x10000,"Hiragino Mincho ProN W3","Hiragino Mincho ProN","Hiragino Mincho Pro W3","Hiragino Sans W3","Hiragino Sans","Hiragino Kaku Gothic ProN W3","Hiragino Kaku Gothic ProN","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"MS PMincho",0x10000,"Hiragino Mincho ProN W3","Hiragino Mincho ProN","Hiragino Mincho Pro W3","Hiragino Sans W3","Hiragino Sans","Hiragino Kaku Gothic ProN W3","Hiragino Kaku Gothic ProN","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"Yu Mincho",0x10000,"Hiragino Mincho ProN W3","Hiragino Mincho ProN","Hiragino Mincho Pro W3","Hiragino Sans W3","Hiragino Sans","Hiragino Kaku Gothic ProN W3","Hiragino Kaku Gothic ProN","Arial Unicode MS"
++; Simplified Chinese, sans-serif
++HKCU,Software\Wine\Fonts\Replacements,"Microsoft YaHei",0x10000,"PingFang SC","Hiragino Sans GB W3","Hiragino Sans GB","Heiti SC","STHeiti","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"Microsoft YaHei UI",0x10000,"PingFang SC","Hiragino Sans GB W3","Hiragino Sans GB","Heiti SC","STHeiti","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"SimHei",0x10000,"PingFang SC","Hiragino Sans GB W3","Hiragino Sans GB","Heiti SC","STHeiti","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"DengXian",0x10000,"PingFang SC","Hiragino Sans GB W3","Hiragino Sans GB","Heiti SC","STHeiti","Arial Unicode MS"
++; Simplified Chinese, serif
++HKCU,Software\Wine\Fonts\Replacements,"SimSun",0x10000,"Songti SC","STSong","PingFang SC","Hiragino Sans GB W3","Hiragino Sans GB","Heiti SC","STHeiti","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"NSimSun",0x10000,"Songti SC","STSong","PingFang SC","Hiragino Sans GB W3","Hiragino Sans GB","Heiti SC","STHeiti","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"SimSun-ExtB",0x10000,"Songti SC","STSong","PingFang SC","Hiragino Sans GB W3","Hiragino Sans GB","Heiti SC","STHeiti","Arial Unicode MS"
++; Simplified Chinese, kai and fangsong
++HKCU,Software\Wine\Fonts\Replacements,"KaiTi",0x10000,"Kaiti SC","STKaiti","STFangsong","Songti SC","STSong","PingFang SC","Hiragino Sans GB W3","Hiragino Sans GB","Heiti SC","STHeiti","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"FangSong",0x10000,"Kaiti SC","STKaiti","STFangsong","Songti SC","STSong","PingFang SC","Hiragino Sans GB W3","Hiragino Sans GB","Heiti SC","STHeiti","Arial Unicode MS"
++; Traditional Chinese, sans-serif
++HKCU,Software\Wine\Fonts\Replacements,"Microsoft JhengHei",0x10000,"PingFang TC","Heiti TC","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"Microsoft JhengHei UI",0x10000,"PingFang TC","Heiti TC","Arial Unicode MS"
++; Traditional Chinese, serif
++HKCU,Software\Wine\Fonts\Replacements,"PMingLiU",0x10000,"Songti TC","Heiti TC","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"MingLiU",0x10000,"Songti TC","Heiti TC","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"MingLiU_HKSCS",0x10000,"Songti TC","Heiti TC","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"PMingLiU-ExtB",0x10000,"Songti TC","Heiti TC","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"MingLiU-ExtB",0x10000,"Songti TC","Heiti TC","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"MingLiU_HKSCS-ExtB",0x10000,"Songti TC","Heiti TC","Arial Unicode MS"
++; Traditional Chinese, kai
++HKCU,Software\Wine\Fonts\Replacements,"DFKai-SB",0x10000,"Kaiti TC","BiauKai","Songti TC","Heiti TC","Arial Unicode MS"
++; Korean, sans-serif
++HKCU,Software\Wine\Fonts\Replacements,"Malgun Gothic",0x10000,"Apple SD Gothic Neo","AppleGothic","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"Gulim",0x10000,"Apple SD Gothic Neo","AppleGothic","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"GulimChe",0x10000,"Apple SD Gothic Neo","AppleGothic","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"Dotum",0x10000,"Apple SD Gothic Neo","AppleGothic","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"DotumChe",0x10000,"Apple SD Gothic Neo","AppleGothic","Arial Unicode MS"
++; Korean, serif
++HKCU,Software\Wine\Fonts\Replacements,"Batang",0x10000,"AppleMyungjo","Apple SD Gothic Neo","AppleGothic","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"BatangChe",0x10000,"AppleMyungjo","Apple SD Gothic Neo","AppleGothic","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"Gungsuh",0x10000,"AppleMyungjo","Apple SD Gothic Neo","AppleGothic","Arial Unicode MS"
++HKCU,Software\Wine\Fonts\Replacements,"GungsuhChe",0x10000,"AppleMyungjo","Apple SD Gothic Neo","AppleGothic","Arial Unicode MS"
++
+ [LicenseInformation]
+ ; based on information from http://www.geoffchappell.com/notes/windows/license/install.htm
+ HKLM,Software\Wine\LicenseInformation,"Kernel-MUI-Language-Allowed",,"EMPTY"

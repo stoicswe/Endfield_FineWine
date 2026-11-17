@@ -192,6 +192,15 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
   private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
   in a command list, to be carried out by MoltenVK as MetalFX.
+- `0029-win32u-dwrite-chinese-japanese-and-korean-text-with-the-mac-s-own-fonts.patch`: Chinese,
+  Japanese and Korean text drew as empty boxes in every font, through GDI and DirectWrite
+  (Chromium launchers), because Wine's font links and DirectWrite's fallback name Windows' and
+  Linux's CJK fonts. `wine.inf` now maps the Windows names ("MS Gothic", "Microsoft YaHei",
+  "PMingLiU", "Malgun Gothic", ...) to the Mac's own fonts (Hiragino, Songti, Heiti, Apple SD
+  Gothic Neo) under `HKCU\Software\Wine\Fonts\Replacements`, which both read. The links then
+  resolve, and are picked by the ANSI code page when MS Shell Dlg is set to a font they are not
+  keyed on. DirectWrite falls back to the Windows names too, and matches a region locale
+  ("zh-CN") to the mappings for its script ("zh-Hans"). Checked by `tests/runtime/cjk.c`.
 - `0028-ntdll-msv1_0-use-pipe2-only-where-macos-has-it.patch`: the same as
   `x64/stage1-macos/0012` for this Wine, plus the two calls in `msv1_0`.
 - `0027-ntdll-arm64ec-stop-stack-walks-that-leave-the-real-frames.patch`: the source form of the

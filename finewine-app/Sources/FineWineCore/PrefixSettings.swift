@@ -40,6 +40,57 @@ public enum GraphicsBackend: String, Codable, CaseIterable, Sendable {
     public static var scopeNote: String { tr("backend.scope_note") }
 }
 
+/// The language Windows programs that are not Unicode are run in: Windows' "Language for
+/// non-Unicode programs". It picks the ANSI code page their text goes through (932 Shift-JIS,
+/// 936 GBK, 949 for Korean, 950 Big5) and the region formats; Wine's own interface keeps the
+/// Mac's language. Unicode programs, most games among them, show every language either way:
+/// the runtime has fonts for Chinese, Japanese and Korean whatever this says.
+public enum NonUnicodeLanguage: String, Codable, CaseIterable, Sendable {
+    /// What the Mac's language and region give (Wine's own choice).
+    case automatic
+    case english
+    case japanese
+    case chineseSimplified
+    case chineseTraditional
+    case korean
+
+    public var displayName: String {
+        switch self {
+        case .automatic: return tr("nonunicode.automatic")
+        case .english: return tr("nonunicode.english")
+        // Each language in its own name, as Windows and macOS list them.
+        case .japanese: return "日本語"
+        case .chineseSimplified: return "简体中文"
+        case .chineseTraditional: return "繁體中文"
+        case .korean: return "한국어"
+        }
+    }
+
+    /// The Mac locale Wine takes the code page from (`LC_CTYPE`); nil leaves Wine's own choice.
+    public var unixLocale: String? {
+        switch self {
+        case .automatic: return nil
+        case .english: return "en_US.UTF-8"
+        case .japanese: return "ja_JP.UTF-8"
+        case .chineseSimplified: return "zh_CN.UTF-8"
+        case .chineseTraditional: return "zh_TW.UTF-8"
+        case .korean: return "ko_KR.UTF-8"
+        }
+    }
+
+    /// The ANSI code page programs get with this choice; nil for automatic.
+    public var codePage: Int? {
+        switch self {
+        case .automatic: return nil
+        case .english: return 1252
+        case .japanese: return 932
+        case .chineseSimplified: return 936
+        case .chineseTraditional: return 950
+        case .korean: return 949
+        }
+    }
+}
+
 /// How Windows synchronisation objects (events, mutexes, semaphores) are implemented.
 /// How a program's full-screen window is presented on the Mac.
 public enum FullScreenMode: String, Codable, CaseIterable, Sendable {
@@ -221,6 +272,8 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// Upscale a Direct3D 10 or 11 picture that is smaller than its window to the window's
     /// display pixels with MetalFX, instead of leaving the stretch to the window server.
     public var metalFXUpscaling: Bool = true
+    /// Windows' "Language for non-Unicode programs". See `NonUnicodeLanguage`.
+    public var nonUnicodeLanguage: NonUnicodeLanguage = .automatic
 
     /// The PCI ids reported when `reportNvidiaGPU` is on: NVIDIA, and its GeForce RTX 5080.
     public static let reportedGPUVendorID: UInt16 = 0x10DE
@@ -264,6 +317,8 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         roundedWindows = try c.decodeIfPresent(Bool.self, forKey: .roundedWindows) ?? d.roundedWindows
         metalFXUpscaling = try c.decodeIfPresent(Bool.self, forKey: .metalFXUpscaling) ?? d.metalFXUpscaling
         fullScreenMode = try c.decodeIfPresent(FullScreenMode.self, forKey: .fullScreenMode) ?? d.fullScreenMode
+        // An unknown value (from a newer FineWine) falls back to automatic.
+        nonUnicodeLanguage = (try? c.decodeIfPresent(NonUnicodeLanguage.self, forKey: .nonUnicodeLanguage)) ?? d.nonUnicodeLanguage
     }
 
     // MARK: Validation
@@ -379,6 +434,10 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         if !roundedWindows { out.append(("FINEWINE_ROUNDED_WINDOWS", "0")) }
         if !metalFXUpscaling { out.append(("FINEWINE_METALFX_AUTO", "0")) }
         if hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
+        // Wine takes the ANSI code page from LC_CTYPE, and the interface language from
+        // LC_MESSAGES or LANG (or, with neither, the Mac's language), which stay as they are.
+        // LC_ALL would override LC_CTYPE, so the environment drops it (LaunchPlanner).
+        if let locale = nonUnicodeLanguage.unixLocale { out.append(("LC_CTYPE", locale)) }
         if dlssThroughMetalFX {
             // Lets nvngx.dll load for Direct3D 12 and Vulkan programs, whose DLSS calls it
             // turns into MetalFX work in MoltenVK.

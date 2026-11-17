@@ -206,6 +206,10 @@
 "config.win_version_label" = "Windows 版本";
 "config.build_number_label" = "組建編號";
 "config.build_number_detail" = "留空則使用 Wine 預設值。部分遊戲需要特定組建版本（例如 26100）。";
+"config.nonunicode_label" = "非 Unicode 程式的語言";
+"config.nonunicode_detail" = "不支援 Unicode 的舊程式與安裝程式讀寫文字所用的字碼頁 (Shift-JIS、GBK、Big5、韓文)。Unicode 程式無論如何設定都能顯示所有語言。";
+"nonunicode.automatic" = "自動 (依據 Mac 的語言與地區)";
+"nonunicode.english" = "英文";
 "config.runtime_label" = "Wine 執行階段";
 "config.graphics_card" = "圖形與顯示";
 "config.direct3d_label" = "Direct3D 後端";
