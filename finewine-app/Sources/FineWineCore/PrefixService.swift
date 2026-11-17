@@ -16,9 +16,10 @@ public struct PrefixService {
     public let shortcuts: ShortcutAppBuilder
     public let runner: ProcessRunning
 
-    public init(paths: FineWinePaths, runner: ProcessRunning = SystemProcessRunner(), runtimes: RuntimeStore? = nil) {
+    public init(paths: FineWinePaths, runner: ProcessRunning = SystemProcessRunner(), runtimes: RuntimeStore? = nil,
+                volumes: VolumeProviding = SystemVolumes()) {
         self.paths = paths
-        self.prefixes = PrefixStore(paths: paths)
+        self.prefixes = PrefixStore(paths: paths, volumes: volumes)
         self.runtimes = runtimes ?? RuntimeStore(paths: paths)
         self.profiles = ProfileStore(paths: paths)
         self.shortcuts = ShortcutAppBuilder(directory: paths.shortcuts)
@@ -60,13 +61,14 @@ public struct PrefixService {
     /// Creates a prefix, has Wine set it up, and applies its settings. If Wine fails, the
     /// half-made prefix is removed so the name can be used again.
     public func createPrefix(name: String, runtime: WineRuntime, profile: GameProfile?,
+                             place: PrefixPlace = .thisMac,
                              appearance: MacAppearance? = nil,
                              progress: (@Sendable (String) -> Void)? = nil) throws -> Prefix {
         let problems = runtime.problems()
         guard problems.isEmpty else {
             throw FineWineError("The runtime “\(runtime.name)” can't be used: " + problems.joined(separator: " "))
         }
-        let prefix = try prefixes.create(name: name, runtimeID: runtime.id, profile: profile)
+        let prefix = try prefixes.create(name: name, runtimeID: runtime.id, profile: profile, place: place)
         do {
             progress?(tr("setup.creating_windows_env"))
             try runChecked(try planner(for: prefix).plan(for: .initialize), what: "Setting up the prefix")

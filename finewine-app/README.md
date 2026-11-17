@@ -46,6 +46,11 @@ and will later become one function of this app.
   window in the middle of the display says what FineWine is doing and for how long, so a slow
   start does not look like a stall. It takes no focus, goes away when the program's own window
   appears (or the program ends), and a click hides it. It can be turned off in Settings.
+- **External drives.** A prefix can live on any APFS or Mac OS Extended drive, in
+  `FineWine/Prefixes` on it; a default drive is set in Settings. Each prefix says which drive it is
+  on. A drive's prefixes leave the list when it is unplugged (or show greyed out, saying which
+  drive to connect) and come back, ready to run, when it is plugged in again. See
+  [docs/project-information/27-prefixes-on-external-drives.md](../docs/project-information/27-prefixes-on-external-drives.md).
 - **Configuration.** Windows version and build number, Direct3D backend, Retina mode, DPI,
   virtual desktop, Metal overlay, full-screen behaviour (a Mac full-screen Space by default), Game Mode (programs that use Direct3D, Vulkan or OpenGL run as games), starting HoYoverse games through a Steam stand-in, DLSS through MetalFX, reporting an NVIDIA GPU (the ids of an RTX 5080, for games that only offer DLSS on NVIDIA), MSync, the hypervisor flag, macOS styling for Windows controls,
   Mac-style app icons (running programs and shortcut apps get the program's largest icon on a
