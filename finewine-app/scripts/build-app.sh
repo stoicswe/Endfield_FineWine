@@ -110,7 +110,7 @@ $ICON_PLIST
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>26.0</string>
+	<string>15.0</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>LSApplicationCategoryType</key>

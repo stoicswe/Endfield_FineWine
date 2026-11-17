@@ -1,0 +1,22 @@
+# macos-gated-apis.txt — system functions newer than the oldest macOS a build supports, and how
+# each is kept from running where it does not exist.
+#
+# A binary built with a newer SDK than the oldest macOS it supports links functions that macOS
+# lacks as *weak* imports; on the older system they resolve to address 0. Each one may be used
+# only behind a check: Wine's `__builtin_available(macOS N, *)`, or a weak declaration and a
+# NULL test. scripts/lib/check-macos-compat.sh lists the weak system imports of the built
+# binaries and fails the build on any that is not below, so a newly appearing one (a new SDK, a
+# new upstream release) is looked at before it ships instead of found on a user's Mac.
+#
+# Format: symbol <tab or spaces> first macOS <tab or spaces> how it is gated, where
+#
+# The oldest macOS supported is 15.0, for the patcher's Wine modules (scripts/build-wine.sh) and
+# for FineWine's runtime and app. Functions from macOS 26 and 27 belong here, each behind a check.
+
+_pipe2                                  27.0   weak + NULL test (patches/x64/stage1-macos/0012, patches/runtime/0028)
+___ulock_wait2                          11.0   __builtin_available (Wine's msync.c)
+_os_sync_wait_on_address                14.4   __builtin_available (Wine's sync.c)
+_os_sync_wait_on_address_with_timeout   14.4   __builtin_available (Wine's sync.c)
+_os_sync_wake_by_address_any            14.4   __builtin_available (Wine's sync.c)
+_pthread_cpu_number_np                  11.0   __builtin_available (Wine's thread.c)
+__availability_version_check            -      the check behind __builtin_available itself

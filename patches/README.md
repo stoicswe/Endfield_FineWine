@@ -74,6 +74,12 @@ Original to this project. The two Rosetta fixes live in `dlls/ntdll/unix/signal_
     (`build-wine.sh` MODULES, `package.sh`, `apply-modules.sh`, `swap-into-crossover.sh`, and
     the patcher's payload) and why it is ad-hoc signed like `wineserver` (an exec'd Mach-O).
 
+- **`0012-ntdll-use-pipe2-only-where-macos-has-it.patch`** — `pipe2()` exists from macOS 27
+  only, and the SDK declares it with no availability annotation, so modules built with the
+  macOS 27 SDK called it unconditionally and crashed on macOS 26 and older at the first pipe
+  (bottle creation failed at "'rundll32 win11Install crossover.inf' failed"). It is now a weak
+  reference used only when present, with Wine's `pipe()` fallback otherwise. See
+  `scripts/lib/macos-gated-apis.txt`.
 - **`0009-winemac-composite-the-alpha-of-blur-behind-windows.patch`** and
   **`0010-dwmapi-mark-blur-behind-windows-for-the-mac-driver.patch`** — remove the black
   margin around the Gryphline launcher. The launcher is a rounded Qt window inside a transparent
@@ -186,6 +192,8 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
   private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
   in a command list, to be carried out by MoltenVK as MetalFX.
+- `0028-ntdll-msv1_0-use-pipe2-only-where-macos-has-it.patch`: the same as
+  `x64/stage1-macos/0012` for this Wine, plus the two calls in `msv1_0`.
 - `0027-ntdll-arm64ec-stop-stack-walks-that-leave-the-real-frames.patch`: the source form of the
   patcher's `ArmNtdllFix` for CrossOver ARM. `RtlWalkFrameChain` stops where there is no unwind
   data (as the x86_64 version does), and `RtlIsEcCode` no longer reads past its bitmap for a

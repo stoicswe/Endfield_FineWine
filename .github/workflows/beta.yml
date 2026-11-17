@@ -212,7 +212,7 @@ jobs:
 
           | Asset | What it is |
           |---|---|
-          | `FineWine-…zip` | **FineWine.app** — the menu bar app with its own Wine runtime inside. Unzip it, move it to Applications and open it (right-click → Open the first time: it is ad-hoc signed). Needs an Apple silicon Mac on macOS 26 or later; it does not need CrossOver or Rosetta. |
+          | `FineWine-…zip` | **FineWine.app** — the menu bar app with its own Wine runtime inside. Unzip it, move it to Applications and open it (right-click → Open the first time: it is ad-hoc signed). Needs an Apple silicon Mac on macOS 15 or later; it does not need CrossOver or Rosetta. |
           | `finewine-patcher-…zip` | **FineWine Patcher.app** — patches a copy of your CrossOver @@CX_VER@@ with the anti-cheat Wine modules and a patched MoltenVK (open it and follow the UI) |
           | `finewine-wine-modules-…zip` | The three patched Wine modules alone — for `scripts/swap-into-crossover.sh` users |
           | `SHA256SUMS.txt` | SHA-256 checksums of the assets |

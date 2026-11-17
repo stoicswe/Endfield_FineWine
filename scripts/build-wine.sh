@@ -39,7 +39,11 @@ WINE_BUILD="$BUILD_DIR/wine-build64"    # out-of-tree 64-bit build
 WINE_OUT="$BUILD_DIR/wine-out"
 MODULES="dlls/ntdll/ntdll.so dlls/winemac.drv/winemac.so dlls/dwmapi/x86_64-windows/dwmapi.dll dlls/kernel32/x86_64-windows/kernel32.dll dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe programs/lsass/x86_64-windows/lsass.exe programs/wineboot/x86_64-windows/wineboot.exe programs/rundll32/x86_64-windows/rundll32.exe server/wineserver"
 BREW="$(command -v brew || echo /opt/homebrew/bin/brew)"
-export MACOSX_DEPLOYMENT_TARGET=10.15
+# The oldest macOS the patched modules run on. Functions newer than this are used only behind
+# a check (scripts/lib/macos-gated-apis.txt); scripts/lib/check-macos-compat.sh, run after the
+# build, fails it when a binary needs anything newer that is not on that list.
+MACOS_MIN="15.0"
+export MACOSX_DEPLOYMENT_TARGET="$MACOS_MIN"
 
 # Terminal dashboard (progress bars + live log tail). Must be sourced before any
 # real work so `zsh scripts/build-wine.sh` can hand over to /bin/bash cleanly.
@@ -199,6 +203,7 @@ cmd_build() {
   echo "$SRC_URL" > "$WINE_OUT/SOURCE_URL"
   echo "built $WINE_OUT"
   ui_end
+  "$REPO/scripts/lib/check-macos-compat.sh" "$MACOS_MIN" "$WINE_OUT" || exit 1
 }
 
 ui_init "FineWine — CrossOver ${CX_VER} Wine (x86_64)"

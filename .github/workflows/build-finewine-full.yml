@@ -117,6 +117,23 @@ jobs:
           xcrun metal --version >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
           xcrun metal --version
 
+      # The libraries the runtime bundles (GnuTLS, Nettle, GMP, FreeType), built for macOS 15 by
+      # scripts/build-finewine-deps.sh from CrossOver's source archive and GNU's Nettle release,
+      # both pinned in finewine-sources.lock. Cached as built; the archives as downloaded.
+      - name: Cache source archives for the bundled libraries
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/crossover-sources-*.tar.gz
+            build/nettle-download
+          key: finewine-deps-sources-${{ hashFiles('finewine-sources.lock') }}
+
+      - name: Cache the bundled libraries
+        uses: actions/cache@v4
+        with:
+          path: build/finewine-deps
+          key: finewine-deps-${{ runner.arch }}-${{ steps.toolchain.outputs.hash }}-${{ hashFiles('finewine-sources.lock', 'scripts/build-finewine-deps.sh') }}
+
       # The Windows compiler (a pinned download, checked against its checksum by the script).
       - name: Cache llvm-mingw
         uses: actions/cache@v4
