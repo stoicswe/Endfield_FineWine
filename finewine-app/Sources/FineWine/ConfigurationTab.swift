@@ -4,6 +4,7 @@ import FineWineCore
 /// The prefix's settings. Edits go to a draft; Apply stores them and writes them to the registry.
 struct ConfigurationTab: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject private var l10n = LanguageManager.shared
     let prefix: Prefix
     @State private var draft: PrefixSettings
     @State private var runtimeID: String?
@@ -39,55 +40,55 @@ struct ConfigurationTab: View {
         VStack(alignment: .leading, spacing: 16) {
             applyBar(problems: problems)
 
-            Card(title: "Windows", symbol: "macwindow") {
-                Row(label: "Windows version") {
-                    Picker("Windows version", selection: $draft.windowsVersion) {
+            Card(title: l10n.tr("config.windows_card"), symbol: "macwindow") {
+                Row(label: l10n.tr("config.win_version_label")) {
+                    Picker(l10n.tr("config.win_version_label"), selection: $draft.windowsVersion) {
                         ForEach(WindowsVersion.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }
                     .labelsHidden().fixedSize()
                 }
                 Divider()
-                Row(label: "Build number", detail: "Leave empty for Wine's own. Some games want a specific build, such as 26100.") {
-                    TextField("Default", text: $draft.windowsBuild)
+                Row(label: l10n.tr("config.build_number_label"), detail: l10n.tr("config.build_number_detail")) {
+                    TextField(l10n.tr("app.default"), text: $draft.windowsBuild)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 110)
                 }
                 Divider()
-                Row(label: "Wine runtime") {
-                    Picker("Runtime", selection: $runtimeID) {
-                        if selectedRuntime == nil { Text("None").tag(String?.none) }
+                Row(label: l10n.tr("config.runtime_label")) {
+                    Picker(l10n.tr("config.runtime_label"), selection: $runtimeID) {
+                        if selectedRuntime == nil { Text(l10n.tr("app.none")).tag(String?.none) }
                         ForEach(model.runtimes) { Text($0.name).tag(Optional($0.id)) }
                     }
                     .labelsHidden().fixedSize()
                 }
             }
 
-            Card(title: "Graphics", symbol: "display", footnote: graphicsNote) {
-                Row(label: "Direct3D", detail: GraphicsBackend.scopeNote) {
-                    Picker("Direct3D", selection: $draft.graphicsBackend) {
+            Card(title: l10n.tr("config.graphics_card"), symbol: "display", footnote: graphicsNote) {
+                Row(label: l10n.tr("config.direct3d_label"), detail: GraphicsBackend.scopeNote) {
+                    Picker(l10n.tr("config.direct3d_label"), selection: $draft.graphicsBackend) {
                         ForEach(GraphicsBackend.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }
                     .labelsHidden().fixedSize()
                 }
                 Divider()
                 Toggle(isOn: $draft.retinaMode) {
-                    Text("High-resolution mode")
-                    Text("Programs draw at the display's real pixel resolution, so they are as sharp as Mac apps. Turn it off if a program runs too slowly at full resolution.")
+                    Text(l10n.tr("config.retina_title"))
+                    Text(l10n.tr("config.retina_desc"))
                 }
                 Divider()
                 Toggle(isOn: $draft.metalFXUpscaling) {
-                    Text("Sharpen lower resolutions with MetalFX")
-                    Text("When a Direct3D 10 or 11 game draws fewer pixels than its window has (a lower resolution chosen in the game, or high-resolution mode off), the picture is upscaled to the display's pixels with MetalFX instead of being stretched. Games using their own upscaler are left alone.")
+                    Text(l10n.tr("config.metalfx_upscale_title"))
+                    Text(l10n.tr("config.metalfx_upscale_desc"))
                 }
                 Divider()
                 Toggle(isOn: $draft.automaticDPI) {
-                    Text("Scale automatically")
+                    Text(l10n.tr("config.auto_dpi_title"))
                     Text(draft.retinaMode
-                         ? "Sets the Windows DPI from the display (\(draft.effectiveDPI(displayScale: model.currentAppearance.displayScale)) on this Mac), so text and controls keep their normal size."
-                         : "Keeps the Windows DPI at 96, which matches macOS when high-resolution mode is off.")
+                         ? l10n.tr("config.auto_dpi_desc_retina", "\(draft.effectiveDPI(displayScale: model.currentAppearance.displayScale))")
+                         : l10n.tr("config.auto_dpi_desc_normal"))
                 }
                 if !draft.automaticDPI {
-                    Row(label: "Screen DPI", detail: "96 is 100% scaling; 192 suits high-resolution mode on a Retina display.") {
+                    Row(label: l10n.tr("config.screen_dpi_label"), detail: l10n.tr("config.screen_dpi_detail")) {
                         Stepper(value: $draft.dpi, in: 72...480, step: 12) {
                             Text("\(draft.dpi)").monospacedDigit()
                         }
@@ -95,90 +96,90 @@ struct ConfigurationTab: View {
                 }
                 Divider()
                 Toggle(isOn: $desktopEnabled) {
-                    Text("Virtual desktop")
-                    Text("Keeps the prefix's windows inside one window. Helps programs that misbehave in full screen.")
+                    Text(l10n.tr("config.virtual_desktop_title"))
+                    Text(l10n.tr("config.virtual_desktop_desc"))
                 }
                 if desktopEnabled {
                     HStack {
-                        TextField("Width", value: $desktopWidth, format: .number.grouping(.never))
+                        TextField(l10n.tr("config.width_label"), value: $desktopWidth, format: .number.grouping(.never))
                             .textFieldStyle(.roundedBorder).frame(width: 80)
                         Text("×").foregroundStyle(.secondary)
-                        TextField("Height", value: $desktopHeight, format: .number.grouping(.never))
+                        TextField(l10n.tr("config.height_label"), value: $desktopHeight, format: .number.grouping(.never))
                             .textFieldStyle(.roundedBorder).frame(width: 80)
                     }
                 }
                 Divider()
                 Toggle(isOn: $draft.dlssThroughMetalFX) {
-                    Text("DLSS through MetalFX")
+                    Text(l10n.tr("config.dlss_metalfx_title"))
                     Text(draft.graphicsBackend == .dxmt
-                         ? "Games that offer NVIDIA DLSS use Apple's MetalFX instead, for upscaling and for frame generation. FSR is unaffected: it runs as the game ships it."
-                         : "Direct3D 12 and Vulkan games that offer NVIDIA DLSS use Apple's MetalFX instead. Direct3D 11 games need DXMT as the Direct3D layer. FSR is unaffected.")
+                         ? l10n.tr("config.dlss_metalfx_dxmt_desc")
+                         : l10n.tr("config.dlss_metalfx_general_desc"))
                 }
                 Toggle(isOn: $draft.reportNvidiaGPU) {
-                    Text("Report an NVIDIA GPU")
-                    Text("Tells Windows programs the GPU is an \(PrefixSettings.reportedGPUName), by name and by id. Most games only show DLSS options on an NVIDIA GPU. Leave it off for games with NVIDIA-specific code paths you do not want.")
+                    Text(l10n.tr("config.report_nvidia_title"))
+                    Text(l10n.tr("config.report_nvidia_desc", PrefixSettings.reportedGPUName))
                 }
-                Row(label: "Full screen", detail: "How a game's full-screen window is shown. With its own Space the menu bar appears at the top edge, a swipe goes back to the desktop, and notifications show over the game.") {
-                    Picker("Full screen", selection: $draft.fullScreenMode) {
+                Row(label: l10n.tr("config.fullscreen_label"), detail: l10n.tr("config.fullscreen_detail")) {
+                    Picker(l10n.tr("config.fullscreen_label"), selection: $draft.fullScreenMode) {
                         ForEach(FullScreenMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }
                     .labelsHidden().fixedSize()
                 }
                 Toggle(isOn: $draft.roundedWindows) {
-                    Text("Round window corners")
-                    Text("Windows that draw their own title bar, as launchers and many games do, get the round corners of a Mac window. Full-screen windows, menus and windows with a shape of their own are left as they are.")
+                    Text(l10n.tr("config.rounded_windows_title"))
+                    Text(l10n.tr("config.rounded_windows_desc"))
                 }
                 Toggle(isOn: $draft.gameMode) {
-                    Text("Game Mode")
-                    Text("Programs that use Direct3D, Vulkan or OpenGL are started as games, so macOS turns Game Mode on while one is full screen. A program started by a launcher is recognised from its second run on.")
+                    Text(l10n.tr("config.game_mode_title"))
+                    Text(l10n.tr("config.game_mode_desc"))
                 }
                 Toggle(isOn: $draft.steamForHoYoverse) {
-                    Text("Start HoYoverse games as Steam does")
-                    Text("Genshin Impact, Zenless Zone Zero, Honkai Impact 3rd and the HoYoPlay launcher are started through a stand-in for the Steam client, the way they are run on Linux. The game is told it was started by Steam, which is not a platform HoYoverse supports on a Mac; use it at your own account's risk.")
+                    Text(l10n.tr("config.hoyoverse_steam_title"))
+                    Text(l10n.tr("config.hoyoverse_steam_desc"))
                 }
                 Divider()
                 Toggle(isOn: $draft.metalHUD) {
-                    Text("Start with the Metal performance overlay shown")
-                    Text("Frame rate and GPU statistics over the game. Either way it can be shown and hidden while a game runs: View > Metal HUD in the menu bar, or Option-F12.")
+                    Text(l10n.tr("config.metal_hud_title"))
+                    Text(l10n.tr("config.metal_hud_desc"))
                 }
             }
 
-            Card(title: "Performance and compatibility", symbol: "speedometer", footnote: syncNote) {
-                Row(label: "Synchronisation", detail: "How Windows events, mutexes and semaphores are handled.") {
-                    Picker("Synchronisation", selection: $draft.syncMode) {
+            Card(title: l10n.tr("config.perf_card"), symbol: "speedometer", footnote: syncNote) {
+                Row(label: l10n.tr("config.sync_label"), detail: l10n.tr("config.sync_detail")) {
+                    Picker(l10n.tr("config.sync_label"), selection: $draft.syncMode) {
                         ForEach(SyncMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }
                     .labelsHidden().fixedSize()
                 }
                 Divider()
                 Toggle(isOn: $draft.hideHypervisor) {
-                    Text("Hide the hypervisor flag")
-                    Text("The x64 emulator announces itself to programs through the CPU flag a virtual machine sets. Games that refuse to run in a virtual machine then refuse to start, though the Mac is not one. On by default; turn it off for a program that needs to know it is emulated.")
+                    Text(l10n.tr("config.hide_hypervisor_title"))
+                    Text(l10n.tr("config.hide_hypervisor_desc"))
                 }
             }
 
-            Card(title: "Appearance", symbol: "paintbrush",
-                 footnote: "Applies to anything in this prefix that uses standard Windows controls, including the Wine tools. Window frames and title bars are always drawn by macOS. Games that draw their own interface are not affected.") {
+            Card(title: l10n.tr("config.appearance_card"), symbol: "paintbrush",
+                 footnote: l10n.tr("config.appearance_footnote")) {
                 Toggle(isOn: $draft.macAppearance) {
-                    Text("Match macOS")
-                    Text("Windows controls take the Mac's light or dark colours, its accent colour and a Mac font. It is refreshed when a Wine tool is opened after the Mac's appearance changes.")
+                    Text(l10n.tr("config.mac_appearance_title"))
+                    Text(l10n.tr("config.mac_appearance_desc"))
                 }
             }
 
-            Card(title: "Keyboard", symbol: "keyboard") {
-                Toggle("Left Option key acts as Alt", isOn: $draft.leftOptionIsAlt)
-                Toggle("Right Option key acts as Alt", isOn: $draft.rightOptionIsAlt)
+            Card(title: l10n.tr("config.keyboard_card"), symbol: "keyboard") {
+                Toggle(l10n.tr("config.left_opt_alt"), isOn: $draft.leftOptionIsAlt)
+                Toggle(l10n.tr("config.right_opt_alt"), isOn: $draft.rightOptionIsAlt)
             }
 
-            Card(title: "DLL overrides", symbol: "puzzlepiece.extension",
-                 footnote: "Chooses between a DLL that came with a program (native) and Wine's own (built in).") {
+            Card(title: l10n.tr("config.dll_overrides_card"), symbol: "puzzlepiece.extension",
+                 footnote: l10n.tr("config.dll_overrides_footnote")) {
                 ForEach($draft.dllOverrides) { $override in
                     HStack {
                         TextField("d3d11", text: $override.name)
                             .textFieldStyle(.roundedBorder)
                             .font(.body.monospaced())
                             .frame(width: 200)
-                        Picker("Order", selection: $override.order) {
+                        Picker(l10n.tr("config.order_label"), selection: $override.order) {
                             ForEach(DLLLoadOrder.allCases, id: \.self) { Text($0.displayName).tag($0) }
                         }
                         .labelsHidden()
@@ -188,24 +189,24 @@ struct ConfigurationTab: View {
                             Image(systemName: "minus.circle")
                         }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
-                        .help("Remove this override")
+                        .help(l10n.tr("config.remove_override"))
                     }
                 }
                 Button {
                     draft.dllOverrides.append(DLLOverride(name: "", order: .nativeThenBuiltin))
                 } label: {
-                    Label("Add Override", systemImage: "plus")
+                    Label(l10n.tr("config.add_override"), systemImage: "plus")
                 }
                 .buttonStyle(.glass).controlSize(.small)
             }
 
-            Card(title: "Environment variables", symbol: "terminal",
-                 footnote: "Set for every program in this prefix.") {
+            Card(title: l10n.tr("config.env_card"), symbol: "terminal",
+                 footnote: l10n.tr("config.env_footnote")) {
                 EnvironmentEditor(variables: $draft.environment)
             }
 
-            Card(title: "Debugging", symbol: "ladybug",
-                 footnote: "Wine debug channels (WINEDEBUG). “-all” is silent and fastest; “err+all” logs errors. Output goes to the prefix's logs.") {
+            Card(title: l10n.tr("config.debug_card"), symbol: "ladybug",
+                 footnote: l10n.tr("config.debug_footnote")) {
                 TextField("-all", text: $draft.debugChannels)
                     .textFieldStyle(.roundedBorder)
                     .font(.body.monospaced())
@@ -220,14 +221,14 @@ struct ConfigurationTab: View {
 
     private var syncNote: String? {
         draft.syncMode == .msync
-            ? "MSync needs a runtime built with it; FineWine's own runtime is. Every program in a prefix must use the same setting, so stop running programs before changing it."
+            ? l10n.tr("config.msync_note")
             : nil
     }
 
     private var graphicsNote: String? {
         guard draft.graphicsBackend != .wined3d, let runtime = selectedRuntime else { return nil }
         if runtime.graphicsSpec(for: draft.graphicsBackend) == nil {
-            return "“\(runtime.name)” doesn't include \(draft.graphicsBackend.rawValue.uppercased()), so programs will use WineD3D until a runtime that has it is chosen."
+            return l10n.tr("config.graphics_note", runtime.name, draft.graphicsBackend.rawValue.uppercased())
         }
         return nil
     }
@@ -241,23 +242,23 @@ struct ConfigurationTab: View {
                     }
                 } else if hasChanges {
                     Label(model.isRunning(prefix)
-                          ? "Changes apply to programs started after this. Running ones keep their old settings."
-                          : "You have changes that aren't applied yet.",
+                          ? l10n.tr("config.changes_running")
+                          : l10n.tr("config.changes_pending"),
                           systemImage: "pencil.circle")
                 } else {
-                    Label("These settings are applied.", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+                    Label(l10n.tr("config.settings_applied"), systemImage: "checkmark.circle").foregroundStyle(.secondary)
                 }
             }
             .font(.callout)
             Spacer()
-            Button("Revert") {
+            Button(l10n.tr("app.revert")) {
                 draft = prefix.metadata.settings
                 runtimeID = prefix.metadata.runtimeID
                 desktopEnabled = draft.virtualDesktop != nil
             }
             .buttonStyle(.glass)
             .disabled(edited == prefix.metadata.settings && runtimeID == prefix.metadata.runtimeID)
-            Button("Apply") {
+            Button(l10n.tr("app.apply")) {
                 Task { await model.apply(edited, runtimeID: runtimeID, to: prefix) }
             }
             .buttonStyle(.glassProminent).tint(Look.wine)

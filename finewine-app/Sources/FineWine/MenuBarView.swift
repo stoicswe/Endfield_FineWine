@@ -5,6 +5,7 @@ import FineWineCore
 /// The panel under the menu bar icon: every prefix with its programs one click away.
 struct MenuBarView: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject private var l10n = LanguageManager.shared
     @Environment(\.openSettings) private var openSettings
     /// How tall the list of prefixes may get, as the user last set it.
     @AppStorage("MenuPanelListHeight") private var listLimit: Double = 520
@@ -19,15 +20,15 @@ struct MenuBarView: View {
             if let name = model.settingUpPrefixName {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
-                    Text("Setting up the prefix “\(name)”…").font(.callout)
+                    Text(l10n.tr("menu.setting_up_prefix", name)).font(.callout)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .glassCard(padding: 12)
             }
             if model.prefixes.isEmpty {
                 Text(model.usableRuntimes.isEmpty
-                     ? "Add a Wine runtime, then create a prefix to install Windows programs into."
-                     : "Create a prefix to install Windows programs into.")
+                     ? l10n.tr("menu.empty_no_runtimes")
+                     : l10n.tr("menu.empty_has_runtimes"))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -81,8 +82,8 @@ struct MenuBarView: View {
                         dragOffset = 0
                     })
                 .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
-                .help("Drag to make the list taller or shorter")
-                .accessibilityLabel("List height")
+                .help(l10n.tr("menu.resize_help"))
+                .accessibilityLabel(l10n.tr("menu.list_height"))
         }
     }
 
@@ -94,7 +95,7 @@ struct MenuBarView: View {
             Text("FineWine").font(.headline)
             Spacer()
             if model.runningCount > 0 {
-                Pill(text: "\(model.runningCount) running", symbol: "play.fill", tint: .green)
+                Pill(text: l10n.tr("app.running_count", model.runningCount), symbol: "play.fill", tint: .green)
             }
         }
     }
@@ -104,13 +105,13 @@ struct MenuBarView: View {
             Button {
                 model.openMainWindow()
             } label: {
-                Label("Manage Prefixes", systemImage: "square.grid.2x2")
+                Label(l10n.tr("menu.manage_prefixes"), systemImage: "square.grid.2x2")
             }
             .buttonStyle(.glassProminent).tint(Look.wine)
             Spacer()
-            Button("🍷 Donate") { NSWorkspace.shared.open(Links.wineDonate) }
+            Button(l10n.tr("menu.donate")) { NSWorkspace.shared.open(Links.wineDonate) }
                 .buttonStyle(.glass)
-                .help("Wine, which FineWine runs Windows programs with, is paid for by donations. Opens winehq.org/donate.")
+                .help(l10n.tr("menu.donate_help"))
             Button {
                 openSettings()
                 NSApp.activate()
@@ -118,20 +119,21 @@ struct MenuBarView: View {
                 Image(systemName: "gearshape")
             }
             .buttonStyle(.glass)
-            .help("Settings")
+            .help(l10n.tr("menu.settings"))
             Button {
                 NSApp.terminate(nil)
             } label: {
                 Image(systemName: "power")
             }
             .buttonStyle(.glass)
-            .help("Quit FineWine. If programs are running, you are asked first, and they are closed.")
+            .help(l10n.tr("menu.quit_help"))
         }
     }
 }
 
 private struct MenuPrefixCard: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject private var l10n = LanguageManager.shared
     let prefix: Prefix
 
     var body: some View {
@@ -142,15 +144,15 @@ private struct MenuPrefixCard: View {
                 if let status = model.busy[prefix.id] {
                     Text(status).font(.caption).foregroundStyle(.secondary)
                 } else if model.isRunning(prefix) {
-                    Menu("Shut Down") {
-                        Button("Shut Down") { Task { await model.shutDown(prefix) } }
-                        Button("Force Shut Down", role: .destructive) { Task { await model.forceShutDown(prefix) } }
+                    Menu(l10n.tr("menu.shut_down")) {
+                        Button(l10n.tr("menu.shut_down")) { Task { await model.shutDown(prefix) } }
+                        Button(l10n.tr("menu.force_shut_down"), role: .destructive) { Task { await model.forceShutDown(prefix) } }
                     }
                     .menuStyle(.button)
                     .buttonStyle(.glass)
                     .controlSize(.small)
                     .fixedSize()
-                    .help("Shut Down asks every program to close. Force Shut Down also ends a program that has frozen.")
+                    .help(l10n.tr("menu.shut_down_help"))
                 }
                 Button {
                     model.show(prefixID: prefix.id, section: "configuration")
@@ -159,10 +161,10 @@ private struct MenuPrefixCard: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .help("Configure this prefix")
+                .help(l10n.tr("menu.configure_prefix"))
             }
             if prefix.metadata.programs.isEmpty {
-                Text("No programs yet").font(.caption).foregroundStyle(.secondary)
+                Text(l10n.tr("menu.no_programs")).font(.caption).foregroundStyle(.secondary)
             } else {
                 ForEach(prefix.metadata.programs) { program in
                     Button {

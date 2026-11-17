@@ -29,15 +29,15 @@ public enum GraphicsBackend: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .dxmt: return "DXMT (Direct3D 10/11 on Metal)"
-        case .dxvk: return "DXVK (Direct3D on Vulkan / MoltenVK)"
-        case .wined3d: return "WineD3D (built in)"
+        case .dxmt: return tr("backend.dxmt")
+        case .dxvk: return tr("backend.dxvk")
+        case .wined3d: return tr("backend.wined3d")
         }
     }
 
     /// What the choice covers, for showing under the picker. Direct3D 12 and Vulkan are not
     /// part of it: a FineWine runtime always provides both through MoltenVK.
-    public static let scopeNote = "This chooses how Direct3D 9, 10 and 11 are drawn. Direct3D 12 and Vulkan are always available, through MoltenVK."
+    public static var scopeNote: String { tr("backend.scope_note") }
 }
 
 /// How Windows synchronisation objects (events, mutexes, semaphores) are implemented.
@@ -54,9 +54,9 @@ public enum FullScreenMode: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .space: return "Mac full screen (its own Space)"
-        case .borderless: return "Borderless window on the desktop"
-        case .exclusive: return "Exclusive (covers the menu bar)"
+        case .space: return tr("fullscreen.space")
+        case .borderless: return tr("fullscreen.borderless")
+        case .exclusive: return tr("fullscreen.exclusive")
         }
     }
 }
@@ -71,8 +71,8 @@ public enum SyncMode: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .standard: return "Wine server (slower, most compatible)"
-        case .msync: return "MSync (faster)"
+        case .standard: return tr("sync.standard")
+        case .msync: return tr("sync.msync")
         }
     }
 
@@ -94,11 +94,11 @@ public enum DLLLoadOrder: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .nativeThenBuiltin: return "Native, then built in"
-        case .builtinThenNative: return "Built in, then native"
-        case .native: return "Native only"
-        case .builtin: return "Built in only"
-        case .disabled: return "Disabled"
+        case .nativeThenBuiltin: return tr("dll_order.native_builtin")
+        case .builtinThenNative: return tr("dll_order.builtin_native")
+        case .native: return tr("dll_order.native")
+        case .builtin: return tr("dll_order.builtin")
+        case .disabled: return tr("dll_order.disabled")
         }
     }
 
@@ -272,23 +272,23 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     public func validationProblems() -> [String] {
         var problems: [String] = []
         if !windowsBuild.isEmpty, UInt32(windowsBuild) == nil {
-            problems.append("The Windows build must be a number, such as 26100.")
+            problems.append(tr("validation.win_build_number"))
         }
         if !automaticDPI, !(72...480).contains(dpi) {
-            problems.append("The DPI must be between 72 and 480.")
+            problems.append(tr("validation.dpi_range"))
         }
         if let desktop = virtualDesktop, desktop.width < 640 || desktop.height < 480 {
-            problems.append("The virtual desktop must be at least 640 × 480.")
+            problems.append(tr("validation.desktop_min"))
         }
         for variable in environment where !EnvironmentVariable.isValidName(variable.name) {
-            problems.append("“\(variable.name)” is not a valid environment variable name.")
+            problems.append(tr("validation.env_invalid", variable.name))
         }
         let names = dllOverrides.map { DLLOverride.normalizedName($0.name) }
         if names.contains(where: \.isEmpty) {
-            problems.append("A DLL override has no name.")
+            problems.append(tr("validation.dll_empty"))
         }
         if Set(names).count != names.count {
-            problems.append("A DLL is listed more than once in the overrides.")
+            problems.append(tr("validation.dll_duplicate"))
         }
         return problems
     }

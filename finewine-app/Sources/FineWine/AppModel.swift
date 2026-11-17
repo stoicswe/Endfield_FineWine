@@ -130,9 +130,9 @@ final class AppModel: ObservableObject {
         isCreatingPrefix = true
         defer { isCreatingPrefix = false }
         let appearance = currentAppearance
-        let token = StatusSplash.shared.show(title: "Setting up “\(name)”", message: "Creating the prefix…")
+        let token = StatusSplash.shared.show(title: tr("splash.setting_up", name), message: tr("splash.creating_prefix"))
         defer { StatusSplash.shared.hide(token) }
-        let created = await work(on: nil, "", failure: "The prefix couldn't be created") {
+        let created = await work(on: nil, "", failure: tr("dialog.err_prefix_create")) {
             try $0.createPrefix(name: name, runtime: runtime, profile: profile, appearance: appearance) { stage in
                 Task { @MainActor in StatusSplash.shared.update(token, message: stage) }
             }
@@ -147,11 +147,11 @@ final class AppModel: ObservableObject {
         var updated = prefix
         updated.metadata.settings = settings
         updated.metadata.runtimeID = runtimeID
-        do { try service.prefixes.save(updated) } catch { return show(error, title: "The settings couldn't be saved") }
+        do { try service.prefixes.save(updated) } catch { return show(error, title: tr("dialog.err_settings_save")) }
         replace(updated)
         let toApply = updated
         let appearance = currentAppearance
-        if let applied = await work(on: prefix.id, "Applying settings…", failure: "The settings couldn't be applied", splash: true, {
+        if let applied = await work(on: prefix.id, tr("splash.applying_settings"), failure: tr("dialog.err_settings_apply"), splash: true, {
             try $0.applySettings(to: toApply, appearance: appearance)
         }) {
             replace(applied)
@@ -160,12 +160,12 @@ final class AppModel: ObservableObject {
 
     func rename(_ prefix: Prefix, to name: String) {
         do { replace(try service.prefixes.rename(prefix, to: name)); reload() }
-        catch { show(error, title: "The prefix couldn't be renamed") }
+        catch { show(error, title: tr("dialog.err_prefix_rename")) }
     }
 
     func duplicate(_ prefix: Prefix) async {
         let name = prefix.name + " copy"
-        if let copy = await work(on: prefix.id, "Duplicating…", failure: "The prefix couldn't be duplicated", splash: true, {
+        if let copy = await work(on: prefix.id, tr("splash.duplicating"), failure: tr("dialog.err_prefix_duplicate"), splash: true, {
             try $0.prefixes.duplicate(prefix, as: name)
         }) {
             reload()
@@ -174,7 +174,7 @@ final class AppModel: ObservableObject {
     }
 
     func delete(_ prefix: Prefix) async {
-        _ = await work(on: prefix.id, "Deleting…", failure: "The prefix couldn't be deleted") {
+        _ = await work(on: prefix.id, tr("splash.deleting"), failure: tr("dialog.err_prefix_delete")) {
             try $0.deletePrefix(prefix)
         }
         running[prefix.id] = nil
@@ -182,7 +182,7 @@ final class AppModel: ObservableObject {
     }
 
     func stopAll(in prefix: Prefix) async {
-        _ = await work(on: prefix.id, "Stopping…", failure: "The prefix's programs couldn't be stopped") {
+        _ = await work(on: prefix.id, tr("splash.stopping"), failure: tr("dialog.err_programs_stop")) {
             try $0.stopAll(in: prefix)
         }
         running[prefix.id] = nil
@@ -190,7 +190,7 @@ final class AppModel: ObservableObject {
 
     /// Asks every program in the prefix to close, as shutting Windows down does.
     func shutDown(_ prefix: Prefix) async {
-        _ = await work(on: prefix.id, "Shutting down…", failure: "The prefix couldn't be shut down") {
+        _ = await work(on: prefix.id, tr("splash.shutting_down"), failure: tr("dialog.err_prefix_shutdown")) {
             try $0.shutDown(prefix)
         }
         running[prefix.id] = nil
@@ -198,7 +198,7 @@ final class AppModel: ObservableObject {
 
     /// Ends everything in the prefix at once, frozen programs included.
     func forceShutDown(_ prefix: Prefix) async {
-        _ = await work(on: prefix.id, "Forcing shut down…", failure: "The prefix couldn't be forced to shut down") {
+        _ = await work(on: prefix.id, tr("splash.forcing_shut_down"), failure: tr("dialog.err_prefix_force_shutdown")) {
             try $0.forceShutDown(prefix)
         }
         running[prefix.id] = nil
@@ -301,20 +301,20 @@ final class AppModel: ObservableObject {
         let count = runningNow.reduce(0) { $0 + $1.1.count }
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = count == 1 ? "Quit FineWine and close 1 running program?"
-                                       : "Quit FineWine and close \(count) running programs?"
+        alert.messageText = count == 1 ? tr("dialog.quit_title_single")
+                                       : tr("dialog.quit_title_multiple", count)
         let list = runningNow.map { prefix, names in
             names.count == 1 && names[0] == prefix.name ? "•  \(prefix.name)"
                                                         : "•  \(prefix.name): " + names.joined(separator: ", ")
         }.joined(separator: "\n")
-        alert.informativeText = "These are still running:\n\n\(list)\n\nThey will be asked to close. Any that have not closed after 5 seconds are ended, and unsaved work in them is lost."
-        alert.addButton(withTitle: "Close and Quit")
-        alert.addButton(withTitle: "Cancel")
+        alert.informativeText = tr("dialog.quit_info", list)
+        alert.addButton(withTitle: tr("dialog.close_and_quit"))
+        alert.addButton(withTitle: tr("app.cancel"))
         NSApp.activate()
         guard alert.runModal() == .alertFirstButtonReturn else { return false }
 
-        let token = StatusSplash.shared.show(title: "Quitting FineWine",
-                                             message: count == 1 ? "Closing 1 program…" : "Closing \(count) programs…")
+        let token = StatusSplash.shared.show(title: tr("splash.quitting_title"),
+                                             message: count == 1 ? tr("splash.closing_single") : tr("splash.closing_multiple", count))
         let toClose = runningNow.map(\.0)
         _ = await Task.detached(priority: .userInitiated) {
             service.value.closeEverything(in: toClose, grace: 5).map(\.id)
@@ -325,7 +325,7 @@ final class AppModel: ObservableObject {
     }
 
     func wineboot(_ action: WinebootAction, in prefix: Prefix, status: String) async {
-        _ = await work(on: prefix.id, status, failure: "Wine reported a problem", splash: true) {
+        _ = await work(on: prefix.id, status, failure: tr("dialog.wine_problem"), splash: true) {
             try $0.runWineboot(action, in: prefix)
         }
     }
@@ -334,7 +334,7 @@ final class AppModel: ObservableObject {
 
     func addProgram(_ program: Program, to prefix: Prefix) {
         do { replace(try service.addProgram(program, to: prefix)) }
-        catch { show(error, title: "The program couldn't be added") }
+        catch { show(error, title: tr("dialog.err_prog_add")) }
     }
 
     func update(_ program: Program, in prefix: Prefix) {
@@ -346,12 +346,12 @@ final class AppModel: ObservableObject {
             replace(updated)
             // Keep the shortcut's name in step with the program's.
             if program.shortcutPath != nil { createShortcut(for: program.id, in: updated) }
-        } catch { show(error, title: "The program couldn't be saved") }
+        } catch { show(error, title: tr("dialog.err_prog_save")) }
     }
 
     func removeProgram(_ program: Program, from prefix: Prefix) {
         do { replace(try service.removeProgram(id: program.id, from: prefix)) }
-        catch { show(error, title: "The program couldn't be removed") }
+        catch { show(error, title: tr("dialog.err_prog_remove")) }
     }
 
     @discardableResult
@@ -360,12 +360,12 @@ final class AppModel: ObservableObject {
             let result = try service.importDiscoveredPrograms(into: prefix)
             replace(result.prefix)
             if !quietly, result.added == 0 {
-                alert = AppAlert(title: "No new programs found",
-                                 message: "FineWine looks at the shortcuts installers leave in the Start menu and on the desktop. A program that made none can be added with Add Program.")
+                alert = AppAlert(title: tr("dialog.no_new_programs_title"),
+                                 message: tr("dialog.no_new_programs_msg"))
             }
             return result.added
         } catch {
-            show(error, title: "The prefix couldn't be searched")
+            show(error, title: tr("dialog.err_prefix_search"))
             return 0
         }
     }
@@ -383,12 +383,12 @@ final class AppModel: ObservableObject {
                 sign.standardError = FileHandle.nullDevice
                 try? sign.run()
             }
-        } catch { show(error, title: "The shortcut couldn't be made") }
+        } catch { show(error, title: tr("dialog.err_shortcut_make")) }
     }
 
     func removeShortcut(for programID: UUID, in prefix: Prefix) {
         do { replace(try service.removeShortcut(for: programID, in: prefix)) }
-        catch { show(error, title: "The shortcut couldn't be removed") }
+        catch { show(error, title: tr("dialog.err_shortcut_remove")) }
     }
 
     // MARK: Launching
@@ -427,7 +427,7 @@ final class AppModel: ObservableObject {
         let updating = (try? service.runtime(for: prefix)).map {
             StartupStatus.prefixNeedsWineUpdate(prefix: prefix.directory, runtimeRoot: $0.root)
         } ?? false
-        return StatusSplash.shared.showLaunch(title: "Starting \(name)", icon: icon, updatingPrefix: updating)
+        return StatusSplash.shared.showLaunch(title: tr("splash.starting_program", name), icon: icon, updatingPrefix: updating)
     }
 
     func launch(_ program: Program, in prefix: Prefix) {
@@ -446,7 +446,7 @@ final class AppModel: ObservableObject {
             notePlaying(program, in: prefix)
         } catch {
             StatusSplash.shared.hide(status)
-            show(error, title: "“\(program.name)” couldn't be started")
+            show(error, title: tr("dialog.err_prog_start", program.name))
         }
     }
 
@@ -458,8 +458,8 @@ final class AppModel: ObservableObject {
         let appearance = currentAppearance
         if service.needsAppearanceRefresh(prefix, current: appearance),
            prefix.metadata.settings == prefix.metadata.appliedSettings {
-            let refreshed = await work(on: prefix.id, "Matching the Mac's appearance…",
-                                       failure: "The appearance couldn't be updated", splash: true) {
+            let refreshed = await work(on: prefix.id, tr("splash.matching_appearance"),
+                                       failure: tr("dialog.err_appearance_update"), splash: true) {
                 try $0.applySettings(to: prefix, appearance: appearance)
             }
             if let refreshed { replace(refreshed); current = refreshed }
@@ -478,7 +478,7 @@ final class AppModel: ObservableObject {
             track(pid, in: prefix.id)
         } catch {
             StatusSplash.shared.hide(status)
-            show(error, title: "\(tool.displayName) couldn't be started")
+            show(error, title: tr("dialog.err_prog_start", tool.displayName))
         }
     }
 
@@ -497,7 +497,7 @@ final class AppModel: ObservableObject {
             track(pid, in: prefix.id)
         } catch {
             StatusSplash.shared.hide(status)
-            show(error, title: "“\(url.lastPathComponent)” couldn't be started")
+            show(error, title: tr("dialog.err_prog_start", url.lastPathComponent))
         }
     }
 
@@ -507,16 +507,16 @@ final class AppModel: ObservableObject {
     private func install32Bit(_ url: URL, in prefix: Prefix) {
         let name = url.deletingPathExtension().lastPathComponent
         guard NSISArchive.isNSISInstaller(url) else {
-            alert = AppAlert(title: "“\(url.lastPathComponent)” is a 32-bit program",
-                             message: "FineWine can run 64-bit Windows programs only: an Apple silicon Mac gives a program no memory where a 32-bit one needs it. 32-bit installers made with NSIS are installed by FineWine itself; this one is of another kind. Look for a 64-bit installer or a portable (zip) download of the program.")
+            alert = AppAlert(title: tr("dialog.32bit_title", url.lastPathComponent),
+                             message: tr("dialog.32bit_msg"))
             openMainWindow()
             return
         }
         let prefixID = prefix.id
         Task { @MainActor in
-            busy[prefixID] = "Installing…"
-            let token = StatusSplash.shared.show(title: "Installing \(prefix.name)",
-                                                 message: "Reading the installer…")
+            busy[prefixID] = tr("splash.installing")
+            let token = StatusSplash.shared.show(title: tr("splash.installing_program", prefix.name),
+                                                 message: tr("splash.reading_installer"))
             let service = UncheckedBox(service)
             let outcome: Result<(prefix: Prefix, report: NSISInstallReport), Error> = await Task.detached(priority: .userInitiated) {
                 Result { try service.value.installNSIS(url, in: prefix) { stage in
@@ -527,8 +527,8 @@ final class AppModel: ObservableObject {
             switch outcome {
             case .failure(let error):
                 StatusSplash.shared.hide(token)
-                alert = AppAlert(title: "“\(name)” couldn't be installed",
-                                 message: "This installer is a 32-bit program, which FineWine cannot run, so FineWine tried to carry out its install script itself.\n\n" + error.localizedDescription)
+                alert = AppAlert(title: tr("dialog.32bit_install_failed_title", name),
+                                 message: tr("dialog.32bit_install_failed_msg", error.localizedDescription))
                 openMainWindow()
             case .success(let result):
                 let before = Set(prefix.metadata.programs.map(\.id))
@@ -540,9 +540,9 @@ final class AppModel: ObservableObject {
                 }
                 let installed = self.prefix(prefixID)?.name ?? prefix.name
                 StatusSplash.shared.update(token, message: added.isEmpty
-                    ? "Installed, but FineWine found no program to list. Add it in Manage Prefixes."
-                    : "Installed. Start it from the FineWine menu or its app in Applications.")
-                StatusSplash.shared.retitle(token, "\(installed) is installed")
+                    ? tr("splash.installed_no_programs")
+                    : tr("splash.installed_success"))
+                StatusSplash.shared.retitle(token, tr("splash.installed_title", installed))
                 try? await Task.sleep(nanoseconds: 4_000_000_000)
                 StatusSplash.shared.hide(token)
                 if added.isEmpty { show(prefixID: prefixID) }
@@ -557,8 +557,8 @@ final class AppModel: ObservableObject {
         switch link {
         case .launch(let prefixID, let programID):
             guard let prefix = prefix(prefixID), let program = prefix.program(id: programID) else {
-                alert = AppAlert(title: "That shortcut no longer works",
-                                 message: "The program it starts has been removed from FineWine. You can delete the shortcut.")
+                alert = AppAlert(title: tr("dialog.dead_shortcut_title"),
+                                 message: tr("dialog.dead_shortcut_msg"))
                 openMainWindow()
                 return
             }
@@ -588,7 +588,7 @@ final class AppModel: ObservableObject {
                 try service.runtimes.addExternal(folder)
             }
             reload()
-        } catch { show(error, title: "The runtime couldn't be added") }
+        } catch { show(error, title: tr("dialog.err_runtime_add")) }
     }
 
     func remove(_ runtime: WineRuntime) {
@@ -599,7 +599,7 @@ final class AppModel: ObservableObject {
             case .bundled: break   // part of the app; the list offers no way to remove it
             }
             reload()
-        } catch { show(error, title: "The runtime couldn't be removed") }
+        } catch { show(error, title: tr("dialog.err_runtime_remove")) }
     }
 
     func prefixesUsing(_ runtime: WineRuntime) -> [Prefix] {
@@ -654,8 +654,8 @@ final class AppModel: ObservableObject {
         reload()
         switch WindowsExecutable.route(for: url, prefixes: prefixes) {
         case .unsupported:
-            alert = AppAlert(title: "FineWine can't open “\(url.lastPathComponent)”",
-                             message: "It opens Windows programs and installers (.exe and .msi files).")
+            alert = AppAlert(title: tr("dialog.cant_open_title", url.lastPathComponent),
+                             message: tr("dialog.cant_open_msg"))
             openMainWindow()
         case .run(let prefix):
             runInstaller(url, in: prefix)
@@ -683,8 +683,8 @@ final class AppModel: ObservableObject {
     /// if it happens to be open, say what is being set up; only a failure opens the manager.
     private func run(_ url: URL, inNewPrefixNamed name: String, renameAfterInstall: Bool) {
         guard let runtime = usableRuntimes.first else {
-            alert = AppAlert(title: "No Wine runtime",
-                             message: "“\(url.lastPathComponent)” needs a prefix to run in, and there is no usable runtime to make one with. Add one in Settings, then open the file again.")
+            alert = AppAlert(title: tr("dialog.no_runtime_title"),
+                             message: tr("dialog.no_runtime_msg", url.lastPathComponent))
             openMainWindow()
             return
         }
@@ -754,12 +754,12 @@ final class AppModel: ObservableObject {
                     }
                 }
                 if unrestored {
-                    alert = AppAlert(title: "Choose another app in Finder",
-                                     message: "No other app was opening these files before FineWine, so there is nothing to switch back to. To change it, select a .exe file in Finder, choose File > Get Info, pick an app under “Open with”, and click Change All.")
+                    alert = AppAlert(title: tr("dialog.choose_another_app_title"),
+                                     message: tr("dialog.choose_another_app_msg"))
                 }
             }
         } catch {
-            show(error, title: "The default app couldn't be changed")
+            show(error, title: tr("dialog.err_default_app"))
         }
         objectWillChange.send()
     }
@@ -771,7 +771,7 @@ final class AppModel: ObservableObject {
     func setLaunchesAtLogin(_ enabled: Bool) {
         do {
             if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-        } catch { show(error, title: "The login setting couldn't be changed") }
+        } catch { show(error, title: tr("dialog.err_login_setting")) }
         objectWillChange.send()
     }
 }
@@ -802,8 +802,8 @@ enum Panels {
         let field = NSTextField(string: current)
         field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
         alert.accessoryView = field
-        alert.addButton(withTitle: "Rename")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: tr("app.rename"))
+        alert.addButton(withTitle: tr("app.cancel"))
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
         let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -817,7 +817,7 @@ enum Panels {
         alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: action).hasDestructiveAction = true
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: tr("app.cancel"))
         return alert.runModal() == .alertFirstButtonReturn
     }
 
@@ -842,13 +842,13 @@ enum Panels {
     @MainActor static func choosePrefix(for file: URL, newPrefixName: String, from prefixes: [Prefix],
                                         preselected: UUID?) -> PrefixChoice? {
         let alert = NSAlert()
-        alert.messageText = "Run “\(file.lastPathComponent)” with FineWine?"
-        alert.informativeText = "Choose the prefix to run it in. Only run programs you trust: they get the same access to your files as FineWine has."
-        alert.addButton(withTitle: "Run")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = tr("dialog.run_with_finewine_title", file.lastPathComponent)
+        alert.informativeText = tr("dialog.run_with_finewine_msg")
+        alert.addButton(withTitle: tr("dialog.run_btn"))
+        alert.addButton(withTitle: tr("app.cancel"))
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26), pullsDown: false)
         // Items are added one by one: addItems(withTitles:) drops titles that repeat.
-        popup.menu?.addItem(NSMenuItem(title: "New prefix “\(newPrefixName)”", action: nil, keyEquivalent: ""))
+        popup.menu?.addItem(NSMenuItem(title: tr("dialog.new_prefix_popup", newPrefixName), action: nil, keyEquivalent: ""))
         if !prefixes.isEmpty { popup.menu?.addItem(.separator()) }
         for prefix in prefixes {
             let item = NSMenuItem(title: prefix.name, action: nil, keyEquivalent: "")

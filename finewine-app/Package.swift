@@ -14,6 +14,7 @@ let package = Package(
         .target(
             name: "FineWineCore",
             path: "Sources/FineWineCore",
+            resources: [.process("Resources")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(

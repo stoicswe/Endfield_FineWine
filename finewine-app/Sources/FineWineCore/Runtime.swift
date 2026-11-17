@@ -107,12 +107,12 @@ public struct WineRuntime: Equatable, Identifiable, Sendable {
     /// Reasons this runtime can't be used; empty when it looks complete.
     public func problems() -> [String] {
         var problems: [String] = []
-        if wineBinary == nil { problems.append("bin/wine is missing or not executable.") }
-        if wineserverBinary == nil { problems.append("bin/wineserver is missing or not executable.") }
+        if wineBinary == nil { problems.append(tr("runtime_problem.wine_missing")) }
+        if wineserverBinary == nil { problems.append(tr("runtime_problem.wineserver_missing")) }
         var isDir: ObjCBool = false
         let lib = root.appendingPathComponent("lib/wine").path
         if !FileManager.default.fileExists(atPath: lib, isDirectory: &isDir) || !isDir.boolValue {
-            problems.append("lib/wine is missing.")
+            problems.append(tr("runtime_problem.lib_missing"))
         }
         return problems
     }

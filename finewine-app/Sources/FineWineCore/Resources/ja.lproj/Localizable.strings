@@ -1,0 +1,413 @@
+/* FineWine Localization - Japanese (日本語) */
+
+/* General / App */
+"app.name" = "FineWine";
+"app.running_count" = "%lld 個実行中";
+"app.cancel" = "キャンセル";
+"app.create" = "作成";
+"app.save" = "保存";
+"app.ok" = "OK";
+"app.remove" = "削除";
+"app.rename" = "名前を変更";
+"app.duplicate" = "複製";
+"app.delete" = "削除…";
+"app.revert" = "元に戻す";
+"app.apply" = "適用";
+"app.play" = "起動";
+"app.edit" = "編集…";
+"app.show_in_finder" = "Finder で表示";
+"app.running" = "実行中";
+"app.none" = "なし";
+"app.default" = "デフォルト";
+"app.on" = "オン";
+"app.off" = "オフ";
+
+/* Menu Bar */
+"menu.setting_up_prefix" = "プレフィックス「%@」をセットアップ中…";
+"menu.empty_no_runtimes" = "Wine ランタイムを追加し、Windows アプリをインストールするプレフィックスを作成してください。";
+"menu.empty_has_runtimes" = "Windows アプリをインストールするプレフィックスを作成してください。";
+"menu.resize_help" = "ドラッグしてリストの高さを調節";
+"menu.list_height" = "リストの高さ";
+"menu.manage_prefixes" = "プレフィックスを管理";
+"menu.donate" = "🍷 寄付する";
+"menu.donate_help" = "FineWine が使用する Wine は寄付によって支えられています。winehq.org/donate を開きます。";
+"menu.settings" = "設定";
+"menu.quit_help" = "FineWine を終了します。実行中のアプリがある場合は確認後に終了されます。";
+"menu.shut_down" = "シャットダウン";
+"menu.force_shut_down" = "強制シャットダウン";
+"menu.shut_down_help" = "シャットダウンは全アプリに正常終了を求めます。強制シャットダウンは応答しないアプリも終了させます。";
+"menu.configure_prefix" = "このプレフィックスを設定";
+"menu.no_programs" = "アプリはまだありません";
+"menu.language" = "言語 (Language)";
+"menu.tools" = "ツール";
+
+/* Main Window */
+"main.prefixes" = "プレフィックス";
+"main.new_prefix" = "新規プレフィックス";
+"main.settings_tooltip" = "ランタイムと設定";
+"main.program_count_single" = "1 個のアプリ";
+"main.program_count_multiple" = "%lld 個のアプリ";
+"main.add_runtime_title" = "Wine ランタイムを追加";
+"main.add_runtime_desc" = "FineWine は Wine ランタイムを使用して Windows プログラムを実行します。FineWine ランタイムフォルダまたは bin/wine を含む Wine ビルドフォルダを追加してください。";
+"main.add_runtime_btn" = "ランタイムを追加…";
+"main.first_prefix_title" = "最初のプレフィックスを作成";
+"main.first_prefix_desc" = "プレフィックスは独立した Windows 環境です。各ゲームやアプリに独自の環境と設定を持たせることができます。";
+"main.first_prefix_btn" = "新規プレフィックス…";
+
+/* New Prefix Sheet */
+"sheet.new_prefix_title" = "新規プレフィックス";
+"sheet.name_title" = "名前";
+"sheet.name_placeholder" = "例: ゲームの名前";
+"sheet.setup_title" = "設定";
+"sheet.profile_label" = "プロファイル";
+"sheet.no_runtime_warning" = "利用可能な Wine ランタイムがインストールされていません。先に「設定」から追加してください。";
+"sheet.runtime_label" = "ランタイム";
+"sheet.setting_up_windows" = "Windows 環境を初期化中… 約 1 分かかる場合があります。";
+
+/* Settings View */
+"settings.title" = "設定";
+"settings.language_card" = "言語 (Language)";
+"settings.language_label" = "表示言語";
+"settings.runtimes_card" = "Wine ランタイム";
+"settings.runtimes_footnote" = "runtime.json を含むフォルダは FineWine 内にコピーされます。その他の Wine フォルダは元の場所のまま使用されます。";
+"settings.no_runtimes" = "ランタイムはまだありません。";
+"settings.external" = "外部";
+"settings.builtin" = "内蔵";
+"settings.remove_runtime_confirm_title" = "「%@」を削除しますか？";
+"settings.remove_managed_msg" = "ファイルは FineWine から完全に削除されます。";
+"settings.remove_external_msg" = "FineWine はこのフォルダの参照を解除します。元のフォルダ自体は削除されません。";
+"settings.remove_users_prefix" = " 次のプレフィックスがこれを使用しており、別のランタイムが必要になります: %@。";
+"settings.discord_card" = "Discord";
+"settings.discord_footnote" = "アクティビティは指定した Discord アプリケーション名と画像で表示されます。discord.com/developers で作成（New Application）し、その Application ID をここに入力してください。この Mac 上の Discord アプリとのみ通信します。";
+"settings.discord_toggle_title" = "プレイ中のゲームを Discord に表示";
+"settings.discord_toggle_desc" = "FineWine から起動したアプリの実行中、その名前とプレイ時間が Discord のアクティビティとして表示されます。Wine ツールやインストーラーは表示されません。";
+"settings.discord_app_id" = "Application ID";
+"settings.discord_status_off" = "オフです。";
+"settings.discord_status_needed" = "表示するには Application ID が必要です。";
+"settings.discord_status_ready" = "準備完了。ゲームは実行されていません。";
+"settings.discord_status_not_running" = "この Mac で Discord が実行されていません。";
+"settings.discord_status_refused" = "Discord がこの Application ID を拒否しました。";
+"settings.discord_status_showing" = "「%@」を表示中。";
+"settings.support_card" = "Wine への支援";
+"settings.support_footnote" = "FineWine は Wine プロジェクトの一部ではなく、寄付の分配も受け取りません。";
+"settings.donate_row_label" = "WineHQ に寄付";
+"settings.donate_row_desc" = "FineWine は、有志によって開発され寄付で運営される自由なソフトウェア Wine を通じて Windows アプリを実行しています。開発者を支援していただければ幸いです。";
+"settings.donate_tooltip" = "ブラウザで winehq.org/donate を開く";
+"settings.status_card" = "ステータス表示";
+"settings.status_toggle_title" = "起動中に進行状況ウィンドウを表示";
+"settings.status_toggle_desc" = "プレフィックスのセットアップやアプリの起動中、アプリ自体のウィンドウが現れるまで画面中央に小さなステータスを表示します。クリックで非表示にできます。";
+"settings.win_files_card" = "Windows ファイルの関連付け";
+"settings.win_files_footnote" = "プレフィックス内のアプリは常にそのプレフィックスで実行されます。デフォルトアプリかどうかにかかわらず「このアプリケーションで開く」に FineWine が表示されます。";
+"settings.when_opened_label" = "アプリを開くときの動作";
+"settings.when_opened_desc" = "プレフィックス外の .exe や .msi（ダウンロードしたインストーラーなど）を開く際、アプリ名で新しいプレフィックスを作成するか、既存のプレフィックスを使用するかを選択します。";
+"settings.open_with_finewine_title" = "Windows プログラムを FineWine で開く";
+"settings.open_with_finewine_desc" = "FineWine を .exe および .msi ファイルのデフォルトアプリに設定し、Finder でのダブルクリックで直接起動できるようにします。";
+"settings.currently_opens_with" = "現在は %@ で開きます。";
+"settings.general_card" = "一般";
+"settings.login_item" = "ログイン時に FineWine を開く";
+"settings.shortcuts_row" = "ショートカットアプリ";
+"settings.prefixes_logs_row" = "プレフィックスとログ";
+
+/* Prefix Context Menu */
+"context.run_installer" = "インストーラーを実行…";
+"context.find_programs" = "インストール済みアプリを検索";
+"context.configure" = "設定…";
+"context.wine_tools" = "Wine ツール";
+"context.show_drive_c" = "Finder で C: ドライブを表示";
+"context.show_logs" = "Finder でログを表示";
+"context.shut_down" = "シャットダウン";
+"context.force_shut_down" = "強制シャットダウン";
+"context.rename" = "名前を変更…";
+"context.duplicate" = "複製";
+"context.delete" = "削除…";
+"context.delete_confirm_title" = "「%@」を削除しますか？";
+"context.delete_confirm_msg" = "プレフィックス、その中にインストールされた全データ、およびショートカットアプリが削除されます。この操作は取り消せません。";
+"context.delete_action" = "プレフィックスを削除";
+
+/* Prefix Detail View */
+"detail.tab_programs" = "プログラム";
+"detail.tab_config" = "環境設定";
+"detail.tab_tools" = "Wine ツール";
+"detail.tab_details" = "詳細";
+"detail.no_runtime" = "ランタイムなし";
+"detail.settings_not_applied" = "設定が未適用です";
+"detail.stop_prefix_help" = "このプレフィックスで実行中の全アプリを停止";
+"detail.run_installer" = "インストーラーを実行…";
+"detail.add_program" = "プログラムを追加…";
+"detail.find_installed" = "インストール済みを検索";
+"detail.find_installed_help" = "インストーラーによって作成されたショートカットを検索";
+"detail.no_programs_title" = "プログラムはまだありません";
+"detail.no_programs_desc" = "インストーラーを実行してこのプレフィックスに Windows アプリをインストールしてください。完了後、ここに一覧表示されます。";
+"detail.in_applications" = "アプリケーションフォルダに追加済み";
+"detail.show_shortcut" = "Finder でショートカットを表示";
+"detail.remove_shortcut" = "ショートカットアプリを削除";
+"detail.make_shortcut" = "ショートカットアプリを作成 (.app)";
+"detail.more_actions" = "その他の操作";
+"detail.remove_from_finewine" = "FineWine から削除…";
+"detail.remove_program_title" = "「%@」を FineWine から削除しますか？";
+"detail.remove_program_msg" = "一覧とショートカットアプリが削除されます。プレフィックス内のプログラム本体は保持されるため、アンインストールには「Wine ツール」の「プログラムの追加と削除」をご利用ください。";
+
+/* Program Editor */
+"editor.title" = "プログラムを編集";
+"editor.program_card" = "プログラム";
+"editor.name_label" = "名前";
+"editor.executable_label" = "実行ファイル";
+"editor.args_label" = "引数";
+"editor.args_prompt" = "任意";
+"editor.start_in_label" = "作業フォルダ";
+"editor.start_in_prompt" = "実行ファイルのフォルダ";
+"editor.environment_card" = "環境変数";
+"editor.environment_footnote" = "このプログラム専用の環境変数（プレフィックス自体の設定に追加されます）。";
+"editor.remove_variable" = "この変数を削除";
+"editor.add_variable" = "変数を追加";
+
+/* Tools Tab */
+"tools.maintenance_card" = "メンテナンス";
+"tools.restart_win_label" = "Windows を再起動";
+"tools.restart_win_detail" = "インストーラー完了時に求められる再起動をシミュレートします。";
+"tools.restart_win_btn" = "再起動";
+"tools.update_prefix_label" = "プレフィックスを更新";
+"tools.update_prefix_detail" = "ランタイム変更後に Windows システムファイルを最新状態に同期します。";
+"tools.update_prefix_btn" = "更新";
+"tools.shut_down_label" = "シャットダウン";
+"tools.shut_down_detail" = "Windows の終了と同様に、各プログラムに保存と正常終了を求めます。";
+"tools.force_shut_down_label" = "強制シャットダウン";
+"tools.force_shut_down_detail" = "フリーズしたアプリを含め、このプレフィックス内の全プロセスを即座に終了します。未保存の変更は失われます。";
+"tools.files_card" = "ファイル";
+"tools.c_drive_label" = "C: ドライブ";
+"tools.logs_label" = "ログ";
+"tools.logs_detail" = "Wine 起動ごとの出力ログです。";
+
+/* Details Tab */
+"details.name_card" = "名前";
+"details.reports_card" = "Windows 構成レポート";
+"details.reports_footnote" = "プレフィックスのレジストリから読み取られ、Wine 設定での変更も反映されます。";
+"details.win_version" = "Windows バージョン";
+"details.wine_default" = "Wine デフォルト";
+"details.build" = "ビルド";
+"details.dpi" = "DPI";
+"details.retina_mode" = "Retina モード";
+"details.virtual_desktop" = "仮想デスクトップ";
+"details.dll_overrides" = "DLL オーバーライド";
+"details.disabled" = "無効";
+"details.about_card" = "このプレフィックスについて";
+"details.created" = "作成日時";
+"details.location" = "場所";
+"details.duplicate_delete_card" = "複製または削除";
+"details.duplicate_label" = "複製";
+"details.duplicate_detail" = "インストール済みプログラムを含め、プレフィックス全体をコピーします。";
+"details.delete_label" = "削除";
+"details.delete_detail" = "プレフィックス、その中の全ファイル、ショートカットアプリを削除します。";
+"details.delete_confirm_title" = "「%@」を削除しますか？";
+"details.delete_confirm_msg" = "プレフィックス内のゲームセーブデータ等を含むすべてのファイルが完全に削除されます。元に戻すことはできません。";
+
+/* Configuration Tab */
+"config.windows_card" = "Windows";
+"config.win_version_label" = "Windows バージョン";
+"config.build_number_label" = "ビルド番号";
+"config.build_number_detail" = "空欄の場合は Wine のデフォルトを使用します。一部のゲームは特定のビルド（例: 26100）を要求します。";
+"config.runtime_label" = "Wine ランタイム";
+"config.graphics_card" = "グラフィックス";
+"config.direct3d_label" = "Direct3D";
+"config.retina_title" = "高解像度モード (Retina)";
+"config.retina_desc" = "Mac アプリと同様に、ディスプレイの実ピクセル解像度で鮮明に描画します。全解像度で動作が重い場合はオフにしてください。";
+"config.metalfx_upscale_title" = "MetalFX で低解像度を鮮明化";
+"config.metalfx_upscale_desc" = "Direct3D 10/11 ゲームの描画解像度がウィンドウより低い場合、単純な引き伸ばしではなく MetalFX で鮮明にアップスケールします。";
+"config.auto_dpi_title" = "DPI を自動調整";
+"config.auto_dpi_desc_retina" = "現在のディスプレイに合わせて Windows の DPI（この Mac では %@）を自動設定し、文字とUIを適切な大きさに保ちます。";
+"config.auto_dpi_desc_normal" = "高解像度モードがオフの場合、macOS に合わせて Windows の DPI を 96 に保ちます。";
+"config.screen_dpi_label" = "画面 DPI";
+"config.screen_dpi_detail" = "96 は 100% スケール、192 は Retina ディスプレイの高解像度モードに適しています。";
+"config.virtual_desktop_title" = "仮想デスクトップ";
+"config.virtual_desktop_desc" = "全ウィンドウを 1 つのデスクトップウィンドウ内に収めます。フルスクリーンで問題が生じるプログラムに有効です。";
+"config.width_label" = "幅";
+"config.height_label" = "高さ";
+"config.dlss_metalfx_title" = "MetalFX による NVIDIA DLSS 対応";
+"config.dlss_metalfx_dxmt_desc" = "NVIDIA DLSS に対応したゲームで Apple MetalFX によるアップスケーリングおよびフレーム生成を行います。FSR には影響しません。";
+"config.dlss_metalfx_general_desc" = "Direct3D 12 および Vulkan ゲームで MetalFX を使用します。Direct3D 11 ゲームには DXMT が必要です。FSR はそのまま動作します。";
+"config.report_nvidia_title" = "NVIDIA GPU として報告";
+"config.report_nvidia_desc" = "GPU が %@ であると Windows プログラムに偽装報告します。多くのゲームは NVIDIA GPU を検出した場合にのみ DLSS を有効化します。";
+"config.fullscreen_label" = "フルスクリーン";
+"config.fullscreen_detail" = "フルスクリーンの表示方式。「独立した Space」モードでは画面上部でのメニューバー呼び出し、スワイプでのデスクトップ切り替え、通知のオーバーレイ表示が可能です。";
+"config.rounded_windows_title" = "ウィンドウの角を丸くする";
+"config.rounded_windows_desc" = "独自のタイトルバーを描画するゲームやランチャーのウィンドウに Mac 風の丸角を適用します。全画面や特殊形状のウィンドウには影響しません。";
+"config.game_mode_title" = "ゲームモード (Game Mode)";
+"config.game_mode_desc" = "Direct3D、Vulkan、OpenGL を使用するプログラムをゲームとして起動し、全画面時に macOS のゲームモードを有効にします。";
+"config.hoyoverse_steam_title" = "HoYoverse ゲームを Steam 偽装で起動";
+"config.hoyoverse_steam_desc" = "原神、ゼンレスゾーンゼロ、崩壊3rd、HoYoPlay ランチャーを Steam スタンドイン経由で起動します（Linux と同様）。アカウントのリスクはご自身で判断してください。";
+"config.metal_hud_title" = "Metal パフォーマンスオーバーレイ (HUD) を表示して起動";
+"config.metal_hud_desc" = "画面上部にリアルタイムのフレームレートと GPU 統計を表示します。Option-F12 やメニューバーでいつでも切り替え可能です。";
+"config.perf_card" = "パフォーマンスと互換性";
+"config.sync_label" = "同期方式";
+"config.sync_detail" = "Windows のイベント、ミューテックス、セマフォの処理方法です。";
+"config.hide_hypervisor_title" = "ハイパーバイザー/仮想マシンフラグを隠す";
+"config.hide_hypervisor_desc" = "エミュレータが通知する CPU フラグを隠し、仮想マシンを検出して起動を拒否するゲームの起動制限を回避します。";
+"config.appearance_card" = "外観";
+"config.appearance_footnote" = "標準の Windows コントロールを使用する要素（Wine ツール等）に適用されます。ゲーム独自の UI には影響しません。";
+"config.mac_appearance_title" = "macOS に合わせる";
+"config.mac_appearance_desc" = "Windows コントロールに Mac のライト/ダークカラー、アクセントカラー、システムフォントを適用します。";
+"config.keyboard_card" = "キーボード";
+"config.left_opt_alt" = "左 Option キーを Alt として扱う";
+"config.right_opt_alt" = "右 Option キーを Alt として扱う";
+"config.dll_overrides_card" = "DLL オーバーライド";
+"config.dll_overrides_footnote" = "プログラム付属のネイティブ DLL (native) と Wine 内蔵 DLL (builtin) の優先順位を設定します。";
+"config.order_label" = "順序";
+"config.remove_override" = "このオーバーライドを削除";
+"config.add_override" = "オーバーライドを追加";
+"config.env_card" = "環境変数";
+"config.env_footnote" = "このプレフィックス内の全プログラムに設定されます。";
+"config.debug_card" = "デバッグ";
+"config.debug_footnote" = "Wine デバッグチャンネル (WINEDEBUG)。「-all」は完全非表示で最速、「err+all」はエラーを記録します。";
+"config.msync_note" = "MSync は対応ビルドのランタイム（FineWine 標準ランタイムに付属）が必要です。変更前に実行中のプログラムを停止してください。";
+"config.graphics_note" = "「%@」には %@ が含まれていないため、含まれるランタイムを選択するまで WineD3D が使用されます。";
+"config.changes_running" = "変更はこの後に起動するプログラムから適用されます。実行中のものは旧設定を維持します。";
+"config.changes_pending" = "未適用の変更があります。";
+"config.settings_applied" = "設定が適用されました。";
+
+/* Status Splash */
+"splash.dismiss_tooltip" = "クリックして隠す。処理はバックグラウンドで継続されます。";
+"splash.setting_up" = "「%@」を設定中";
+"splash.creating_prefix" = "プレフィックスを作成中…";
+"splash.applying_settings" = "設定を適用中…";
+"splash.restarting_windows" = "Windows を再起動中…";
+"splash.updating" = "更新中…";
+"splash.starting_program" = "%@ を起動中";
+"splash.installing" = "インストール中…";
+"splash.installing_program" = "%@ をインストール中";
+"splash.reading_installer" = "インストーラーを読み込み中…";
+"splash.installed_no_programs" = "インストールが完了しましたが、登録可能なプログラムが見つかりませんでした。「プレフィックス管理」から手動で追加してください。";
+"splash.installed_success" = "インストール完了。FineWine メニューまたは「アプリケーション」フォルダから起動できます。";
+"splash.installed_title" = "%@ のインストール完了";
+"splash.quitting_title" = "FineWine を終了中";
+"splash.closing_single" = "1 個のプログラムを終了中…";
+"splash.closing_multiple" = "%lld 個のプログラムを終了中…";
+"splash.duplicating" = "複製中…";
+"splash.deleting" = "削除中…";
+"splash.stopping" = "停止中…";
+"splash.shutting_down" = "シャットダウン中…";
+"splash.forcing_shut_down" = "強制シャットダウン中…";
+"splash.matching_appearance" = "Mac の外観に同期中…";
+
+/* Dialogs & Alerts */
+"dialog.quit_title_single" = "FineWine を終了し、実行中の 1 個のプログラムを閉じますか？";
+"dialog.quit_title_multiple" = "FineWine を終了し、実行中の %lld 個のプログラムを閉じますか？";
+"dialog.quit_info" = "以下のプログラムが実行中です:\n\n%@\n\n各プログラムに終了を要求します。5 秒後に閉じない場合は強制終了され、未保存のデータは失われます。";
+"dialog.close_and_quit" = "閉じて終了";
+"dialog.err_prefix_create" = "プレフィックスを作成できませんでした";
+"dialog.err_settings_save" = "設定を保存できませんでした";
+"dialog.err_settings_apply" = "設定を適用できませんでした";
+"dialog.err_prefix_rename" = "プレフィックス名を変更できませんでした";
+"dialog.err_prefix_duplicate" = "プレフィックスを複製できませんでした";
+"dialog.err_prefix_delete" = "プレフィックスを削除できませんでした";
+"dialog.err_programs_stop" = "プログラムを停止できませんでした";
+"dialog.err_prefix_shutdown" = "プレフィックスをシャットダウンできませんでした";
+"dialog.err_prefix_force_shutdown" = "プレフィックスを強制シャットダウンできませんでした";
+"dialog.wine_problem" = "Wine が問題を報告しました";
+"dialog.err_prog_add" = "プログラムを追加できませんでした";
+"dialog.err_prog_save" = "プログラムを保存できませんでした";
+"dialog.err_prog_remove" = "プログラムを削除できませんでした";
+"dialog.no_new_programs_title" = "新しいプログラムが見つかりません";
+"dialog.no_new_programs_msg" = "スタートメニューやデスクトップに残されたショートカットを検索しました。見つからない場合は「プログラムを追加」から手動で登録してください。";
+"dialog.err_prefix_search" = "プレフィックスの検索に失敗しました";
+"dialog.err_shortcut_make" = "ショートカットを作成できませんでした";
+"dialog.err_shortcut_remove" = "ショートカットを削除できませんでした";
+"dialog.err_prog_start" = "「%@」を起動できませんでした";
+"dialog.err_appearance_update" = "外観を更新できませんでした";
+"dialog.32bit_title" = "「%@」は 32 ビットプログラムです";
+"dialog.32bit_msg" = "FineWine は 64 ビット Windows プログラムのみを実行できます。Apple シリコン Mac は 32 ビットプログラムが必要とするメモリ構造をサポートしません。NSIS 製の 32 ビットインストーラーはスクリプト解析で導入できますが、本ファイルは別形式です。64 ビット版やポータブル版 (zip) をお探しください。";
+"dialog.32bit_install_failed_title" = "「%@」のインストールに失敗しました";
+"dialog.32bit_install_failed_msg" = "このインストーラーは 32 ビットプログラムであり、FineWine がスクリプトを自己実行しようとしましたが失敗しました:\n\n%@";
+"dialog.dead_shortcut_title" = "ショートカットが無効です";
+"dialog.dead_shortcut_msg" = "起動対象のプログラムが FineWine から削除されています。このショートカットは削除できます。";
+"dialog.err_runtime_add" = "ランタイムを追加できませんでした";
+"dialog.err_runtime_remove" = "ランタイムを削除できませんでした";
+"dialog.cant_open_title" = "FineWine で「%@」を開けません";
+"dialog.cant_open_msg" = "Windows プログラムおよびインストーラー (.exe, .msi) のみを開くことができます。";
+"dialog.no_runtime_title" = "Wine ランタイムがありません";
+"dialog.no_runtime_msg" = "「%@」を実行するためのプレフィックスが必要ですが、使用可能なランタイムがありません。「設定」から追加した後に再度お試しください。";
+"dialog.choose_another_app_title" = "Finder で別のアプリを選択してください";
+"dialog.choose_another_app_msg" = "FineWine 以前にこのファイルを開くデフォルトアプリが登録されていなかったため、自動復元できません。変更するには Finder で .exe ファイルを選択して「情報を見る」を開き、「このアプリケーションで開く」で選択して「すべてを変更」をクリックしてください。";
+"dialog.err_default_app" = "デフォルトアプリを変更できませんでした";
+"dialog.err_login_setting" = "ログイン時起動の設定を変更できませんでした";
+"dialog.choose_executable" = "「%@」で実行する Windows インストーラーまたはプログラムを選択";
+"dialog.choose_program_in_prefix" = "このプレフィックス内のプログラムを選択";
+"dialog.choose_runtime_folder" = "Wine ランタイムフォルダを選択";
+"dialog.run_with_finewine_title" = "FineWine で「%@」を実行しますか？";
+"dialog.run_with_finewine_msg" = "実行するプレフィックスを選択してください。信頼できるプログラムのみ実行してください（FineWine と同一のアクセス権限が付与されます）。";
+"dialog.run_btn" = "実行";
+"dialog.new_prefix_popup" = "新規プレフィックス「%@」";
+
+/* Wine Tools */
+"tool.winecfg.name" = "Wine 設定 (winecfg)";
+"tool.winecfg.summary" = "ライブラリ、グラフィックス、オーディオ、ドライブ、プログラム別の Windows バージョンを設定します。";
+"tool.regedit.name" = "レジストリエディタ (regedit)";
+"tool.regedit.summary" = "プレフィックス内のレジストリを閲覧・編集します。";
+"tool.control.name" = "コントロールパネル (control)";
+"tool.control.summary" = "ゲームコントローラー等の設定アプレットを開きます。";
+"tool.uninstaller.name" = "プログラムの追加と削除";
+"tool.uninstaller.summary" = "このプレフィックスにインストールされたプログラムを削除します。";
+"tool.taskmgr.name" = "タスクマネージャー (taskmgr)";
+"tool.taskmgr.summary" = "実行中の Windows プロセスを確認・終了します。";
+"tool.winefile.name" = "ファイルマネージャー (winefile)";
+"tool.winefile.summary" = "プレフィックス内の仮想ドライブを参照します。";
+"tool.cmd.name" = "コマンドプロンプト (cmd)";
+"tool.cmd.summary" = "このプレフィックスで Windows コマンドラインを開きます。";
+"tool.notepad.name" = "メモ帳 (notepad)";
+"tool.notepad.summary" = "簡単なテキストエディタです。動作確認に便利です。";
+
+/* Opened File Policy */
+"opened_file_policy.auto_create" = "プレフィックスを自動作成";
+"opened_file_policy.ask" = "毎回確認する";
+
+/* Graphics Backends */
+"backend.dxmt" = "DXMT (Metal 上の Direct3D 10/11)";
+"backend.dxvk" = "DXVK (Vulkan / MoltenVK 上の Direct3D)";
+"backend.wined3d" = "WineD3D (内蔵実装)";
+"backend.scope_note" = "Direct3D 9、10、11 の描画方式を選択します。Direct3D 12 と Vulkan は MoltenVK 経由で常に利用可能です。";
+
+/* Full Screen Modes */
+"fullscreen.space" = "Mac フルスクリーン (独立した Space)";
+"fullscreen.borderless" = "デスクトップ上の枠なしウィンドウ";
+"fullscreen.exclusive" = "排他フルスクリーン (メニューバーを覆う)";
+
+/* Sync Modes */
+"sync.standard" = "Wine サーバー同期 (互換性重視、低速)";
+"sync.msync" = "MSync 同期 (Mach セマフォ、高速)";
+
+/* DLL Load Order */
+"dll_order.native_builtin" = "ネイティブ優先、次いで内蔵";
+"dll_order.builtin_native" = "内蔵優先、次いでネイティブ";
+"dll_order.native" = "ネイティブのみ";
+"dll_order.builtin" = "内蔵のみ";
+"dll_order.disabled" = "無効";
+
+/* Startup Status Messages */
+"startup.updating_prefix" = "ランタイムのバージョンに合わせてプレフィックスを更新中…";
+"startup.still_updating" = "プレフィックスを更新しています。ランタイム変更後の初起動時のみ実行されます。";
+"startup.starting_wine" = "Wine を起動中…";
+"startup.loading_program" = "プログラムを読み込み中…";
+"startup.still_loading" = "読み込み中… 大規模なアプリはウィンドウ表示まで時間がかかります。";
+"startup.still_working" = "準備中… Mac の別作業を続けて問題ありません。準備ができ次第ウィンドウが表示されます。";
+"startup.seconds" = "%d 秒";
+"startup.min_seconds" = "%d 分 %d 秒";
+
+/* Validation Problems */
+"validation.win_build_number" = "Windows ビルド番号は 26100 などの数値である必要があります。";
+"validation.dpi_range" = "DPI は 72 から 480 の間である必要があります。";
+"validation.desktop_min" = "仮想デスクトップは 640 × 480 以上である必要があります。";
+"validation.env_invalid" = "「%@」は有効な環境変数名ではありません。";
+"validation.dll_empty" = "名前が空の DLL オーバーライドがあります。";
+"validation.dll_duplicate" = "DLL オーバーライドに重複した名前が存在します。";
+
+/* Runtime Problems */
+"runtime_problem.wine_missing" = "bin/wine が見つからないか、実行可能ではありません。";
+"runtime_problem.wineserver_missing" = "bin/wineserver が見つからないか、実行可能ではありません。";
+"runtime_problem.lib_missing" = "lib/wine ディレクトリがありません。";
+
+/* Prefix Setup Progress */
+"setup.creating_windows_env" = "Windows フォルダとレジストリを作成しています。約1分かかります。";
+"setup.applying_settings" = "プレフィックスの設定を適用中…";
+"nsis.reading" = "インストーラーを読み込み中…";
+"nsis.unpacking" = "インストーラーを展開中… %d%%";
+"nsis.installing_file" = "%@ をインストール中";
+"nsis.writing_registry" = "レジストリエントリを書き込み中…";

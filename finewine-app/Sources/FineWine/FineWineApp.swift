@@ -6,18 +6,25 @@ import FineWineCore
 struct FineWineApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel.shared
+    @StateObject private var l10n = LanguageManager.shared
 
     var body: some Scene {
         // FineWine lives in the menu bar; the window below is opened from it when needed.
         MenuBarExtra {
-            MenuBarView().environmentObject(model)
+            MenuBarView()
+                .environmentObject(model)
+                .environmentObject(l10n)
         } label: {
-            MenuBarLabel().environmentObject(model)
+            MenuBarLabel()
+                .environmentObject(model)
+                .environmentObject(l10n)
         }
         .menuBarExtraStyle(.window)
 
         Window("FineWine", id: "main") {
-            MainWindow().environmentObject(model)
+            MainWindow()
+                .environmentObject(model)
+                .environmentObject(l10n)
         }
         .defaultSize(width: 980, height: 680)
         .windowToolbarStyle(.unified)
@@ -25,9 +32,37 @@ struct FineWineApp: App {
         // Windows program, or a shortcut app's finewine:// link, must not bring the manager up:
         // the delegate handles those, and the manager is opened only when there is a reason.
         .handlesExternalEvents(matching: [])
+        .commands {
+            FineWineCommands()
+        }
 
         Settings {
-            SettingsView().environmentObject(model)
+            SettingsView()
+                .environmentObject(model)
+                .environmentObject(l10n)
+        }
+    }
+}
+
+/// Commands for macOS menu bar (Language switching).
+struct FineWineCommands: Commands {
+    @ObservedObject private var l10n = LanguageManager.shared
+
+    var body: some Commands {
+        CommandMenu(l10n.tr("menu.language")) {
+            ForEach(AppLanguage.allCases) { lang in
+                Button {
+                    l10n.selectedLanguage = lang
+                } label: {
+                    HStack {
+                        Text(lang.displayName)
+                        if l10n.selectedLanguage == lang {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
         }
     }
 }

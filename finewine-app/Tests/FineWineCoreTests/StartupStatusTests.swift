@@ -31,6 +31,10 @@ final class StartupStatusTests: XCTestCase {
     }
 
     func testLaunchMessageChangesAsTimePasses() {
+        let previous = LanguageManager.shared.selectedLanguage
+        LanguageManager.shared.selectedLanguage = .en
+        defer { LanguageManager.shared.selectedLanguage = previous }
+
         let early = StartupStatus.launchMessage(elapsed: 1, updatingPrefix: false)
         let later = StartupStatus.launchMessage(elapsed: 10, updatingPrefix: false)
         let long = StartupStatus.launchMessage(elapsed: 120, updatingPrefix: false)
