@@ -12,6 +12,7 @@
  *     picks for each script in each East Asian locale, and that it picks one.
  *
  * Usage: cjk.exe [expected ANSI code page] [more GDI font names to check...]
+ * Built with -municode: the names may be in any language.
  * The code page is 0 to check nothing about it.
  * Exit status 0 when every check passes. Draws into memory only; it opens no window.
  */
@@ -220,9 +221,9 @@ static const WCHAR *const fonts[] =
  * and Hangul. */
 static const WCHAR chars[] = { 0x3042, 0x30ab, 0x65e5, 0x7b80, 0x9ad4, 0xd55c, 0xae00, 0 };
 
-int main(int argc, char **argv)
+int wmain(int argc, WCHAR **argv)
 {
-    UINT expected = argc > 1 ? (UINT)atoi(argv[1]) : 0;
+    UINT expected = argc > 1 ? (UINT)_wtoi(argv[1]) : 0;
     WCHAR locale[LOCALE_NAME_MAX_LENGTH] = L"";
     BITMAPINFO info = { { sizeof(BITMAPINFOHEADER), 64, -64, 1, 32, BI_RGB } };
     HDC dc;
@@ -255,7 +256,7 @@ int main(int argc, char **argv)
         WCHAR name[LF_FACESIZE];
         HFONT font;
         if (i < ARRAYSIZE(fonts)) lstrcpynW(name, fonts[i], LF_FACESIZE);
-        else MultiByteToWideChar(CP_UTF8, 0, argv[i - ARRAYSIZE(fonts) + 2], -1, name, LF_FACESIZE);
+        else lstrcpynW(name, argv[i - ARRAYSIZE(fonts) + 2], LF_FACESIZE);
         font = CreateFontW(-32, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
                            NONANTIALIASED_QUALITY, 0, name);
         HGDIOBJ old = SelectObject(dc, font);

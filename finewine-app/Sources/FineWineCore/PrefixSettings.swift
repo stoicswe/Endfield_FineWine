@@ -411,6 +411,10 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
             edits.append(.delete(Self.explorerKey, "Desktop"))
         }
 
+        // The localized names of Windows' Chinese, Japanese and Korean fonts (宋体, ＭＳ ゴシック,
+        // 맑은 고딕, ...); the runtime's wine.inf maps the English ones. See CJKFonts.
+        edits += CJKFonts.registryEdits(localizedOnly: true)
+
         if macAppearance, let appearance {
             edits += MacStyle.registryEdits(for: appearance)
         } else if !macAppearance, previous?.macAppearance == true {

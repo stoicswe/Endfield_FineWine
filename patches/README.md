@@ -74,6 +74,17 @@ Original to this project. The two Rosetta fixes live in `dlls/ntdll/unix/signal_
     (`build-wine.sh` MODULES, `package.sh`, `apply-modules.sh`, `swap-into-crossover.sh`, and
     the patcher's payload) and why it is ad-hoc signed like `wineserver` (an exec'd Mach-O).
 
+- **`0013-winemac-the-dock-shows-a-program-s-largest-icon-drawn-as-a-mac-app-icon.patch`** —
+  `runtime/0030` done for CrossOver's older Mac driver. Every size of a program's icon reaches the
+  Dock (the bitmap sizes were read off a reused stack and lost). The program's own icon is read
+  once per process, not on every new window; that replaces CrossOver's Helldivers 2 hack. A
+  window's larger icon replaces it, but Wine's stand-in logo never does. Icons are drawn the way
+  FineWine draws them (every size up to 1024 pixels, a shape sized by its visible part, small
+  icons crisp) in place of CrossOver's mask, which stays as the fallback. `FINEWINE_MAC_ICONS=0`
+  turns the drawing off. Ships `winemac.so` and its Windows half `winemac.drv`. x64 only: the
+  ARM payload is built from upstream Wine, whose `winemac.drv` would not match CrossOver ARM's
+  own `winemac.so`. The runtime's Chinese, Japanese and Korean font work (`runtime/0029`) is
+  FineWine's only, by the user's decision.
 - **`0012-ntdll-use-pipe2-only-where-macos-has-it.patch`** — `pipe2()` exists from macOS 27
   only, and the SDK declares it with no availability annotation, so modules built with the
   macOS 27 SDK called it unconditionally and crashed on macOS 26 and older at the first pipe

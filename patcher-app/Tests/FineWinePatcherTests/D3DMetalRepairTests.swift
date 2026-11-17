@@ -48,6 +48,7 @@ final class D3DMetalRepairTests: XCTestCase {
         let app = tempDir.appendingPathComponent("CrossOver_Endfield_Patch.app", isDirectory: true)
         let cxr = app.appendingPathComponent("Contents/SharedSupport/CrossOver", isDirectory: true)
         for file in ["lib/wine/x86_64-unix/ntdll.so", "lib/wine/x86_64-unix/winemac.so",
+                     "lib/wine/x86_64-windows/winemac.drv",
                      "lib/wine/x86_64-windows/dwmapi.dll", "lib/wine/x86_64-windows/kernel32.dll",
                      "lib/wine/x86_64-windows/ntoskrnl.exe", "lib/wine/x86_64-windows/wineboot.exe",
                      "lib/wine/x86_64-windows/rundll32.exe", "bin/wineserver",
