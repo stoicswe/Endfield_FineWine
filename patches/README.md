@@ -192,6 +192,14 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
   private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
   in a command list, to be carried out by MoltenVK as MetalFX.
+- `0030-winemac-the-dock-shows-a-program-s-largest-icon-drawn-as-a-mac-app-icon.patch`: only one
+  picture of a program's icon ever reached the Dock (Wine read the icon list off the program's
+  stack after reusing it), 16 pixels as often as 256; now every size does. A window's icon
+  replaces the program's when it is larger: a whole group from whichever module it was loaded
+  from, or the icon itself if it was made at run time. Wine's stand-in logo for windows without
+  an icon never does. The icon is drawn on Apple's icon grid, the rounded square of a Mac app
+  icon: a square picture fills it, any other shape stands on a light plate.
+  `FINEWINE_MAC_ICONS=0` turns the drawing off. Checked by `tests/runtime/app-icon.c`.
 - `0029-win32u-dwrite-chinese-japanese-and-korean-text-with-the-mac-s-own-fonts.patch`: Chinese,
   Japanese and Korean text drew as empty boxes in every font, through GDI and DirectWrite
   (Chromium launchers), because Wine's font links and DirectWrite's fallback name Windows' and

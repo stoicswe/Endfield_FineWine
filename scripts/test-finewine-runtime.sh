@@ -22,6 +22,7 @@
 #   6. repairs TEB accesses made through x18 (tests/runtime/arm64-x18.c)
 #   6a. draws Chinese, Japanese and Korean text, and uses each language's code page when asked
 #      (tests/runtime/cjk.c)
+#   6b. gives the Dock a program's largest icon, drawn as a Mac app icon (tests/runtime/app-icon.c)
 #   7. boots a second prefix with MSync on
 # Wine writes .update-timestamp as soon as a prefix is set up; the registry files only appear
 # when its server exits, so they are not a usable marker. No windows or dialogs are shown. Exit status is 0 only if every check passes.
@@ -591,6 +592,39 @@ if "$REPO/build/llvm-mingw/bin/aarch64-w64-mingw32-clang" -O1 -mconsole -o "$WOR
     *) fail "Chinese, Japanese and Korean text with the Mac dialog font:"; echo "$out" | grep -E "^FAIL" | head -n 5 ;; esac
 else
   fail "could not build tests/runtime/cjk.c"; tail -n 3 "$WORK/cjk-build.log"
+fi
+
+# The Dock icon (tests/runtime/app-icon.c, icons from tests/runtime/make-icons.py): every size of
+# a program's own icon reaches the Dock, a window's larger icon replaces a small one (from a file,
+# and from another module's group), Wine's stand-in logo never does, and the icon is drawn as a
+# Mac app icon (1024 pixels) unless FINEWINE_MAC_ICONS=0. Each case shows a window for 2 seconds.
+ICONS="$WORK/icons"
+MINGWA="$REPO/build/llvm-mingw/bin/aarch64-w64-mingw32-clang"
+if python3 -I "$REPO/tests/runtime/make-icons.py" "$ICONS" >"$WORK/icon-build.log" 2>&1 \
+   && ( for k in round tiny; do printf '1 ICON "%s/%s.ico"\n' "$ICONS" "$k" > "$ICONS/$k.rc" \
+        && "$REPO/build/llvm-mingw/bin/aarch64-w64-mingw32-windres" "$ICONS/$k.rc" -O coff -o "$ICONS/$k.res" \
+        && "$MINGWA" -O1 -mwindows -o "$ICONS/icon-$k.exe" "$REPO/tests/runtime/app-icon.c" "$ICONS/$k.res" || exit 1; done ) >>"$WORK/icon-build.log" 2>&1; then
+  dock(){ local out="$1"; shift; rm -f "${out:?}"; FINEWINE_APP_ICON_DUMP="$out" WINEDEBUG=+macdrv,+image "$RT/bin/wine" "$@" </dev/null 2>&1 | tr -d '\r'; }
+  width(){ [ -f "$1" ] && sips -g pixelWidth "$1" 2>/dev/null | awk '/pixelWidth/{print $2}'; }
+  log1="$(dock "$ICONS/round.png" "$ICONS/icon-round.exe" own)"
+  case "$log1" in *"offered 4 images, largest 256 pixels"*) [ "$(width "$ICONS/round.png")" = 1024 ] \
+      && pass "the Dock gets every size of a program's icon (4 of 4, up to 256 pixels), drawn as a 1024-pixel Mac app icon" \
+      || fail "Dock icon not drawn as a Mac app icon (width $(width "$ICONS/round.png"))" ;;
+    *) fail "the Dock did not get every size of the program's icon:"; echo "$log1" | grep -E "offered|entry" | head -n 5 ;; esac
+  log2="$(dock "$ICONS/tiny.png" "$ICONS/icon-tiny.exe" own)"
+  case "$log2" in *"Dock icon now 32 pixels"*) case "$log2" in *"Dock icon now 256"*) fail "Wine's stand-in icon replaced a program's own" ;;
+      *) pass "a window without an icon does not put Wine's logo in the Dock in place of the program's own" ;; esac ;;
+    *) fail "a 32-pixel program got no Dock icon" ;; esac
+  log3="$(dock "$ICONS/file.png" "$ICONS/icon-tiny.exe" file "Z:$ICONS/round.ico")"
+  log4="$(dock "$ICONS/module.png" "$ICONS/icon-tiny.exe" module "Z:$ICONS/icon-round.exe")"
+  case "$log3|$log4" in *"Dock icon now 256 pixels"*"|"*"Dock icon now 256 pixels"*)
+      pass "a window's 256-pixel icon replaces a program's 32-pixel one: loaded from a file, and from another module's group" ;;
+    *) fail "a window's larger icon did not reach the Dock (file: $(echo "$log3" | grep -c 'now 256'), module: $(echo "$log4" | grep -c 'now 256'))" ;; esac
+  FINEWINE_MAC_ICONS=0 dock "$ICONS/plain.png" "$ICONS/icon-round.exe" own >/dev/null
+  [ "$(width "$ICONS/plain.png")" = 256 ] && pass "FINEWINE_MAC_ICONS=0 leaves the icon as it is" \
+    || fail "FINEWINE_MAC_ICONS=0 still changed the icon (width $(width "$ICONS/plain.png"))"
+else
+  fail "could not build the Dock icon test programs"; tail -n 3 "$WORK/icon-build.log"
 fi
 "$RT/bin/wineserver" -k 2>/dev/null
 

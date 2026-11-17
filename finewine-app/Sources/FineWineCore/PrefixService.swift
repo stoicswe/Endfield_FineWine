@@ -291,8 +291,13 @@ public struct PrefixService {
         }
         let program = prefix.metadata.programs[index]
         // The icon the installer's shortcut named, if it named one; else the program's own.
-        let icon = program.iconPath.flatMap { WindowsPath.macURL(for: $0, inPrefix: prefix.directory) }.flatMap(ICNS.data(fromIconFile:))
-            ?? WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory).flatMap(ICNS.data(fromExecutable:))
+        // Drawn as a Mac app icon when the prefix's programs are, so the shortcut and the
+        // program it starts look alike in the Dock.
+        let macStyle = prefix.metadata.settings.macStyleIcons
+        let icon = program.iconPath.flatMap { WindowsPath.macURL(for: $0, inPrefix: prefix.directory) }
+            .flatMap { ICNS.data(fromIconFile: $0, macStyle: macStyle) }
+            ?? WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory)
+            .flatMap { ICNS.data(fromExecutable: $0, macStyle: macStyle) }
         let url = try shortcuts.build(for: program, in: prefix, icon: icon)
         var updated = prefix
         updated.metadata.programs[index].shortcutPath = url.path

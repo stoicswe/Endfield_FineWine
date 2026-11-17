@@ -250,6 +250,8 @@
 "config.appearance_footnote" = "標準の Windows コントロールを使用する要素（Wine ツール等）に適用されます。ゲーム独自の UI には影響しません。";
 "config.mac_appearance_title" = "macOS に合わせる";
 "config.mac_appearance_desc" = "Windows コントロールに Mac のライト/ダークカラー、アクセントカラー、システムフォントを適用します。";
+"config.mac_icons_title" = "Mac スタイルのアプリアイコン";
+"config.mac_icons_desc" = "プログラムは Dock で、持っている最大サイズのアイコンを Mac アプリと同じ角丸の四角形に載せて表示されます。今後作成するショートカットアプリも同じになります。";
 "config.keyboard_card" = "キーボード";
 "config.left_opt_alt" = "左 Option キーを Alt として扱う";
 "config.right_opt_alt" = "右 Option キーを Alt として扱う";

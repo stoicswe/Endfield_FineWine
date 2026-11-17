@@ -171,6 +171,11 @@ struct ConfigurationTab: View {
                     Text(l10n.tr("config.mac_appearance_title"))
                     Text(l10n.tr("config.mac_appearance_desc"))
                 }
+                Divider()
+                Toggle(isOn: $draft.macStyleIcons) {
+                    Text(l10n.tr("config.mac_icons_title"))
+                    Text(l10n.tr("config.mac_icons_desc"))
+                }
             }
 
             Card(title: l10n.tr("config.keyboard_card"), symbol: "keyboard") {

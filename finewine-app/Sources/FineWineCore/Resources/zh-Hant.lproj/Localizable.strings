@@ -250,6 +250,8 @@
 "config.appearance_footnote" = "適用於使用標準 Windows 控制項目的介面（包含 Wine 工具）。視窗邊框與標題列由 macOS 繪製。遊戲自繪介面不受影響。";
 "config.mac_appearance_title" = "符合 macOS 風格";
 "config.mac_appearance_desc" = "Windows 原生控制項目自動套用 macOS 的淺色或深色外觀、輔色與系統字體。";
+"config.mac_icons_title" = "Mac 風格的應用程式圖像";
+"config.mac_icons_desc" = "程式在 Dock 中以其最大尺寸的圖像顯示，並放在與 Mac 應用程式相同的圓角方形上。此後建立的捷徑應用程式也會一致。";
 "config.keyboard_card" = "鍵盤對應";
 "config.left_opt_alt" = "左 Option 鍵作為 Alt";
 "config.right_opt_alt" = "右 Option 鍵作為 Alt";

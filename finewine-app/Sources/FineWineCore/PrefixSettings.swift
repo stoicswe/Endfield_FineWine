@@ -272,6 +272,9 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// Upscale a Direct3D 10 or 11 picture that is smaller than its window to the window's
     /// display pixels with MetalFX, instead of leaving the stretch to the window server.
     public var metalFXUpscaling: Bool = true
+    /// Draw programs' icons in the Dock (and their shortcut apps' icons) as Mac app icons: a
+    /// rounded square on Apple's icon grid. See `MacIconStyle`. On by default.
+    public var macStyleIcons: Bool = true
     /// Windows' "Language for non-Unicode programs". See `NonUnicodeLanguage`.
     public var nonUnicodeLanguage: NonUnicodeLanguage = .automatic
 
@@ -317,6 +320,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         roundedWindows = try c.decodeIfPresent(Bool.self, forKey: .roundedWindows) ?? d.roundedWindows
         metalFXUpscaling = try c.decodeIfPresent(Bool.self, forKey: .metalFXUpscaling) ?? d.metalFXUpscaling
         fullScreenMode = try c.decodeIfPresent(FullScreenMode.self, forKey: .fullScreenMode) ?? d.fullScreenMode
+        macStyleIcons = try c.decodeIfPresent(Bool.self, forKey: .macStyleIcons) ?? d.macStyleIcons
         // An unknown value (from a newer FineWine) falls back to automatic.
         nonUnicodeLanguage = (try? c.decodeIfPresent(NonUnicodeLanguage.self, forKey: .nonUnicodeLanguage)) ?? d.nonUnicodeLanguage
     }
@@ -433,6 +437,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         out.append(("FINEWINE_FULLSCREEN", fullScreenMode.rawValue))
         if !roundedWindows { out.append(("FINEWINE_ROUNDED_WINDOWS", "0")) }
         if !metalFXUpscaling { out.append(("FINEWINE_METALFX_AUTO", "0")) }
+        if !macStyleIcons { out.append(("FINEWINE_MAC_ICONS", "0")) }
         if hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
         // Wine takes the ANSI code page from LC_CTYPE, and the interface language from
         // LC_MESSAGES or LANG (or, with neither, the Mac's language), which stay as they are.

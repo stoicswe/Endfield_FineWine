@@ -9,7 +9,7 @@ import PackageDescription
 let package = Package(
     name: "FineWine",
     defaultLocalization: "en",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v26)],
     targets: [
         .target(
             name: "FineWineCore",
