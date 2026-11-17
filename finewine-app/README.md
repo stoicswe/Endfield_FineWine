@@ -48,7 +48,8 @@ and will later become one function of this app.
   appears (or the program ends), and a click hides it. It can be turned off in Settings.
 - **Configuration.** Windows version and build number, Direct3D backend, Retina mode, DPI,
   virtual desktop, Metal overlay, full-screen behaviour (a Mac full-screen Space by default), Game Mode (programs that use Direct3D, Vulkan or OpenGL run as games), starting HoYoverse games through a Steam stand-in, DLSS through MetalFX, reporting an NVIDIA GPU (the ids of an RTX 5080, for games that only offer DLSS on NVIDIA), MSync, the hypervisor flag, macOS styling for Windows controls,
-  Option-as-Alt, DLL overrides,
+  Option-as-Alt, the language for non-Unicode programs (the code page older programs use for
+  Chinese, Japanese and Korean text), DLL overrides,
   environment variables and Wine debug channels. Changes are written to the prefix's registry
   when applied.
 - **Wine tools.** Wine Configuration (winecfg), Registry Editor, Control Panel, Add or Remove

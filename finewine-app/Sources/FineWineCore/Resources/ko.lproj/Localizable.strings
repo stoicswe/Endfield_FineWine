@@ -206,6 +206,10 @@
 "config.win_version_label" = "Windows 버전";
 "config.build_number_label" = "빌드 번호";
 "config.build_number_detail" = "비워두면 Wine 기본값을 사용합니다. 일부 게임은 특정 빌드(예: 26100)를 요구합니다.";
+"config.nonunicode_label" = "유니코드를 지원하지 않는 프로그램용 언어";
+"config.nonunicode_detail" = "유니코드를 지원하지 않는 오래된 프로그램과 설치 프로그램이 텍스트를 읽고 쓰는 코드 페이지 (Shift-JIS, GBK, Big5, 한국어). 유니코드 프로그램은 어떤 설정에서도 모든 언어를 표시합니다.";
+"nonunicode.automatic" = "자동 (Mac의 언어 및 지역에서)";
+"nonunicode.english" = "영어";
 "config.runtime_label" = "Wine 런타임";
 "config.graphics_card" = "그래픽 및 디스플레이";
 "config.direct3d_label" = "Direct3D 백엔드";

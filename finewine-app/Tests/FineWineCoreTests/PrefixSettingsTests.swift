@@ -327,4 +327,32 @@ final class PrefixSettingsTests: XCTestCase {
         let old = try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8))
         XCTAssertTrue(old.metalFXUpscaling)
     }
+
+    func testNonUnicodeLanguages() throws {
+        let expected: [NonUnicodeLanguage: (String?, Int?)] = [
+            .automatic: (nil, nil), .english: ("en_US.UTF-8", 1252), .japanese: ("ja_JP.UTF-8", 932),
+            .chineseSimplified: ("zh_CN.UTF-8", 936), .chineseTraditional: ("zh_TW.UTF-8", 950),
+            .korean: ("ko_KR.UTF-8", 949),
+        ]
+        for language in NonUnicodeLanguage.allCases {
+            XCTAssertEqual(language.unixLocale, expected[language]?.0, "\(language)")
+            XCTAssertEqual(language.codePage, expected[language]?.1, "\(language)")
+            XCTAssertFalse(language.displayName.isEmpty)
+            if let locale = language.unixLocale {
+                // the locale has to exist on the Mac, or setlocale() gives Wine "C" for everything
+                XCTAssertTrue(FileManager.default.fileExists(atPath: "/usr/share/locale/\(locale)"), locale)
+            }
+        }
+        var settings = PrefixSettings()
+        XCTAssertFalse(settings.environmentVariables().contains { $0.0 == "LC_CTYPE" })
+        settings.nonUnicodeLanguage = .korean
+        XCTAssertTrue(settings.environmentVariables().contains { $0.0 == "LC_CTYPE" && $0.1 == "ko_KR.UTF-8" })
+        // round trip, and settings saved before the choice existed (or by a newer FineWine with
+        // a value this one does not know) are automatic
+        let saved = try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(saved.nonUnicodeLanguage, .korean)
+        XCTAssertEqual(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).nonUnicodeLanguage, .automatic)
+        let unknown = Data(#"{"nonUnicodeLanguage":"klingon"}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(PrefixSettings.self, from: unknown).nonUnicodeLanguage, .automatic)
+    }
 }

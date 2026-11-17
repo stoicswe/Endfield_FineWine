@@ -206,6 +206,10 @@
 "config.win_version_label" = "Windows バージョン";
 "config.build_number_label" = "ビルド番号";
 "config.build_number_detail" = "空欄の場合は Wine のデフォルトを使用します。一部のゲームは特定のビルド（例: 26100）を要求します。";
+"config.nonunicode_label" = "Unicode 対応ではないプログラムの言語";
+"config.nonunicode_detail" = "Unicode に対応していない古いプログラムやインストーラーが文字の読み書きに使うコードページ (Shift-JIS、GBK、Big5、韓国語)。Unicode 対応のプログラムはどの設定でもすべての言語を表示します。";
+"nonunicode.automatic" = "自動 (Mac の言語と地域から)";
+"nonunicode.english" = "英語";
 "config.runtime_label" = "Wine ランタイム";
 "config.graphics_card" = "グラフィックス";
 "config.direct3d_label" = "Direct3D";

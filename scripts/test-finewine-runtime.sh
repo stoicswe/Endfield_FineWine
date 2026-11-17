@@ -20,6 +20,8 @@
 #   5b. renders with Direct3D 11 through DXMT, from ARM64 and from x64 (tests/runtime/d3d11-clear.c),
 #      if DXMT is installed
 #   6. repairs TEB accesses made through x18 (tests/runtime/arm64-x18.c)
+#   6a. draws Chinese, Japanese and Korean text, and uses each language's code page when asked
+#      (tests/runtime/cjk.c)
 #   7. boots a second prefix with MSync on
 # Wine writes .update-timestamp as soon as a prefix is set up; the registry files only appear
 # when its server exits, so they are not a usable marker. No windows or dialogs are shown. Exit status is 0 only if every check passes.
@@ -561,6 +563,34 @@ else
     fi
   fi
   unset WINEDLLPATH
+fi
+
+# Chinese, Japanese and Korean text (tests/runtime/cjk.c): each East Asian code page converts,
+# the ANSI code page follows the locale a prefix is started with (FineWine's "Language for
+# non-Unicode programs" sets LC_CTYPE), every font programs ask for draws all three scripts
+# through GDI, also with FineWine's Mac dialog font, and DirectWrite's fallback finds a font for
+# each in each locale.
+if "$REPO/build/llvm-mingw/bin/aarch64-w64-mingw32-clang" -O1 -mconsole -o "$WORK/cjk.exe" "$REPO/tests/runtime/cjk.c" \
+     -lgdi32 -ldwrite -luuid >"$WORK/cjk-build.log" 2>&1; then
+  cjk(){ "$RT/bin/wineserver" -k 2>/dev/null; env -u LANG -u LC_ALL "$@" "$RT/bin/wine" "$WORK/cjk.exe" ${CJK_CP:-0} </dev/null 2>/dev/null | tr -d '\r'; }
+  out="$(cjk)"
+  case "$out" in *"cjk: all checks passed"*) pass "Chinese, Japanese and Korean: code pages convert, every font draws all three (GDI), DirectWrite falls back to fonts that have them" ;;
+    *) fail "Chinese, Japanese and Korean text:"; echo "$out" | grep -E "^FAIL" | head -n 5 ;; esac
+  bad=""
+  for pair in ja_JP:932 zh_CN:936 zh_TW:950 ko_KR:949; do
+    out="$(CJK_CP="${pair#*:}" cjk LC_CTYPE="${pair%:*}.UTF-8")"
+    case "$out" in *"cjk: all checks passed"*) ;; *) bad="$bad ${pair%:*}" ;; esac
+  done
+  [ -z "$bad" ] && pass "with each East Asian language for non-Unicode programs, the ANSI code page is that language's (932, 936, 950, 949) and text still draws" \
+    || fail "language for non-Unicode programs:$bad"
+  for name in "MS Shell Dlg" "MS Shell Dlg 2" "Tahoma"; do
+    "$RT/bin/wine" reg add 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\FontSubstitutes' /v "$name" /d "Helvetica Neue" /f >/dev/null 2>&1
+  done
+  out="$(cjk)"
+  case "$out" in *"cjk: all checks passed"*) pass "the same with FineWine's Mac dialog font (Helvetica Neue for MS Shell Dlg and Tahoma)" ;;
+    *) fail "Chinese, Japanese and Korean text with the Mac dialog font:"; echo "$out" | grep -E "^FAIL" | head -n 5 ;; esac
+else
+  fail "could not build tests/runtime/cjk.c"; tail -n 3 "$WORK/cjk-build.log"
 fi
 "$RT/bin/wineserver" -k 2>/dev/null
 

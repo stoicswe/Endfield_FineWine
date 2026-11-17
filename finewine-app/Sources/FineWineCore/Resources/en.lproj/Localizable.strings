@@ -206,6 +206,10 @@
 "config.win_version_label" = "Windows version";
 "config.build_number_label" = "Build number";
 "config.build_number_detail" = "Leave empty for Wine's own. Some games want a specific build, such as 26100.";
+"config.nonunicode_label" = "Language for non-Unicode programs";
+"config.nonunicode_detail" = "The code page older programs and installers that are not Unicode read and write text in (Shift-JIS, GBK, Big5, Korean). Unicode programs show every language either way.";
+"nonunicode.automatic" = "Automatic (from the Mac's language and region)";
+"nonunicode.english" = "English";
 "config.runtime_label" = "Wine runtime";
 "config.graphics_card" = "Graphics";
 "config.direct3d_label" = "Direct3D";

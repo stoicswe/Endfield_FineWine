@@ -54,6 +54,13 @@ struct ConfigurationTab: View {
                         .frame(width: 110)
                 }
                 Divider()
+                Row(label: l10n.tr("config.nonunicode_label"), detail: l10n.tr("config.nonunicode_detail")) {
+                    Picker(l10n.tr("config.nonunicode_label"), selection: $draft.nonUnicodeLanguage) {
+                        ForEach(NonUnicodeLanguage.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                    }
+                    .labelsHidden().fixedSize()
+                }
+                Divider()
                 Row(label: l10n.tr("config.runtime_label")) {
                     Picker(l10n.tr("config.runtime_label"), selection: $runtimeID) {
                         if selectedRuntime == nil { Text(l10n.tr("app.none")).tag(String?.none) }
