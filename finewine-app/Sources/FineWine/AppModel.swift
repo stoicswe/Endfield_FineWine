@@ -83,6 +83,20 @@ final class AppModel: ObservableObject {
         if selection == nil || !prefixes.contains(where: { $0.id == selection }) {
             selection = prefixes.first?.id
         }
+        repairShortcutIcons()
+    }
+
+    /// Shortcut apps made before 2026-11-17 have icons macOS draws as noise at small sizes
+    /// (`ICNS.hasMisreadSlots`). Each is made again, once, with an icon it reads correctly.
+    private func repairShortcutIcons() {
+        for prefix in prefixes {
+            for program in prefix.metadata.programs {
+                guard let path = program.shortcutPath else { continue }
+                let icon = URL(fileURLWithPath: path).appendingPathComponent("Contents/Resources/AppIcon.icns")
+                guard ICNS.hasMisreadSlots(at: icon), let current = self.prefix(prefix.id) else { continue }
+                createShortcut(for: program.id, in: current)
+            }
+        }
     }
 
     var usableRuntimes: [WineRuntime] { runtimes.filter(\.isUsable) }

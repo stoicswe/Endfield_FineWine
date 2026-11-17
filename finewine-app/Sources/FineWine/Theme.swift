@@ -46,12 +46,10 @@ struct Backdrop: View {
     }
 }
 
-// MARK: Liquid Glass, where macOS has it
+// MARK: Liquid Glass
 //
-// FineWine runs on macOS 15 and later. Liquid Glass (glass effects, glass buttons, glass
-// containers) is macOS 26's; on macOS 15 the same places get the system's materials and
-// standard bordered buttons. Every use of glass goes through these, so nothing calls a macOS 26
-// interface without checking first.
+// FineWine runs on macOS 26 and later (the user's decision, 2026-11-17), so it uses Liquid Glass
+// throughout. Every use of glass goes through these few helpers, so its look is set in one place.
 
 extension View {
     /// A glass card around the view.
@@ -62,23 +60,11 @@ extension View {
                      in: RoundedRectangle(cornerRadius: Look.cardRadius, style: .continuous))
     }
 
-    /// Liquid Glass in `shape` on macOS 26 and later; the regular material on macOS 15.
-    @ViewBuilder
+    /// Liquid Glass in `shape`.
     func fwGlass<S: Shape>(tint: Color? = nil, interactive: Bool = false, in shape: S) -> some View {
-        if #available(macOS 26.0, *) {
-            self.glassEffect(Self.fwGlassKind(tint: tint, interactive: interactive), in: shape)
-        } else {
-            self.background {
-                ZStack {
-                    shape.fill(.regularMaterial)
-                    if let tint { shape.fill(tint) }
-                    shape.stroke(.white.opacity(0.12), lineWidth: 1)
-                }
-            }
-        }
+        self.glassEffect(Self.fwGlassKind(tint: tint, interactive: interactive), in: shape)
     }
 
-    @available(macOS 26.0, *)
     private static func fwGlassKind(tint: Color?, interactive: Bool) -> Glass {
         var glass = Glass.regular
         if let tint { glass = glass.tint(tint) }
@@ -86,31 +72,20 @@ extension View {
         return glass
     }
 
-    /// A glass button on macOS 26 and later; a bordered one on macOS 15.
-    @ViewBuilder
-    func fwButton() -> some View {
-        if #available(macOS 26.0, *) { self.fwButton() } else { self.buttonStyle(.bordered) }
-    }
+    /// A glass button.
+    func fwButton() -> some View { self.buttonStyle(.glass) }
 
-    /// A prominent glass button on macOS 26 and later; a prominent bordered one on macOS 15.
-    @ViewBuilder
-    func fwProminentButton() -> some View {
-        if #available(macOS 26.0, *) { self.fwProminentButton() } else { self.buttonStyle(.borderedProminent) }
-    }
+    /// A prominent glass button.
+    func fwProminentButton() -> some View { self.buttonStyle(.glassProminent) }
 }
 
-/// Groups glass shapes so they blend into each other on macOS 26 and later; on macOS 15 the
-/// content as it is.
+/// Groups glass shapes so they blend into each other.
 struct FWGlassContainer<Content: View>: View {
     var spacing: CGFloat
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        if #available(macOS 26.0, *) {
-            GlassEffectContainer(spacing: spacing) { content() }
-        } else {
-            content()
-        }
+        GlassEffectContainer(spacing: spacing) { content() }
     }
 }
 

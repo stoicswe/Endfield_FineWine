@@ -1,6 +1,6 @@
 # FineWine
 
-FineWine is a menu bar app for macOS 15 and later that runs Windows programs with Wine. It
+FineWine is a menu bar app for macOS 26 and later that runs Windows programs with Wine. It
 manages Wine prefixes, launches the programs installed in them, and makes a small `.app` for each
 program so it can be started from Finder, Launchpad or the Dock.
 
@@ -48,7 +48,8 @@ and will later become one function of this app.
   appears (or the program ends), and a click hides it. It can be turned off in Settings.
 - **Configuration.** Windows version and build number, Direct3D backend, Retina mode, DPI,
   virtual desktop, Metal overlay, full-screen behaviour (a Mac full-screen Space by default), Game Mode (programs that use Direct3D, Vulkan or OpenGL run as games), starting HoYoverse games through a Steam stand-in, DLSS through MetalFX, reporting an NVIDIA GPU (the ids of an RTX 5080, for games that only offer DLSS on NVIDIA), MSync, the hypervisor flag, macOS styling for Windows controls,
-  Option-as-Alt, the language for non-Unicode programs (the code page older programs use for
+  Mac-style app icons (running programs and shortcut apps get the program's largest icon on a
+  Mac app icon's rounded square), Option-as-Alt, the language for non-Unicode programs (the code page older programs use for
   Chinese, Japanese and Korean text), DLL overrides,
   environment variables and Wine debug channels. Changes are written to the prefix's registry
   when applied.
@@ -67,8 +68,10 @@ and will later become one function of this app.
 
 This runs the unit tests, builds a release binary, assembles `finewine-app/build/FineWine.app`
 and signs it ad hoc. It needs the macOS 26 SDK or later (Xcode 26+) to build, because the interface
-uses Liquid Glass; the app runs on macOS 15 and later, with standard controls in place of the
-glass below macOS 26 (`Theme.swift`). Environment variables: `VERSION`, `CODESIGN_ID`, `ICON_VARIANT`, `SKIP_TESTS=1`.
+uses Liquid Glass; the app runs on macOS 26 and later. The build stamps the real SDK version
+into the binary (`scripts/lib/stamp-sdk-version.sh`): SwiftPM records the deployment target
+there instead, and macOS draws an app whose binary names an SDK older than 26 without Liquid
+Glass. The Wine runtime inside is built for macOS 15 and later and runs on any of them. Environment variables: `VERSION`, `CODESIGN_ID`, `ICON_VARIANT`, `SKIP_TESTS=1`.
 
 **The Wine runtime is built into the app.** If `build/finewine-runtime` exists, it is copied to
 `FineWine.app/Contents/Resources/Runtime` (about 860 MB). The app lists it first as "Built in",

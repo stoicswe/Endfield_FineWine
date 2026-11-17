@@ -250,6 +250,8 @@
 "config.appearance_footnote" = "Wine 도구를 포함하여 표준 Windows 컨트롤을 사용하는 프로그램에 적용됩니다. 창 프레임은 macOS가 그리며, 자체 UI를 렌더링하는 게임은 영향받지 않습니다.";
 "config.mac_appearance_title" = "macOS 스타일 일치";
 "config.mac_appearance_desc" = "Windows 컨트롤에 Mac의 라이트/다크 모드 색상, 강조 색상 및 시스템 폰트를 적용합니다.";
+"config.mac_icons_title" = "Mac 스타일 앱 아이콘";
+"config.mac_icons_desc" = "프로그램이 가진 가장 큰 크기의 아이콘을 Mac 앱 아이콘의 둥근 사각형 위에 Dock에 표시합니다. 앞으로 만드는 바로 가기 앱도 같게 표시됩니다.";
 "config.keyboard_card" = "키보드 매핑";
 "config.left_opt_alt" = "왼쪽 Option 키를 Alt로 동작";
 "config.right_opt_alt" = "오른쪽 Option 키를 Alt로 동작";

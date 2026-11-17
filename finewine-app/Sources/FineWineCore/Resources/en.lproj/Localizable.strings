@@ -250,6 +250,8 @@
 "config.appearance_footnote" = "Applies to anything in this prefix that uses standard Windows controls, including the Wine tools. Window frames and title bars are always drawn by macOS. Games that draw their own interface are not affected.";
 "config.mac_appearance_title" = "Match macOS";
 "config.mac_appearance_desc" = "Windows controls take the Mac's light or dark colours, its accent colour and a Mac font. It is refreshed when a Wine tool is opened after the Mac's appearance changes.";
+"config.mac_icons_title" = "Mac-style app icons";
+"config.mac_icons_desc" = "Programs show in the Dock with their icon on a Mac app icon's rounded square, at the largest size the program has. Shortcut apps made from now on match.";
 "config.keyboard_card" = "Keyboard";
 "config.left_opt_alt" = "Left Option key acts as Alt";
 "config.right_opt_alt" = "Right Option key acts as Alt";

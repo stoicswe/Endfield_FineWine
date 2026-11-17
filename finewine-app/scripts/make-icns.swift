@@ -20,7 +20,8 @@ let output = URL(fileURLWithPath: args[3])
 
 // icns element type for each pixel size, with the export that supplies it.
 let slots: [(type: String, pixels: Int, file: String)] = [
-    ("icp4", 16, "16@1x"), ("icp5", 32, "32@1x"), ("icp6", 64, "32@2x"), ("ic07", 128, "128@1x"),
+    // Not icp4/icp5/icp6 (16, 32, 48): macOS can read those as raw pixels (see ICNS.swift).
+    ("ic07", 128, "128@1x"),
     ("ic08", 256, "256@1x"), ("ic09", 512, "512@1x"), ("ic10", 1024, "1024@1x"),
     ("ic11", 32, "16@2x"), ("ic12", 64, "32@2x"), ("ic13", 256, "128@2x"), ("ic14", 512, "256@2x")
 ]

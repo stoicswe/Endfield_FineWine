@@ -97,6 +97,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/licenses" \
          "$APP/Contents/Resources/payload/server" \
          "$APP/Contents/Resources/payload/lib64"
 cp "$BIN" "$APP/Contents/MacOS/$EXE"
+# The real SDK in the binary, or macOS 26 and later draw the app without Liquid Glass.
+"$REPO/scripts/lib/stamp-sdk-version.sh" "$APP/Contents/MacOS/$EXE" 15.0
 cp "$HERE/Resources/licenses/"*.txt "$APP/Contents/Resources/licenses/"
 
 # Copy localization bundles
@@ -148,7 +150,7 @@ $ICON_PLIST
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>13.0</string>
+	<string>15.0</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
 	<key>NSPrincipalClass</key>

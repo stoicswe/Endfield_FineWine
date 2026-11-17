@@ -1,0 +1,551 @@
+winemac: the Dock shows a program's largest icon, drawn as a Mac app icon
+
+A running program's Dock icon came from its first icon group, and only one picture of it
+reached the Dock: the list of icons the program side returned is on the program's stack, the
+first icon made from it reuses that stack, and every entry after the first was read as garbage
+(sizes such as 28671x4287999424). Which picture survived was whichever the group listed first,
+16 pixels as often as 256, and the other icons' handles leaked. The list is now copied first.
+
+The Dock now gets the largest icon a program has:
+- every size of its own first group, as before but now all of them;
+- a window's icon (WM_SETICON, the class icon) when it has a larger picture. An icon loaded from
+  a resource brings its whole group, from whichever module it is in (the program callback can
+  load a group from any file); an icon made at run time (from a file, from PNG data) brings
+  itself. Launchers often load a 256-pixel icon at run time, and some programs have none of
+  their own. Windows' stand-ins for a window without an icon (IDI_WINLOGO, the Wine logo) and
+  the generic IDI_APPLICATION never replace the program's own.
+- A larger icon arriving after the program is in the Dock is shown at once.
+
+And it is drawn as a Mac app icon is: on Apple's icon grid, an 824-point rounded square in a
+1024-point canvas with its shadow, in sizes from 16 to 1024 pixels. A square picture with
+nothing see-through (game art, or a tile with rounded corners of its own) fills the rounded
+square; any other shape stands on a light plate, scaled from its visible part rather than its
+empty margin; an icon of 48 pixels or less is scaled up without smoothing. FineWine draws the
+icons of its shortcut apps the same way (MacIconStyle.swift), so a shortcut and the program it
+starts look alike.
+
+FINEWINE_MAC_ICONS=0 leaves icons as they are (FineWine's "Mac-style app icons" setting).
+FINEWINE_APP_ICON_DUMP=<file> writes the Dock icon's largest picture there as a PNG whenever it
+changes, for tests/runtime/app-icon.c.
+
+diff --git a/dlls/winemac.drv/cocoa_app.m b/dlls/winemac.drv/cocoa_app.m
+index c753bfa..af4de51 100644
+--- a/dlls/winemac.drv/cocoa_app.m
++++ b/dlls/winemac.drv/cocoa_app.m
+@@ -148,6 +148,141 @@ static void finewine_apply_application_name(void)
+     }
+ }
+ 
++/* FineWine: a Windows icon is drawn as a Mac app icon is: on Apple's icon grid (an 824-point
++ * rounded square in a 1024-point canvas, with its shadow below), so it sits in the Dock and the
++ * app switcher the size and shape of the Mac apps next to it. An icon that is a square picture
++ * already (game art, or a tile with rounded corners of its own) fills the rounded square; any
++ * other shape stands on a light plate, scaled from its visible part, not from the empty margin
++ * around it. FINEWINE_MAC_ICONS=0 leaves icons as they are. */
++static BOOL finewine_mac_icons(void)
++{
++    const char *value = getenv("FINEWINE_MAC_ICONS");
++    return !(value && !strcmp(value, "0"));
++}
++
++/* Where the visible pixels of a picture are, as a fraction of its size (y from the top), and
++ * how much of that rectangle they cover. */
++static CGRect finewine_icon_visible_part(CGImageRef image, double *coverage)
++{
++    size_t width = CGImageGetWidth(image), height = CGImageGetHeight(image), x, y, opaque = 0;
++    size_t left = width, right = 0, top = height, bottom = 0;
++    unsigned char *alpha;
++    CGContextRef context;
++
++    *coverage = 0;
++    if (!width || !height || !(alpha = calloc(width, height))) return CGRectMake(0, 0, 1, 1);
++    context = CGBitmapContextCreate(alpha, width, height, 8, width, NULL, (CGBitmapInfo)kCGImageAlphaOnly);
++    if (!context)
++    {
++        free(alpha);
++        return CGRectMake(0, 0, 1, 1);
++    }
++    CGContextDrawImage(context, CGRectMake(0, 0, width, height), image);
++    CGContextRelease(context);
++
++    for (y = 0; y < height; y++)
++        for (x = 0; x < width; x++)
++            if (alpha[y * width + x] > 24)
++            {
++                if (x < left) left = x;
++                if (x > right) right = x;
++                if (y < top) top = y;
++                if (y > bottom) bottom = y;
++            }
++    if (left > right || top > bottom)
++    {
++        free(alpha);
++        return CGRectMake(0, 0, 1, 1);
++    }
++    for (y = top; y <= bottom; y++)
++        for (x = left; x <= right; x++)
++            if (alpha[y * width + x] > 200) opaque++;
++    *coverage = (double)opaque / ((right - left + 1) * (bottom - top + 1));
++    free(alpha);
++    return CGRectMake((double)left / width, (double)top / height,
++                      (double)(right - left + 1) / width, (double)(bottom - top + 1) / height);
++}
++
++static NSImage* finewine_mac_style_icon(NSImage* icon, CGImageRef largest)
++{
++    static const int sides[] = { 1024, 512, 256, 128, 64, 32, 16 };
++    NSSize size = [icon size];
++    double coverage;
++    CGRect part = finewine_icon_visible_part(largest, &coverage);
++    double aspect = part.size.width * size.width / (part.size.height * size.height);
++    /* a square picture with nothing see-through in it, give or take rounded corners */
++    BOOL tile = coverage >= 0.9 && aspect > 0.9 && aspect < 1.11;
++    /* a small icon scaled up stays crisp rather than blurred */
++    BOOL crisp = MAX(CGImageGetWidth(largest), CGImageGetHeight(largest)) <= 48;
++    NSRect from = NSMakeRect(part.origin.x * size.width,
++                             (1 - part.origin.y - part.size.height) * size.height,
++                             part.size.width * size.width, part.size.height * size.height);
++    NSImage* styled = [[[NSImage alloc] initWithSize:NSMakeSize(1024, 1024)] autorelease];
++    unsigned i;
++
++    if (!tile)
++    {
++        /* Square, around the visible part, so the shape keeps its proportions and stays centred. */
++        CGFloat side = MAX(from.size.width, from.size.height);
++        from = NSMakeRect(NSMidX(from) - side / 2, NSMidY(from) - side / 2, side, side);
++    }
++
++    for (i = 0; i < sizeof(sides) / sizeof(sides[0]); i++)
++    {
++        int px = sides[i];
++        CGFloat s = px / 1024.0;
++        NSBitmapImageRep* rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:px pixelsHigh:px
++                                                                     bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO
++                                                                    colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
++        NSRect plate = NSMakeRect(100 * s, 100 * s, 824 * s, 824 * s);
++        NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:plate xRadius:185.4 * s yRadius:185.4 * s];
++        NSDictionary* hints = @{ NSImageHintInterpolation: @(crisp ? NSImageInterpolationNone : NSImageInterpolationHigh) };
++        NSShadow* shadow = [[[NSShadow alloc] init] autorelease];
++        NSGraphicsContext* context;
++
++        if (!rep) continue;
++        context = [NSGraphicsContext graphicsContextWithBitmapImageRep:rep];
++        [NSGraphicsContext saveGraphicsState];
++        [NSGraphicsContext setCurrentContext:context];
++        [context setImageInterpolation:crisp ? NSImageInterpolationNone : NSImageInterpolationHigh];
++
++        /* the rounded square and its shadow */
++        [NSGraphicsContext saveGraphicsState];
++        [shadow setShadowColor:[NSColor colorWithCalibratedWhite:0 alpha:0.3]];
++        [shadow setShadowOffset:NSMakeSize(0, -10 * s)];
++        [shadow setShadowBlurRadius:22 * s];
++        [shadow set];
++        [[NSColor whiteColor] setFill];
++        [path fill];
++        [NSGraphicsContext restoreGraphicsState];
++
++        [NSGraphicsContext saveGraphicsState];
++        [path addClip];
++        if (tile)
++            [icon drawInRect:plate fromRect:from operation:NSCompositingOperationSourceOver
++                    fraction:1 respectFlipped:YES hints:hints];
++        else
++        {
++            NSGradient* plateColour = [[[NSGradient alloc] initWithStartingColor:[NSColor colorWithCalibratedWhite:1 alpha:1]
++                                                                    endingColor:[NSColor colorWithCalibratedWhite:0.9 alpha:1]] autorelease];
++            [plateColour drawInBezierPath:path angle:-90];
++            [icon drawInRect:NSInsetRect(plate, 112 * s, 112 * s) fromRect:from operation:NSCompositingOperationSourceOver
++                    fraction:1 respectFlipped:YES hints:hints];
++        }
++        [NSGraphicsContext restoreGraphicsState];
++
++        /* a hairline edge, as Mac icons have, so a white plate holds against a light Dock */
++        [[NSColor colorWithCalibratedWhite:0 alpha:0.1] setStroke];
++        [path setLineWidth:MAX(1, 2 * s)];
++        [path stroke];
++
++        [NSGraphicsContext restoreGraphicsState];
++        [styled addRepresentation:rep];
++        [rep release];
++    }
++    return [[styled representations] count] ? styled : icon;
++}
++
+ @implementation WineApplicationController
+ 
+     @synthesize keyboardType, lastFlagsChanged;
+@@ -1354,12 +1489,36 @@ - (void) setApplicationIconFromCGImageArray:(NSArray*)images
+             }
+ 
+             if ([[nsimage representations] count] && bestSize.width && bestSize.height)
++            {
+                 [nsimage setSize:bestSize];
++                if (finewine_mac_icons())
++                {
++                    CGImageRef largest = NULL;
++                    for (image in images)
++                        if (!largest || CGImageGetWidth((CGImageRef)image) > CGImageGetWidth(largest))
++                            largest = (CGImageRef)image;
++                    nsimage = finewine_mac_style_icon(nsimage, largest);
++                }
++            }
+             else
+                 nsimage = nil;
+         }
+ 
+         self.applicationIcon = nsimage;
++        /* FineWine: FINEWINE_APP_ICON_DUMP=<file> writes the Dock icon's largest picture there as
++         * a PNG each time it changes, for checking it (scripts/test-finewine-runtime.sh). */
++        if (nsimage && getenv("FINEWINE_APP_ICON_DUMP"))
++        {
++            NSBitmapImageRep* largest = nil;
++            for (NSImageRep* rep in [nsimage representations])
++                if ([rep isKindOfClass:[NSBitmapImageRep class]] && [rep pixelsWide] > [largest pixelsWide])
++                    largest = (NSBitmapImageRep*)rep;
++            [[largest representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
++                writeToFile:[NSString stringWithUTF8String:getenv("FINEWINE_APP_ICON_DUMP")] atomically:YES];
++        }
++        /* FineWine: a larger icon can come after the program is in the Dock (a window's). */
++        if (nsimage && [NSApp activationPolicy] == NSApplicationActivationPolicyRegular)
++            [NSApp setApplicationIconImage:nsimage];
+     }
+ 
+     - (void) handleCommandTab
+diff --git a/dlls/winemac.drv/dllmain.c b/dlls/winemac.drv/dllmain.c
+index bbd528d..3da6c11 100644
+--- a/dlls/winemac.drv/dllmain.c
++++ b/dlls/winemac.drv/dllmain.c
+@@ -254,7 +254,9 @@ static BOOL CALLBACK get_first_resource(HMODULE module, LPCWSTR type, LPWSTR nam
+  */
+ static NTSTATUS WINAPI macdrv_app_icon(void *arg, ULONG size)
+ {
++    const struct app_icon_params *params = size >= sizeof(*params) ? arg : NULL;
+     struct app_icon_entry entries[64];
++    HMODULE module = NULL;
+     HRSRC res_info;
+     HGLOBAL res_data;
+     GRPICONDIR *icon_dir;
+@@ -265,17 +267,34 @@ static NTSTATUS WINAPI macdrv_app_icon(void *arg, ULONG size)
+ 
+     count = 0;
+ 
++    /* FineWine: a group in another file, the one a window's icon came from. */
++    if (params && params->module[0])
++    {
++        if (!(module = LoadLibraryExW(params->module, NULL,
++                                      LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE)))
++        {
++            WARN("could not open %s for its icon\n", debugstr_w(params->module));
++            return STATUS_SUCCESS;
++        }
++    }
++
+     res_info = NULL;
+-    EnumResourceNamesW(NULL, (LPCWSTR)RT_GROUP_ICON, get_first_resource, (LONG_PTR)&res_info);
++    if (params && (params->res_id || params->res_name[0]))
++        res_info = FindResourceW(module, params->res_id ? MAKEINTRESOURCEW(params->res_id) : params->res_name,
++                                 (LPCWSTR)RT_GROUP_ICON);
++    else
++        EnumResourceNamesW(module, (LPCWSTR)RT_GROUP_ICON, get_first_resource, (LONG_PTR)&res_info);
+     if (!res_info)
+     {
+         WARN("found no RT_GROUP_ICON resource\n");
++        if (module) FreeLibrary(module);
+         return STATUS_SUCCESS;
+     }
+ 
+-    if (!(res_data = LoadResource(NULL, res_info)))
++    if (!(res_data = LoadResource(module, res_info)))
+     {
+         WARN("failed to load RT_GROUP_ICON resource\n");
++        if (module) FreeLibrary(module);
+         return STATUS_SUCCESS;
+     }
+ 
+@@ -322,14 +341,14 @@ static NTSTATUS WINAPI macdrv_app_icon(void *arg, ULONG size)
+         if (found_better_bpp) continue;
+ 
+         name = MAKEINTRESOURCEW(icon_dir->idEntries[i].nID);
+-        res_info = FindResourceW(NULL, name, (LPCWSTR)RT_ICON);
++        res_info = FindResourceW(module, name, (LPCWSTR)RT_ICON);
+         if (!res_info)
+         {
+             WARN("failed to find RT_ICON resource %d with ID %hd\n", i, icon_dir->idEntries[i].nID);
+             continue;
+         }
+ 
+-        icon_res_data = LoadResource(NULL, res_info);
++        icon_res_data = LoadResource(module, res_info);
+         if (!icon_res_data)
+         {
+             WARN("failed to load icon %d with ID %hd\n", i, icon_dir->idEntries[i].nID);
+@@ -346,7 +365,7 @@ static NTSTATUS WINAPI macdrv_app_icon(void *arg, ULONG size)
+ 
+             /* dwBytesInRes from the icon_dir entry is wrong in some apps; use
+                SizeofResource instead. */
+-            icon = CreateIconFromResourceEx(icon_bits, SizeofResource(NULL, res_info),
++            icon = CreateIconFromResourceEx(icon_bits, SizeofResource(module, res_info),
+                                             TRUE, 0x00030000, width, height, 0);
+             if (icon)
+             {
+@@ -364,6 +383,7 @@ static NTSTATUS WINAPI macdrv_app_icon(void *arg, ULONG size)
+ 
+ cleanup:
+     FreeResource(res_data);
++    if (module) FreeLibrary(module);
+ 
+     return NtCallbackReturn(entries, count * sizeof(entries[0]), 0);
+ }
+diff --git a/dlls/winemac.drv/gdi.c b/dlls/winemac.drv/gdi.c
+index 3a04a30..febf4b5 100644
+--- a/dlls/winemac.drv/gdi.c
++++ b/dlls/winemac.drv/gdi.c
+@@ -274,6 +274,7 @@ static const struct user_driver_funcs macdrv_funcs =
+     .pSetWindowRgn = macdrv_SetWindowRgn,
+     .pSetWindowStyle = macdrv_SetWindowStyle,
+     .pSetWindowText = macdrv_SetWindowText,
++    .pSetWindowIcons = macdrv_SetWindowIcons,
+     .pShowWindow = macdrv_ShowWindow,
+     .pSysCommand =macdrv_SysCommand,
+     .pSystemParametersInfo = macdrv_SystemParametersInfo,
+diff --git a/dlls/winemac.drv/image.c b/dlls/winemac.drv/image.c
+index 7fb45f3..c80aade 100644
+--- a/dlls/winemac.drv/image.c
++++ b/dlls/winemac.drv/image.c
+@@ -245,25 +245,38 @@ cleanup:
+ /***********************************************************************
+  *              create_app_icon_images
+  */
+-CFArrayRef create_app_icon_images(void)
++CFArrayRef create_app_icon_images(const struct app_icon_params *source)
+ {
+-    struct dispatch_callback_params params = {.callback = app_icon_callback};
++    struct app_icon_params params = {.dispatch = {.callback = app_icon_callback}};
+     CFMutableArrayRef images = NULL;
+-    struct app_icon_entry *entries;
++    struct app_icon_entry *result, entries[64];
+     ULONG ret_len;
+     unsigned count;
+     int i;
+ 
+     TRACE("()\n");
+ 
+-    if (KeUserDispatchCallback(&params, sizeof(params), (void**)&entries, &ret_len) ||
+-        (ret_len % sizeof(*entries)))
++    /* FineWine: a group other than the program's first one (a window's icon). */
++    if (source)
++    {
++        params.res_id = source->res_id;
++        memcpy(params.res_name, source->res_name, sizeof(params.res_name));
++        memcpy(params.module, source->module, sizeof(params.module));
++    }
++
++    if (KeUserDispatchCallback(&params.dispatch, sizeof(params), (void**)&result, &ret_len) ||
++        (ret_len % sizeof(*result)))
+     {
+         WARN("incorrect callback result\n");
+         return NULL;
+     }
+-    count = ret_len / sizeof(*entries);
+-    if (!count || !entries) return NULL;
++    count = min(ret_len / sizeof(*result), ARRAY_SIZE(entries));
++    if (!count || !result) return NULL;
++    /* FineWine: the result is on the program's stack, which the first icon made from it below
++     * reuses: every entry after the first was read as garbage (sizes in the billions), so the
++     * Dock only ever got one picture of an icon, whichever its group listed first, 16 pixels
++     * as often as 256, and the other icons' handles leaked. Copy it while it is intact. */
++    memcpy(entries, result, count * sizeof(*result));
+ 
+     images = CFArrayCreateMutable(NULL, count, &kCFTypeArrayCallBacks);
+     if (!images)
+@@ -278,6 +291,7 @@ CFArrayRef create_app_icon_images(void)
+         CGImageRef cgimage = NULL;
+         HICON handle = UlongToHandle(icon->icon);
+         cgimage = create_cgimage_from_icon(handle, icon->width, icon->height);
++        TRACE("entry %d of %u: %ux%u -> %p\n", i, count, icon->width, icon->height, cgimage);
+         NtUserDestroyCursor(handle, 0);
+ 
+         if (cgimage)
+diff --git a/dlls/winemac.drv/macdrv.h b/dlls/winemac.drv/macdrv.h
+index 140d7c6..4e24e8b 100644
+--- a/dlls/winemac.drv/macdrv.h
++++ b/dlls/winemac.drv/macdrv.h
+@@ -189,6 +189,7 @@ extern void macdrv_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alph
+ extern void macdrv_SetWindowRgn(HWND hwnd, HRGN hrgn, BOOL redraw);
+ extern void macdrv_SetWindowStyle(HWND hwnd, INT offset, STYLESTRUCT *style);
+ extern void macdrv_SetWindowText(HWND hwnd, LPCWSTR text);
++extern void macdrv_SetWindowIcons(HWND hwnd, HICON icon, const ICONINFO *ii, HICON icon_small, const ICONINFO *ii_small);
+ extern UINT macdrv_ShowWindow(HWND hwnd, INT cmd, RECT *rect, UINT swp);
+ extern LRESULT macdrv_SysCommand(HWND hwnd, WPARAM wparam, LPARAM lparam, const POINT *pos);
+ extern void macdrv_UpdateLayeredWindow(HWND hwnd, BYTE alpha, UINT flags);
+@@ -311,7 +312,7 @@ extern CGImageRef create_cgimage_from_icon_bitmaps(HDC hdc, HANDLE icon, HBITMAP
+                                                    unsigned char *mask_bits, int mask_size, int width,
+                                                    int height, int istep);
+ extern CGImageRef create_cgimage_from_icon(HANDLE icon, int width, int height);
+-extern CFArrayRef create_app_icon_images(void);
++extern CFArrayRef create_app_icon_images(const struct app_icon_params *source);
+ 
+ extern void macdrv_status_item_mouse_button(const macdrv_event *event);
+ extern void macdrv_status_item_mouse_move(const macdrv_event *event);
+diff --git a/dlls/winemac.drv/unixlib.h b/dlls/winemac.drv/unixlib.h
+index dc22da0..efc64b5 100644
+--- a/dlls/winemac.drv/unixlib.h
++++ b/dlls/winemac.drv/unixlib.h
+@@ -49,6 +49,17 @@
+     int result;
+ };
+ 
++/* macdrv_app_icon params (FineWine): the icon group to load. With no module, the program's own
++ * first group, as before; otherwise the group a window's icon was loaded from, so that the Dock
++ * gets every size of it and not the one size the window was given. */
++struct app_icon_params
++{
++    struct dispatch_callback_params dispatch;
++    UINT32 res_id;          /* the group's number, or 0 when it has a name (or for the first) */
++    WCHAR res_name[64];     /* the group's name, when it has one */
++    WCHAR module[260];      /* the file the group is in; empty for the program's own */
++};
++
+ /* macdrv_app_icon result */
+ struct app_icon_entry
+ {
+diff --git a/dlls/winemac.drv/window.c b/dlls/winemac.drv/window.c
+index c8cc892..0104635 100644
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -817,17 +817,123 @@ void activate_on_following_focus(void)
+ }
+ 
+ 
++/* FineWine: the Dock shows the largest picture of a program's icon there is. That starts as
++ * the program's own first icon group, all its sizes; a window's icon replaces it only when it
++ * has a larger picture (launchers often load a 256-pixel icon at run time, from a file or from
++ * another module, and some programs have no icon of their own at all). */
++static pthread_mutex_t app_icon_mutex = PTHREAD_MUTEX_INITIALIZER;
++static pthread_once_t app_icon_once = PTHREAD_ONCE_INIT;
++static size_t app_icon_side;  /* the longest side of the Dock icon's largest picture; 0 for none */
++
++static size_t largest_image_side(CFArrayRef images)
++{
++    size_t side = 0;
++    CFIndex i;
++
++    for (i = 0; i < CFArrayGetCount(images); i++)
++    {
++        CGImageRef image = (CGImageRef)CFArrayGetValueAtIndex(images, i);
++        side = max(side, max(CGImageGetWidth(image), CGImageGetHeight(image)));
++    }
++    return side;
++}
++
++/* Takes the images for the Dock if they have a larger picture than it has now. */
++static void offer_app_icon_images(CFArrayRef images)
++{
++    size_t side;
++
++    if (!images) return;
++    side = largest_image_side(images);
++    TRACE("offered %ld images, largest %zu pixels; the Dock has %zu\n", (long)CFArrayGetCount(images), side, app_icon_side);
++    pthread_mutex_lock(&app_icon_mutex);
++    if (side > app_icon_side)
++    {
++        TRACE("Dock icon now %zu pixels (was %zu)\n", side, app_icon_side);
++        app_icon_side = side;
++        macdrv_set_application_icon(images);
++    }
++    pthread_mutex_unlock(&app_icon_mutex);
++    CFRelease(images);
++}
++
+ /***********************************************************************
+  *              set_app_icon
+  */
+ static void set_app_icon(void)
+ {
+-    CFArrayRef images = create_app_icon_images();
+-    if (images)
++    offer_app_icon_images(create_app_icon_images(NULL));
++}
++
++
++/***********************************************************************
++ *              macdrv_SetWindowIcons
++ *
++ * FineWine: offer a top-level window's icon to the Dock. An icon loaded from a resource
++ * brings its whole group (every size), wherever the group is; any other icon brings itself.
++ */
++void macdrv_SetWindowIcons(HWND hwnd, HICON icon, const ICONINFO *ii, HICON icon_small, const ICONINFO *ii_small)
++{
++    struct app_icon_params source;
++    UNICODE_STRING module, res_name;
++    ICONINFO info;
++    HICON best = icon ? icon : icon_small;
++    CFMutableArrayRef images;
++    CGImageRef image;
++
++    TRACE("window %p icons %p %p\n", hwnd, icon, icon_small);
++    if (!best || NtUserGetAncestor(hwnd, GA_PARENT) != NtUserGetDesktopWindow()) return;
++
++    /* The program's own icon first, so a window's icon only ever adds to it. */
++    pthread_once(&app_icon_once, set_app_icon);
++
++    memset(&source, 0, sizeof(source));
++    module.Buffer = source.module;
++    module.MaximumLength = sizeof(source.module) - sizeof(WCHAR);
++    res_name.Buffer = source.res_name;
++    res_name.MaximumLength = sizeof(source.res_name) - sizeof(WCHAR);
++    if (!NtUserGetIconInfo(best, &info, &module, &res_name, NULL, 0))
+     {
+-        macdrv_set_application_icon(images);
+-        CFRelease(images);
++        TRACE("no information for icon %p\n", best);
++        return;
++    }
++    NtGdiDeleteObjectApp(info.hbmColor);
++    NtGdiDeleteObjectApp(info.hbmMask);
++
++    if (module.Length)
++    {
++        source.module[min(module.Length, ARRAY_SIZE(source.module) - 1)] = 0;
++        if (!res_name.Length)
++        {
++            /* a numbered group: the number is the buffer pointer itself */
++            source.res_id = LOWORD((ULONG_PTR)res_name.Buffer);
++            source.res_name[0] = 0;
++        }
++        else source.res_name[min(res_name.Length, ARRAY_SIZE(source.res_name) - 1)] = 0;
++        TRACE("window %p icon %p is group %u %s in %s\n", hwnd, best, source.res_id,
++              debugstr_w(source.res_name), debugstr_w(source.module));
++        /* A window with no icon is handed Windows' stand-in (the Wine logo, IDI_WINLOGO), and
++         * many programs give their windows the generic one (IDI_APPLICATION); neither is the
++         * program's, and neither may take the Dock from the program's own icon. */
++        {
++            const WCHAR *file = wcsrchr(source.module, '\\');
++            static const WCHAR user32W[] = {'u','s','e','r','3','2','.','d','l','l',0};
++            file = file ? file + 1 : source.module;
++            if (!wcsicmp(file, user32W) && (source.res_id == 32512 || source.res_id == 32517)) return;
++        }
++        offer_app_icon_images(create_app_icon_images(&source));
++        return;
++    }
++
++    /* An icon made at run time: its own picture, at its own size. */
++    TRACE("window %p icon %p has no resource behind it\n", hwnd, best);
++    if (!(image = create_cgimage_from_icon(best, 0, 0))) return;
++    if ((images = CFArrayCreateMutable(NULL, 1, &kCFTypeArrayCallBacks)))
++    {
++        CFArrayAppendValue(images, image);
++        offer_app_icon_images(images);
+     }
++    CGImageRelease(image);
+ }
+ 
+ 
+@@ -1229,7 +1335,6 @@ bool macdrv_client_surface_acquire_metal_swapchain(struct macdrv_client_surface
+  */
+ void macdrv_SetDesktopWindow(HWND hwnd)
+ {
+-    static pthread_once_t app_icon_once = PTHREAD_ONCE_INIT;
+     unsigned int width, height;
+ 
+     TRACE("%p\n", hwnd);
