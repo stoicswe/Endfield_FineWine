@@ -121,6 +121,10 @@ enum CrossOverVariant: String, CaseIterable, Sendable {
                 // margin surrounds the GRYPHLINK launcher. The game never asks, so it stays opaque.
                 PayloadModule(payloadSubpath: "x86_64-unix/winemac.so",
                               crossoverSubpath: "lib/wine/x86_64-unix/winemac.so"),
+                // The Windows half of winemac.so: hands the Dock every size of a program's icon, and
+                // the icon group a window's icon came from (winemac.so asks for it).
+                PayloadModule(payloadSubpath: "x86_64-windows/winemac.drv",
+                              crossoverSubpath: "lib/wine/x86_64-windows/winemac.drv"),
                 // Marks the windows that ask DWM to blur behind them, for winemac.so above.
                 PayloadModule(payloadSubpath: "x86_64-windows/dwmapi.dll",
                               crossoverSubpath: "lib/wine/x86_64-windows/dwmapi.dll"),

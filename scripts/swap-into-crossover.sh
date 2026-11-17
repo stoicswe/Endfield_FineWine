@@ -207,6 +207,7 @@ swap(){ # src  dst-rel
 }
 swap "$B/dlls/ntdll/ntdll.so"                           "lib/wine/x86_64-unix/ntdll.so"        # Rosetta NOP + priv-instr fixes, NtDelayExecution QPC
 swap "$B/dlls/winemac.drv/winemac.so"                   "lib/wine/x86_64-unix/winemac.so"      # composites blur-behind windows' alpha (no launcher black margin)
+swap "$B/dlls/winemac.drv/x86_64-windows/winemac.drv" "lib/wine/x86_64-windows/winemac.drv" # the Windows half of winemac.so: every size of the Dock icon
 swap "$B/dlls/dwmapi/x86_64-windows/dwmapi.dll"         "lib/wine/x86_64-windows/dwmapi.dll"   # marks blur-behind windows for winemac
 swap "$B/dlls/kernel32/x86_64-windows/kernel32.dll"     "lib/wine/x86_64-windows/kernel32.dll" # KiUser*Dispatcher int3 spoof
 swap "$B/dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe" "lib/wine/x86_64-windows/ntoskrnl.exe" # ntoskrnl em-backports + ACE-CORE DriverInit/lsass support

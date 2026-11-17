@@ -45,6 +45,17 @@ of the Windows name, installed in the prefix, always wins.
 | Malgun Gothic, Gulim, Dotum (and -Che) | Apple SD Gothic Neo, then AppleGothic |
 | Batang, Gungsuh (and -Che) | AppleMyungjo if present, else Apple SD Gothic Neo |
 
+**Localized names.** Programs written for these languages often ask for a font by its own name:
+宋体 (SimSun), 微软雅黑 (Microsoft YaHei), ＭＳ ゴシック (MS Gothic), 新細明體 (PMingLiU), 맑은
+고딕 (Malgun Gothic) and so on. Wine reads `wine.inf` in the system code page, so those names
+can't go there. The FineWine app writes them into each prefix's registry instead, with the same
+Mac fonts as the English names (`CJKFonts.swift`), when a prefix's settings are applied.
+Checked in a prefix: without them all six names tried fell back to Arial in GDI and were
+missing from DirectWrite; with them both resolve every one.
+
+This is FineWine's only. The patcher's CrossOver bottles keep CrossOver's own font list (the
+user's decision, 2026-11-17).
+
 Arial Unicode MS comes last in every list. Every other font in the table except PingFang and
 the Kaiti fonts lives in `/System/Library/Fonts` and ships with macOS. PingFang and Kaiti are
 downloadable fonts.

@@ -571,7 +571,7 @@ fi
 # non-Unicode programs" sets LC_CTYPE), every font programs ask for draws all three scripts
 # through GDI, also with FineWine's Mac dialog font, and DirectWrite's fallback finds a font for
 # each in each locale.
-if "$REPO/build/llvm-mingw/bin/aarch64-w64-mingw32-clang" -O1 -mconsole -o "$WORK/cjk.exe" "$REPO/tests/runtime/cjk.c" \
+if "$REPO/build/llvm-mingw/bin/aarch64-w64-mingw32-clang" -O1 -mconsole -municode -o "$WORK/cjk.exe" "$REPO/tests/runtime/cjk.c" \
      -lgdi32 -ldwrite -luuid >"$WORK/cjk-build.log" 2>&1; then
   cjk(){ "$RT/bin/wineserver" -k 2>/dev/null; env -u LANG -u LC_ALL "$@" "$RT/bin/wine" "$WORK/cjk.exe" ${CJK_CP:-0} </dev/null 2>/dev/null | tr -d '\r'; }
   out="$(cjk)"
