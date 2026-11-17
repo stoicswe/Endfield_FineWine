@@ -1,0 +1,47 @@
+ntdll: arm64ec: stop stack walks that leave the real frames
+
+Arknights: Endfield hung at its logo: its main thread spent all its time in
+RtlWalkFrameChain, which Unity's IL2CPP calls (through RtlCaptureStackBackTrace) to record a
+stack trace while the game starts. Two things in the ARM64EC ntdll made such a walk derail:
+
+- RtlWalkFrameChain carried on when RtlLookupFunctionEntry found no unwind data. The unwind
+  then treats the code as a leaf and takes the word at the stack pointer as the return
+  address, which in the middle of an emulated x64 frame is not one, and the walk slides up the
+  stack through whatever it finds. The x86_64 version stops there (`if (!func) break;`); so
+  does this one now.
+- RtlIsEcCode looked every address up in the EC code bitmap without checking it is inside it.
+  A walk that has left the real frames asks about junk (0x41006c0060xxxx, which is UTF-16
+  text, was seen), the read faults, and the fault's own dispatch walks the same stack and
+  faults again. Addresses above user memory are now simply not EC code.
+
+These are the two fixes FineWine Patcher applies to CrossOver ARM's ntdll.dll as binary edits
+(ArmNtdllFix), which made Endfield get past its logo and into the world there.
+
+diff --git a/dlls/ntdll/signal_arm64ec.c b/dlls/ntdll/signal_arm64ec.c
+--- a/dlls/ntdll/signal_arm64ec.c
++++ b/dlls/ntdll/signal_arm64ec.c
+@@ -1397,6 +1397,11 @@
+ {
+     const UINT64 *map = (const UINT64 *)NtCurrentTeb()->Peb->EcCodeBitMap;
+     ULONG_PTR page = ptr / page_size;
++    /* FineWine: the map has one bit per page of user memory and no more. Stack walks and
++     * unwinds ask about whatever is in a return-address slot, junk included (a walk that
++     * left the real frames was seen asking about 0x41006c0060xxxx, UTF-16 text); reading the
++     * map that far out faulted, and the fault was unwound in turn, over and over. */
++    if (ptr >= 0x800000000000) return FALSE;
+     return (map[page / 64] >> (page & 63)) & 1;
+ }
+ 
+@@ -1854,6 +1859,12 @@
+         pc = context.Rip;
+         if ((context.ContextFlags & CONTEXT_UNWOUND_TO_CALL) && RtlIsEcCode( pc )) pc -= 4;
+         func = RtlLookupFunctionEntry( pc, &base, &table );
++        /* FineWine: as the x86_64 walk does. Without unwind data the unwind treats the code as
++         * a leaf and takes the return address from the top of the stack, which in the middle
++         * of an emulated x64 frame is not one; the walk then wanders up the stack through
++         * whatever it finds. Unity's IL2CPP captures stack traces this way (Arknights:
++         * Endfield's GameAssembly does at start-up), and the game hung at its logo. */
++        if (!func) break;
+         if (RtlVirtualUnwind2( UNW_FLAG_NHANDLER, base, pc, func, &context, NULL,
+                                &data, &frame, NULL, NULL, NULL, &handler, 0 ))
+             break;
