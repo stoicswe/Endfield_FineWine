@@ -64,6 +64,14 @@ if [ -f "$HERE/Resources/MenuBarIcon.svg" ]; then
   ok "menu bar icon"
 fi
 
+# Copy localization bundles
+for lproj in "$HERE/Sources/FineWineCore/Resources/"*.lproj; do
+  if [ -d "$lproj" ]; then
+    cp -R "$lproj" "$APP/Contents/Resources/"
+    ok "localization $(basename "$lproj")"
+  fi
+done
+
 # LSUIElement makes FineWine a menu bar app with no Dock icon (it shows one only while its
 # manager window is open). CFBundleURLTypes registers finewine://, which shortcut apps use.
 # CFBundleDocumentTypes lists FineWine under "Open With" for .exe and .msi files; the rank is
@@ -91,6 +99,14 @@ $ICON_PLIST
 	<string>APPL</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hans</string>
+		<string>zh-Hant</string>
+		<string>ja</string>
+		<string>ko</string>
+	</array>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>LSMinimumSystemVersion</key>

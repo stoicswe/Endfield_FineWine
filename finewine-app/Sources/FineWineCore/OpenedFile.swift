@@ -9,8 +9,8 @@ public enum OpenedFilePolicy: String, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .autoCreate: return "Auto create prefix"
-        case .ask: return "Ask Me"
+        case .autoCreate: return tr("opened_file_policy.auto_create")
+        case .ask: return tr("opened_file_policy.ask")
         }
     }
 }

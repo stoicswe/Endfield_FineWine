@@ -1,0 +1,413 @@
+/* FineWine Localization - English */
+
+/* General / App */
+"app.name" = "FineWine";
+"app.running_count" = "%lld running";
+"app.cancel" = "Cancel";
+"app.create" = "Create";
+"app.save" = "Save";
+"app.ok" = "OK";
+"app.remove" = "Remove";
+"app.rename" = "Rename";
+"app.duplicate" = "Duplicate";
+"app.delete" = "Delete…";
+"app.revert" = "Revert";
+"app.apply" = "Apply";
+"app.play" = "Play";
+"app.edit" = "Edit…";
+"app.show_in_finder" = "Show in Finder";
+"app.running" = "Running";
+"app.none" = "None";
+"app.default" = "Default";
+"app.on" = "On";
+"app.off" = "Off";
+
+/* Menu Bar */
+"menu.setting_up_prefix" = "Setting up the prefix “%@”…";
+"menu.empty_no_runtimes" = "Add a Wine runtime, then create a prefix to install Windows programs into.";
+"menu.empty_has_runtimes" = "Create a prefix to install Windows programs into.";
+"menu.resize_help" = "Drag to make the list taller or shorter";
+"menu.list_height" = "List height";
+"menu.manage_prefixes" = "Manage Prefixes";
+"menu.donate" = "🍷 Donate";
+"menu.donate_help" = "Wine, which FineWine runs Windows programs with, is paid for by donations. Opens winehq.org/donate.";
+"menu.settings" = "Settings";
+"menu.quit_help" = "Quit FineWine. If programs are running, you are asked first, and they are closed.";
+"menu.shut_down" = "Shut Down";
+"menu.force_shut_down" = "Force Shut Down";
+"menu.shut_down_help" = "Shut Down asks every program to close. Force Shut Down also ends a program that has frozen.";
+"menu.configure_prefix" = "Configure this prefix";
+"menu.no_programs" = "No programs yet";
+"menu.language" = "Language";
+"menu.tools" = "Tools";
+
+/* Main Window */
+"main.prefixes" = "Prefixes";
+"main.new_prefix" = "New Prefix";
+"main.settings_tooltip" = "Runtimes and settings";
+"main.program_count_single" = "1 program";
+"main.program_count_multiple" = "%lld programs";
+"main.add_runtime_title" = "Add a Wine runtime";
+"main.add_runtime_desc" = "FineWine runs Windows programs with a Wine runtime. Add a FineWine runtime folder, or any folder that holds a Wine build (with bin/wine inside), to get started.";
+"main.add_runtime_btn" = "Add Runtime…";
+"main.first_prefix_title" = "Create your first prefix";
+"main.first_prefix_desc" = "A prefix is a self-contained Windows environment. Each game or program can have its own, with its own settings.";
+"main.first_prefix_btn" = "New Prefix…";
+
+/* New Prefix Sheet */
+"sheet.new_prefix_title" = "New Prefix";
+"sheet.name_title" = "Name";
+"sheet.name_placeholder" = "For example, the game's name";
+"sheet.setup_title" = "Setup";
+"sheet.profile_label" = "Profile";
+"sheet.no_runtime_warning" = "No usable Wine runtime is installed. Add one in Settings first.";
+"sheet.runtime_label" = "Runtime";
+"sheet.setting_up_windows" = "Setting up Windows… this can take a minute.";
+
+/* Settings View */
+"settings.title" = "Settings";
+"settings.language_card" = "Language";
+"settings.language_label" = "Language";
+"settings.runtimes_card" = "Wine Runtimes";
+"settings.runtimes_footnote" = "A folder with a runtime.json is copied into FineWine. Any other Wine folder is used where it is.";
+"settings.no_runtimes" = "No runtimes yet.";
+"settings.external" = "External";
+"settings.builtin" = "Built in";
+"settings.remove_runtime_confirm_title" = "Remove “%@”?";
+"settings.remove_managed_msg" = "Its files will be deleted from FineWine.";
+"settings.remove_external_msg" = "FineWine will forget this folder; the folder itself is not deleted.";
+"settings.remove_users_prefix" = " These prefixes use it and will need another runtime: %@.";
+"settings.discord_card" = "Discord";
+"settings.discord_footnote" = "The activity is filed under a Discord application, whose name and picture you choose: make one at discord.com/developers (New Application), and paste its Application ID here. Nothing is sent anywhere but to the Discord app on this Mac.";
+"settings.discord_toggle_title" = "Show what I'm playing in Discord";
+"settings.discord_toggle_desc" = "While a program started from FineWine is running, its name is your Discord activity, with how long you have been playing. Wine's own tools and installers are never shown.";
+"settings.discord_app_id" = "Application ID";
+"settings.discord_status_off" = "Turned off.";
+"settings.discord_status_needed" = "Needed before anything can be shown.";
+"settings.discord_status_ready" = "Ready. Nothing is being played.";
+"settings.discord_status_not_running" = "Discord isn't running on this Mac.";
+"settings.discord_status_refused" = "Discord refused this Application ID.";
+"settings.discord_status_showing" = "Showing “%@”.";
+"settings.support_card" = "Support Wine";
+"settings.support_footnote" = "FineWine is not part of the Wine project and takes no share of donations.";
+"settings.donate_row_label" = "Donate to WineHQ";
+"settings.donate_row_desc" = "FineWine runs Windows programs with Wine, which is free software written by volunteers and paid for by donations. If FineWine is useful to you, consider supporting the people who make it possible.";
+"settings.donate_tooltip" = "Opens winehq.org/donate in your browser";
+"settings.status_card" = "Status";
+"settings.status_toggle_title" = "Show a status window while things start";
+"settings.status_toggle_desc" = "A small window in the middle of the display says what FineWine is doing while a prefix is set up or changed and while a program starts, until the program's own window appears. Click it to hide it.";
+"settings.win_files_card" = "Windows files";
+"settings.win_files_footnote" = "A program that is already inside a prefix always runs there. FineWine appears under Open With for these files whether or not it is their default app.";
+"settings.when_opened_label" = "When a program is opened";
+"settings.when_opened_desc" = "A .exe or .msi from outside any prefix, such as a downloaded installer. FineWine can make a prefix for it, named after what it installs, or ask whether to make one or use a prefix you have.";
+"settings.open_with_finewine_title" = "Open Windows programs with FineWine";
+"settings.open_with_finewine_desc" = "Makes FineWine the default app for .exe and .msi files, so double-clicking one in Finder runs it.";
+"settings.currently_opens_with" = "They currently open with %@.";
+"settings.general_card" = "General";
+"settings.login_item" = "Open FineWine at login";
+"settings.shortcuts_row" = "Shortcut apps";
+"settings.prefixes_logs_row" = "Prefixes and logs";
+
+/* Prefix Context Menu */
+"context.run_installer" = "Run Installer…";
+"context.find_programs" = "Find Installed Programs";
+"context.configure" = "Configure…";
+"context.wine_tools" = "Wine Tools";
+"context.show_drive_c" = "Show C: Drive in Finder";
+"context.show_logs" = "Show Logs in Finder";
+"context.shut_down" = "Shut Down";
+"context.force_shut_down" = "Force Shut Down";
+"context.rename" = "Rename…";
+"context.duplicate" = "Duplicate";
+"context.delete" = "Delete…";
+"context.delete_confirm_title" = "Delete “%@”?";
+"context.delete_confirm_msg" = "The prefix, everything installed in it and its shortcut apps are deleted. This can't be undone.";
+"context.delete_action" = "Delete Prefix";
+
+/* Prefix Detail View */
+"detail.tab_programs" = "Programs";
+"detail.tab_config" = "Configuration";
+"detail.tab_tools" = "Wine Tools";
+"detail.tab_details" = "Details";
+"detail.no_runtime" = "No runtime";
+"detail.settings_not_applied" = "Settings not applied";
+"detail.stop_prefix_help" = "Stop every program running in this prefix";
+"detail.run_installer" = "Run Installer…";
+"detail.add_program" = "Add Program…";
+"detail.find_installed" = "Find Installed";
+"detail.find_installed_help" = "Look for programs that installers added to this prefix";
+"detail.no_programs_title" = "No programs yet";
+"detail.no_programs_desc" = "Run an installer to put a Windows program in this prefix. When it finishes, FineWine lists what it installed here.";
+"detail.in_applications" = "In Applications";
+"detail.show_shortcut" = "Show Shortcut in Finder";
+"detail.remove_shortcut" = "Remove Shortcut App";
+"detail.make_shortcut" = "Make Shortcut App";
+"detail.more_actions" = "More actions";
+"detail.remove_from_finewine" = "Remove from FineWine…";
+"detail.remove_program_title" = "Remove “%@” from FineWine?";
+"detail.remove_program_msg" = "Its entry and shortcut app are removed. The program's files stay in the prefix; use Add or Remove Programs under Wine Tools to uninstall it.";
+
+/* Program Editor */
+"editor.title" = "Edit Program";
+"editor.program_card" = "Program";
+"editor.name_label" = "Name";
+"editor.executable_label" = "Executable";
+"editor.args_label" = "Arguments";
+"editor.args_prompt" = "Optional";
+"editor.start_in_label" = "Start in";
+"editor.start_in_prompt" = "The executable's folder";
+"editor.environment_card" = "Environment";
+"editor.environment_footnote" = "Variables for this program only, on top of the prefix's own.";
+"editor.remove_variable" = "Remove this variable";
+"editor.add_variable" = "Add Variable";
+
+/* Tools Tab */
+"tools.maintenance_card" = "Maintenance";
+"tools.restart_win_label" = "Restart Windows";
+"tools.restart_win_detail" = "What some installers ask for when they finish.";
+"tools.restart_win_btn" = "Restart";
+"tools.update_prefix_label" = "Update the prefix";
+"tools.update_prefix_detail" = "Brings its Windows files up to date after the runtime changes.";
+"tools.update_prefix_btn" = "Update";
+"tools.shut_down_label" = "Shut down";
+"tools.shut_down_detail" = "Asks every program in this prefix to close, the way shutting Windows down does. Programs may ask to save.";
+"tools.force_shut_down_label" = "Force shut down";
+"tools.force_shut_down_detail" = "Ends everything in this prefix at once, without asking, including a program that has frozen. Unsaved work is lost.";
+"tools.files_card" = "Files";
+"tools.c_drive_label" = "C: drive";
+"tools.logs_label" = "Logs";
+"tools.logs_detail" = "Wine's output from each launch.";
+
+/* Details Tab */
+"details.name_card" = "Name";
+"details.reports_card" = "What Windows reports";
+"details.reports_footnote" = "Read from the prefix's registry, so it also shows changes made in Wine Configuration.";
+"details.win_version" = "Windows version";
+"details.wine_default" = "Wine default";
+"details.build" = "Build";
+"details.dpi" = "DPI";
+"details.retina_mode" = "Retina mode";
+"details.virtual_desktop" = "Virtual desktop";
+"details.dll_overrides" = "DLL overrides";
+"details.disabled" = "disabled";
+"details.about_card" = "About this prefix";
+"details.created" = "Created";
+"details.location" = "Location";
+"details.duplicate_delete_card" = "Duplicate or delete";
+"details.duplicate_label" = "Duplicate";
+"details.duplicate_detail" = "Copies the whole prefix, installed programs included.";
+"details.delete_label" = "Delete";
+"details.delete_detail" = "Removes the prefix, everything installed in it, and its shortcut apps.";
+"details.delete_confirm_title" = "Delete “%@”?";
+"details.delete_confirm_msg" = "Everything installed in this prefix, including saved games stored inside it, will be deleted. This can't be undone.";
+
+/* Configuration Tab */
+"config.windows_card" = "Windows";
+"config.win_version_label" = "Windows version";
+"config.build_number_label" = "Build number";
+"config.build_number_detail" = "Leave empty for Wine's own. Some games want a specific build, such as 26100.";
+"config.runtime_label" = "Wine runtime";
+"config.graphics_card" = "Graphics";
+"config.direct3d_label" = "Direct3D";
+"config.retina_title" = "High-resolution mode";
+"config.retina_desc" = "Programs draw at the display's real pixel resolution, so they are as sharp as Mac apps. Turn it off if a program runs too slowly at full resolution.";
+"config.metalfx_upscale_title" = "Sharpen lower resolutions with MetalFX";
+"config.metalfx_upscale_desc" = "When a Direct3D 10 or 11 game draws fewer pixels than its window has (a lower resolution chosen in the game, or high-resolution mode off), the picture is upscaled to the display's pixels with MetalFX instead of being stretched. Games using their own upscaler are left alone.";
+"config.auto_dpi_title" = "Scale automatically";
+"config.auto_dpi_desc_retina" = "Sets the Windows DPI from the display (%@ on this Mac), so text and controls keep their normal size.";
+"config.auto_dpi_desc_normal" = "Keeps the Windows DPI at 96, which matches macOS when high-resolution mode is off.";
+"config.screen_dpi_label" = "Screen DPI";
+"config.screen_dpi_detail" = "96 is 100% scaling; 192 suits high-resolution mode on a Retina display.";
+"config.virtual_desktop_title" = "Virtual desktop";
+"config.virtual_desktop_desc" = "Keeps the prefix's windows inside one window. Helps programs that misbehave in full screen.";
+"config.width_label" = "Width";
+"config.height_label" = "Height";
+"config.dlss_metalfx_title" = "DLSS through MetalFX";
+"config.dlss_metalfx_dxmt_desc" = "Games that offer NVIDIA DLSS use Apple's MetalFX instead, for upscaling and for frame generation. FSR is unaffected: it runs as the game ships it.";
+"config.dlss_metalfx_general_desc" = "Direct3D 12 and Vulkan games that offer NVIDIA DLSS use Apple's MetalFX instead. Direct3D 11 games need DXMT as the Direct3D layer. FSR is unaffected.";
+"config.report_nvidia_title" = "Report an NVIDIA GPU";
+"config.report_nvidia_desc" = "Tells Windows programs the GPU is an %@, by name and by id. Most games only show DLSS options on an NVIDIA GPU. Leave it off for games with NVIDIA-specific code paths you do not want.";
+"config.fullscreen_label" = "Full screen";
+"config.fullscreen_detail" = "How a game's full-screen window is shown. With its own Space the menu bar appears at the top edge, a swipe goes back to the desktop, and notifications show over the game.";
+"config.rounded_windows_title" = "Round window corners";
+"config.rounded_windows_desc" = "Windows that draw their own title bar, as launchers and many games do, get the round corners of a Mac window. Full-screen windows, menus and windows with a shape of their own are left as they are.";
+"config.game_mode_title" = "Game Mode";
+"config.game_mode_desc" = "Programs that use Direct3D, Vulkan or OpenGL are started as games, so macOS turns Game Mode on while one is full screen. A program started by a launcher is recognised from its second run on.";
+"config.hoyoverse_steam_title" = "Start HoYoverse games as Steam does";
+"config.hoyoverse_steam_desc" = "Genshin Impact, Zenless Zone Zero, Honkai Impact 3rd and the HoYoPlay launcher are started through a stand-in for the Steam client, the way they are run on Linux. The game is told it was started by Steam, which is not a platform HoYoverse supports on a Mac; use it at your own account's risk.";
+"config.metal_hud_title" = "Start with the Metal performance overlay shown";
+"config.metal_hud_desc" = "Frame rate and GPU statistics over the game. Either way it can be shown and hidden while a game runs: View > Metal HUD in the menu bar, or Option-F12.";
+"config.perf_card" = "Performance and compatibility";
+"config.sync_label" = "Synchronisation";
+"config.sync_detail" = "How Windows events, mutexes and semaphores are handled.";
+"config.hide_hypervisor_title" = "Hide the hypervisor flag";
+"config.hide_hypervisor_desc" = "The x64 emulator announces itself to programs through the CPU flag a virtual machine sets. Games that refuse to run in a virtual machine then refuse to start, though the Mac is not one. On by default; turn it off for a program that needs to know it is emulated.";
+"config.appearance_card" = "Appearance";
+"config.appearance_footnote" = "Applies to anything in this prefix that uses standard Windows controls, including the Wine tools. Window frames and title bars are always drawn by macOS. Games that draw their own interface are not affected.";
+"config.mac_appearance_title" = "Match macOS";
+"config.mac_appearance_desc" = "Windows controls take the Mac's light or dark colours, its accent colour and a Mac font. It is refreshed when a Wine tool is opened after the Mac's appearance changes.";
+"config.keyboard_card" = "Keyboard";
+"config.left_opt_alt" = "Left Option key acts as Alt";
+"config.right_opt_alt" = "Right Option key acts as Alt";
+"config.dll_overrides_card" = "DLL overrides";
+"config.dll_overrides_footnote" = "Chooses between a DLL that came with a program (native) and Wine's own (built in).";
+"config.order_label" = "Order";
+"config.remove_override" = "Remove this override";
+"config.add_override" = "Add Override";
+"config.env_card" = "Environment variables";
+"config.env_footnote" = "Set for every program in this prefix.";
+"config.debug_card" = "Debugging";
+"config.debug_footnote" = "Wine debug channels (WINEDEBUG). “-all” is silent and fastest; “err+all” logs errors. Output goes to the prefix's logs.";
+"config.msync_note" = "MSync needs a runtime built with it; FineWine's own runtime is. Every program in a prefix must use the same setting, so stop running programs before changing it.";
+"config.graphics_note" = "“%@” doesn't include %@, so programs will use WineD3D until a runtime that has it is chosen.";
+"config.changes_running" = "Changes apply to programs started after this. Running ones keep their old settings.";
+"config.changes_pending" = "You have changes that aren't applied yet.";
+"config.settings_applied" = "These settings are applied.";
+
+/* Status Splash */
+"splash.dismiss_tooltip" = "Click to hide. What is being done carries on.";
+"splash.setting_up" = "Setting up “%@”";
+"splash.creating_prefix" = "Creating the prefix…";
+"splash.applying_settings" = "Applying settings…";
+"splash.restarting_windows" = "Restarting Windows…";
+"splash.updating" = "Updating…";
+"splash.starting_program" = "Starting %@";
+"splash.installing" = "Installing…";
+"splash.installing_program" = "Installing %@";
+"splash.reading_installer" = "Reading the installer…";
+"splash.installed_no_programs" = "Installed, but FineWine found no program to list. Add it in Manage Prefixes.";
+"splash.installed_success" = "Installed. Start it from the FineWine menu or its app in Applications.";
+"splash.installed_title" = "%@ is installed";
+"splash.quitting_title" = "Quitting FineWine";
+"splash.closing_single" = "Closing 1 program…";
+"splash.closing_multiple" = "Closing %lld programs…";
+"splash.duplicating" = "Duplicating…";
+"splash.deleting" = "Deleting…";
+"splash.stopping" = "Stopping…";
+"splash.shutting_down" = "Shutting down…";
+"splash.forcing_shut_down" = "Forcing shut down…";
+"splash.matching_appearance" = "Matching the Mac's appearance…";
+
+/* Dialogs & Alerts */
+"dialog.quit_title_single" = "Quit FineWine and close 1 running program?";
+"dialog.quit_title_multiple" = "Quit FineWine and close %lld running programs?";
+"dialog.quit_info" = "These are still running:\n\n%@\n\nThey will be asked to close. Any that have not closed after 5 seconds are ended, and unsaved work in them is lost.";
+"dialog.close_and_quit" = "Close and Quit";
+"dialog.err_prefix_create" = "The prefix couldn't be created";
+"dialog.err_settings_save" = "The settings couldn't be saved";
+"dialog.err_settings_apply" = "The settings couldn't be applied";
+"dialog.err_prefix_rename" = "The prefix couldn't be renamed";
+"dialog.err_prefix_duplicate" = "The prefix couldn't be duplicated";
+"dialog.err_prefix_delete" = "The prefix couldn't be deleted";
+"dialog.err_programs_stop" = "The prefix's programs couldn't be stopped";
+"dialog.err_prefix_shutdown" = "The prefix couldn't be shut down";
+"dialog.err_prefix_force_shutdown" = "The prefix couldn't be forced to shut down";
+"dialog.wine_problem" = "Wine reported a problem";
+"dialog.err_prog_add" = "The program couldn't be added";
+"dialog.err_prog_save" = "The program couldn't be saved";
+"dialog.err_prog_remove" = "The program couldn't be removed";
+"dialog.no_new_programs_title" = "No new programs found";
+"dialog.no_new_programs_msg" = "FineWine looks at the shortcuts installers leave in the Start menu and on the desktop. A program that made none can be added with Add Program.";
+"dialog.err_prefix_search" = "The prefix couldn't be searched";
+"dialog.err_shortcut_make" = "The shortcut couldn't be made";
+"dialog.err_shortcut_remove" = "The shortcut couldn't be removed";
+"dialog.err_prog_start" = "“%@” couldn't be started";
+"dialog.err_appearance_update" = "The appearance couldn't be updated";
+"dialog.32bit_title" = "“%@” is a 32-bit program";
+"dialog.32bit_msg" = "FineWine can run 64-bit Windows programs only: an Apple silicon Mac gives a program no memory where a 32-bit one needs it. 32-bit installers made with NSIS are installed by FineWine itself; this one is of another kind. Look for a 64-bit installer or a portable (zip) download of the program.";
+"dialog.32bit_install_failed_title" = "“%@” couldn't be installed";
+"dialog.32bit_install_failed_msg" = "This installer is a 32-bit program, which FineWine cannot run, so FineWine tried to carry out its install script itself.\n\n%@";
+"dialog.dead_shortcut_title" = "That shortcut no longer works";
+"dialog.dead_shortcut_msg" = "The program it starts has been removed from FineWine. You can delete the shortcut.";
+"dialog.err_runtime_add" = "The runtime couldn't be added";
+"dialog.err_runtime_remove" = "The runtime couldn't be removed";
+"dialog.cant_open_title" = "FineWine can't open “%@”";
+"dialog.cant_open_msg" = "It opens Windows programs and installers (.exe and .msi files).";
+"dialog.no_runtime_title" = "No Wine runtime";
+"dialog.no_runtime_msg" = "“%@” needs a prefix to run in, and there is no usable runtime to make one with. Add one in Settings, then open the file again.";
+"dialog.choose_another_app_title" = "Choose another app in Finder";
+"dialog.choose_another_app_msg" = "No other app was opening these files before FineWine, so there is nothing to switch back to. To change it, select a .exe file in Finder, choose File > Get Info, pick an app under “Open with”, and click Change All.";
+"dialog.err_default_app" = "The default app couldn't be changed";
+"dialog.err_login_setting" = "The login setting couldn't be changed";
+"dialog.choose_executable" = "Choose a Windows installer or program to run in “%@”";
+"dialog.choose_program_in_prefix" = "Choose a program inside this prefix";
+"dialog.choose_runtime_folder" = "Choose a Wine runtime folder";
+"dialog.run_with_finewine_title" = "Run “%@” with FineWine?";
+"dialog.run_with_finewine_msg" = "Choose the prefix to run it in. Only run programs you trust: they get the same access to your files as FineWine has.";
+"dialog.run_btn" = "Run";
+"dialog.new_prefix_popup" = "New prefix “%@”";
+
+/* Wine Tools */
+"tool.winecfg.name" = "Wine Configuration";
+"tool.winecfg.summary" = "Libraries, graphics, audio, drives and per-program Windows versions.";
+"tool.regedit.name" = "Registry Editor";
+"tool.regedit.summary" = "Browse and edit the prefix's registry.";
+"tool.control.name" = "Control Panel";
+"tool.control.summary" = "Windows control panel applets, such as game controllers.";
+"tool.uninstaller.name" = "Add or Remove Programs";
+"tool.uninstaller.summary" = "Remove programs installed in this prefix.";
+"tool.taskmgr.name" = "Task Manager";
+"tool.taskmgr.summary" = "See and end the Windows processes running in this prefix.";
+"tool.winefile.name" = "File Manager";
+"tool.winefile.summary" = "Browse the prefix's drives.";
+"tool.cmd.name" = "Command Prompt";
+"tool.cmd.summary" = "A Windows command line in this prefix.";
+"tool.notepad.name" = "Notepad";
+"tool.notepad.summary" = "A plain text editor, handy for checking the prefix works.";
+
+/* Opened File Policy */
+"opened_file_policy.auto_create" = "Auto create prefix";
+"opened_file_policy.ask" = "Ask Me";
+
+/* Graphics Backends */
+"backend.dxmt" = "DXMT (Direct3D 10/11 on Metal)";
+"backend.dxvk" = "DXVK (Direct3D on Vulkan / MoltenVK)";
+"backend.wined3d" = "WineD3D (built in)";
+"backend.scope_note" = "This chooses how Direct3D 9, 10 and 11 are drawn. Direct3D 12 and Vulkan are always available, through MoltenVK.";
+
+/* Full Screen Modes */
+"fullscreen.space" = "Mac full screen (its own Space)";
+"fullscreen.borderless" = "Borderless window on the desktop";
+"fullscreen.exclusive" = "Exclusive (covers the menu bar)";
+
+/* Sync Modes */
+"sync.standard" = "Wine server (slower, most compatible)";
+"sync.msync" = "MSync (faster)";
+
+/* DLL Load Order */
+"dll_order.native_builtin" = "Native, then built in";
+"dll_order.builtin_native" = "Built in, then native";
+"dll_order.native" = "Native only";
+"dll_order.builtin" = "Built in only";
+"dll_order.disabled" = "Disabled";
+
+/* Startup Status Messages */
+"startup.updating_prefix" = "Updating the prefix for this version of the runtime…";
+"startup.still_updating" = "Still updating the prefix. This happens once after the runtime changes.";
+"startup.starting_wine" = "Starting Wine…";
+"startup.loading_program" = "Loading the program…";
+"startup.still_loading" = "Still loading. Large programs take a while to show their window.";
+"startup.still_working" = "Still working. You can keep using your Mac; the window will appear by itself.";
+"startup.seconds" = "%d s";
+"startup.min_seconds" = "%d min %d s";
+
+/* Validation Problems */
+"validation.win_build_number" = "The Windows build must be a number, such as 26100.";
+"validation.dpi_range" = "The DPI must be between 72 and 480.";
+"validation.desktop_min" = "The virtual desktop must be at least 640 × 480.";
+"validation.env_invalid" = "“%@” is not a valid environment variable name.";
+"validation.dll_empty" = "A DLL override has no name.";
+"validation.dll_duplicate" = "A DLL is listed more than once in the overrides.";
+
+/* Runtime Problems */
+"runtime_problem.wine_missing" = "bin/wine is missing or not executable.";
+"runtime_problem.wineserver_missing" = "bin/wineserver is missing or not executable.";
+"runtime_problem.lib_missing" = "lib/wine is missing.";
+
+/* Prefix Setup Progress */
+"setup.creating_windows_env" = "Creating the Windows folders and registry. This takes about a minute.";
+"setup.applying_settings" = "Applying the prefix's settings…";
+"nsis.reading" = "Reading the installer…";
+"nsis.unpacking" = "Unpacking the installer… %d%%";
+"nsis.installing_file" = "Installing %@";
+"nsis.writing_registry" = "Writing the registry entries…";

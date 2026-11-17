@@ -68,10 +68,10 @@ public struct PrefixService {
         }
         let prefix = try prefixes.create(name: name, runtimeID: runtime.id, profile: profile)
         do {
-            progress?("Creating the Windows folders and registry. This takes about a minute.")
+            progress?(tr("setup.creating_windows_env"))
             try runChecked(try planner(for: prefix).plan(for: .initialize), what: "Setting up the prefix")
             keepDesktopInPrefix(prefix)
-            progress?("Applying the prefix's settings…")
+            progress?(tr("setup.applying_settings"))
             return try applySettings(to: prefix, appearance: appearance)
         } catch {
             try? prefixes.delete(prefix)
@@ -194,16 +194,16 @@ public struct PrefixService {
         let users = prefix.driveC.appendingPathComponent("users")
         let user = ((try? FileManager.default.contentsOfDirectory(atPath: users.path)) ?? [])
             .filter { $0.lowercased() != "public" && !$0.hasPrefix(".") }.sorted().first ?? NSUserName()
-        progress?("Reading the installer…")
+        progress?(tr("nsis.reading"))
         let archive = try NSISArchive(url: installer) { fraction in
-            progress?("Unpacking the installer… \(Int(fraction * 100))%")
+            progress?(tr("nsis.unpacking", Int(fraction * 100)))
         }
         let script = try NSISScript(archive: archive, driveC: prefix.driveC, userName: user, installer: installer,
                                     productName: InstallName.prefixName(for: installer, existing: []))
-        let report = try script.install { file in progress?("Installing \(file)") }
+        let report = try script.install { file in progress?(tr("nsis.installing_file", file)) }
 
         if !report.registryFile.isEmpty {
-            progress?("Writing the registry entries…")
+            progress?(tr("nsis.writing_registry"))
             let file = prefix.driveC.appendingPathComponent("users/\(user)/Temp/finewine-install.reg")
             try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             // regedit reads UTF-16 with a byte-order mark

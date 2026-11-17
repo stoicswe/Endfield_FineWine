@@ -16,9 +16,18 @@ struct PrefixDetailView: View {
             case .details: return "details"
             }
         }
+        var localizedTitle: String {
+            switch self {
+            case .programs: return tr("detail.tab_programs")
+            case .configuration: return tr("detail.tab_config")
+            case .tools: return tr("detail.tab_tools")
+            case .details: return tr("detail.tab_details")
+            }
+        }
     }
 
     @EnvironmentObject private var model: AppModel
+    @ObservedObject private var l10n = LanguageManager.shared
     let prefix: Prefix
     @State private var tab: Tab = .programs
 
@@ -60,12 +69,12 @@ struct PrefixDetailView: View {
                         if let runtime = model.runtime(for: prefix) {
                             Pill(text: runtime.name, symbol: "cpu")
                         } else {
-                            Pill(text: "No runtime", symbol: "exclamationmark.triangle", tint: .orange)
+                            Pill(text: l10n.tr("detail.no_runtime"), symbol: "exclamationmark.triangle", tint: .orange)
                         }
                         if let profile = model.profile(for: prefix) { Pill(text: profile.name, symbol: "gamecontroller") }
-                        if model.isRunning(prefix) { Pill(text: "Running", symbol: "play.fill", tint: .green) }
+                        if model.isRunning(prefix) { Pill(text: l10n.tr("app.running"), symbol: "play.fill", tint: .green) }
                         if prefix.metadata.settings != prefix.metadata.appliedSettings {
-                            Pill(text: "Settings not applied", symbol: "clock.arrow.circlepath", tint: .orange)
+                            Pill(text: l10n.tr("detail.settings_not_applied"), symbol: "clock.arrow.circlepath", tint: .orange)
                         }
                     }
                 }
@@ -75,22 +84,22 @@ struct PrefixDetailView: View {
                     Text(status).foregroundStyle(.secondary)
                 } else if model.isRunning(prefix) {
                     Menu {
-                        Button("Shut Down") { Task { await model.shutDown(prefix) } }
-                        Button("Force Shut Down", role: .destructive) { Task { await model.forceShutDown(prefix) } }
+                        Button(l10n.tr("menu.shut_down")) { Task { await model.shutDown(prefix) } }
+                        Button(l10n.tr("menu.force_shut_down"), role: .destructive) { Task { await model.forceShutDown(prefix) } }
                     } label: {
-                        Label("Shut Down", systemImage: "power")
+                        Label(l10n.tr("menu.shut_down"), systemImage: "power")
                     } primaryAction: {
                         Task { await model.shutDown(prefix) }
                     }
                     .menuStyle(.button)
                     .buttonStyle(.glass)
                     .fixedSize()
-                    .help("Shut Down asks every program to close. Force Shut Down ends everything at once, including a program that has frozen.")
-                    .help("Stop every program running in this prefix")
+                    .help(l10n.tr("menu.shut_down_help"))
+                    .help(l10n.tr("detail.stop_prefix_help"))
                 }
             }
             Picker("Section", selection: $tab) {
-                ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
+                ForEach(Tab.allCases) { Text($0.localizedTitle).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -107,6 +116,7 @@ struct PrefixDetailView: View {
 
 private struct ProgramsTab: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject private var l10n = LanguageManager.shared
     let prefix: Prefix
     @State private var editing: Program?
 
@@ -114,32 +124,32 @@ private struct ProgramsTab: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 Button {
-                    if let url = Panels.chooseExecutable(message: "Choose a Windows installer or program to run in “\(prefix.name)”") {
+                    if let url = Panels.chooseExecutable(message: l10n.tr("dialog.choose_executable", prefix.name)) {
                         model.runInstaller(url, in: prefix)
                     }
                 } label: {
-                    Label("Run Installer…", systemImage: "arrow.down.circle")
+                    Label(l10n.tr("detail.run_installer"), systemImage: "arrow.down.circle")
                 }
                 .buttonStyle(.glassProminent).tint(Look.wine)
                 Button {
                     addProgram()
                 } label: {
-                    Label("Add Program…", systemImage: "plus")
+                    Label(l10n.tr("detail.add_program"), systemImage: "plus")
                 }
                 .buttonStyle(.glass)
                 Button {
                     model.findInstalledPrograms(in: prefix)
                 } label: {
-                    Label("Find Installed", systemImage: "magnifyingglass")
+                    Label(l10n.tr("detail.find_installed"), systemImage: "magnifyingglass")
                 }
                 .buttonStyle(.glass)
-                .help("Look for programs that installers added to this prefix")
+                .help(l10n.tr("detail.find_installed_help"))
                 Spacer()
             }
 
             if prefix.metadata.programs.isEmpty {
-                EmptyState(symbol: "macwindow.badge.plus", title: "No programs yet",
-                           message: "Run an installer to put a Windows program in this prefix. When it finishes, FineWine lists what it installed here.") { EmptyView() }
+                EmptyState(symbol: "macwindow.badge.plus", title: l10n.tr("detail.no_programs_title"),
+                           message: l10n.tr("detail.no_programs_desc")) { EmptyView() }
                     .frame(minHeight: 260)
             } else {
                 GlassEffectContainer(spacing: 12) {
@@ -157,7 +167,7 @@ private struct ProgramsTab: View {
     }
 
     private func addProgram() {
-        guard let url = Panels.chooseExecutable(in: prefix.driveC, message: "Choose a program inside this prefix") else { return }
+        guard let url = Panels.chooseExecutable(in: prefix.driveC, message: l10n.tr("dialog.choose_program_in_prefix")) else { return }
         let name = url.deletingPathExtension().lastPathComponent
         model.addProgram(Program(name: name, windowsPath: WindowsPath.windowsPath(for: url, inPrefix: prefix.directory)), to: prefix)
     }
@@ -165,6 +175,7 @@ private struct ProgramsTab: View {
 
 private struct ProgramCard: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject private var l10n = LanguageManager.shared
     let prefix: Prefix
     let program: Program
     let edit: () -> Void
@@ -180,48 +191,49 @@ private struct ProgramCard: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(program.name).font(.headline).lineLimit(1)
                 Text(program.windowsPath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                if hasShortcut { Pill(text: "In Applications", symbol: "checkmark", tint: .green) }
+                if hasShortcut { Pill(text: l10n.tr("detail.in_applications"), symbol: "checkmark", tint: .green) }
             }
             Spacer(minLength: 8)
             Menu {
                 if hasShortcut {
-                    Button("Show Shortcut in Finder") {
+                    Button(l10n.tr("detail.show_shortcut")) {
                         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: program.shortcutPath!)])
                     }
-                    Button("Remove Shortcut App") { model.removeShortcut(for: program.id, in: prefix) }
+                    Button(l10n.tr("detail.remove_shortcut")) { model.removeShortcut(for: program.id, in: prefix) }
                 } else {
-                    Button("Make Shortcut App") { model.createShortcut(for: program.id, in: prefix) }
+                    Button(l10n.tr("detail.make_shortcut")) { model.createShortcut(for: program.id, in: prefix) }
                 }
-                Button("Edit…", action: edit)
+                Button(l10n.tr("app.edit"), action: edit)
                 Divider()
-                Button("Remove from FineWine…", role: .destructive) { confirmingRemoval = true }
+                Button(l10n.tr("detail.remove_from_finewine"), role: .destructive) { confirmingRemoval = true }
             } label: {
                 Image(systemName: "ellipsis")
             }
             .menuStyle(.button)
             .menuIndicator(.hidden)
             .buttonStyle(.glass)
-            .help("More actions")
+            .help(l10n.tr("detail.more_actions"))
             .fixedSize()
             Button {
                 model.launch(program, in: prefix)
             } label: {
-                Label("Play", systemImage: "play.fill")
+                Label(l10n.tr("app.play"), systemImage: "play.fill")
             }
             .buttonStyle(.glassProminent).tint(Look.wine)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(padding: 14)
-        .confirmationDialog("Remove “\(program.name)” from FineWine?", isPresented: $confirmingRemoval) {
-            Button("Remove", role: .destructive) { model.removeProgram(program, from: prefix) }
+        .confirmationDialog(l10n.tr("detail.remove_program_title", program.name), isPresented: $confirmingRemoval) {
+            Button(l10n.tr("app.remove"), role: .destructive) { model.removeProgram(program, from: prefix) }
         } message: {
-            Text("Its entry and shortcut app are removed. The program's files stay in the prefix; use Add or Remove Programs under Wine Tools to uninstall it.")
+            Text(l10n.tr("detail.remove_program_msg"))
         }
     }
 }
 
 private struct ProgramEditor: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject private var l10n = LanguageManager.shared
     @Environment(\.dismiss) private var dismiss
     let prefix: Prefix
     @State var program: Program
@@ -235,21 +247,21 @@ private struct ProgramEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Edit Program").font(.title2.weight(.semibold))
-            Card(title: "Program", symbol: "macwindow") {
-                LabeledField("Name", text: $program.name)
-                LabeledField("Executable", text: $program.windowsPath)
-                LabeledField("Arguments", text: $arguments, prompt: "Optional")
-                LabeledField("Start in", text: $program.workingDirectory, prompt: "The executable's folder")
+            Text(l10n.tr("editor.title")).font(.title2.weight(.semibold))
+            Card(title: l10n.tr("editor.program_card"), symbol: "macwindow") {
+                LabeledField(l10n.tr("editor.name_label"), text: $program.name)
+                LabeledField(l10n.tr("editor.executable_label"), text: $program.windowsPath)
+                LabeledField(l10n.tr("editor.args_label"), text: $arguments, prompt: l10n.tr("editor.args_prompt"))
+                LabeledField(l10n.tr("editor.start_in_label"), text: $program.workingDirectory, prompt: l10n.tr("editor.start_in_prompt"))
             }
-            Card(title: "Environment", symbol: "terminal",
-                 footnote: "Variables for this program only, on top of the prefix's own.") {
+            Card(title: l10n.tr("editor.environment_card"), symbol: "terminal",
+                 footnote: l10n.tr("editor.environment_footnote")) {
                 EnvironmentEditor(variables: $program.environment)
             }
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.buttonStyle(.glass).keyboardShortcut(.cancelAction)
-                Button("Save") {
+                Button(l10n.tr("app.cancel")) { dismiss() }.buttonStyle(.glass).keyboardShortcut(.cancelAction)
+                Button(l10n.tr("app.save")) {
                     program.arguments = ProgramScanner.splitArguments(arguments)
                     program.name = program.name.trimmingCharacters(in: .whitespaces)
                     model.update(program, in: prefix)
@@ -287,6 +299,7 @@ struct LabeledField: View {
 
 /// Edits a list of name/value pairs.
 struct EnvironmentEditor: View {
+    @ObservedObject private var l10n = LanguageManager.shared
     @Binding var variables: [EnvironmentVariable]
 
     var body: some View {
@@ -309,13 +322,13 @@ struct EnvironmentEditor: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .help("Remove this variable")
+                    .help(l10n.tr("editor.remove_variable"))
                 }
             }
             Button {
                 variables.append(EnvironmentVariable(name: "", value: ""))
             } label: {
-                Label("Add Variable", systemImage: "plus")
+                Label(l10n.tr("editor.add_variable"), systemImage: "plus")
             }
             .buttonStyle(.glass)
             .controlSize(.small)
@@ -327,6 +340,7 @@ struct EnvironmentEditor: View {
 
 private struct ToolsTab: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject private var l10n = LanguageManager.shared
     let prefix: Prefix
 
     private let columns = [GridItem(.adaptive(minimum: 220), spacing: 12)]
@@ -355,33 +369,33 @@ private struct ToolsTab: View {
                 }
             }
 
-            Card(title: "Maintenance", symbol: "wrench.and.screwdriver") {
-                Row(label: "Restart Windows", detail: "What some installers ask for when they finish.") {
-                    Button("Restart") { Task { await model.wineboot(.restart, in: prefix, status: "Restarting Windows…") } }
+            Card(title: l10n.tr("tools.maintenance_card"), symbol: "wrench.and.screwdriver") {
+                Row(label: l10n.tr("tools.restart_win_label"), detail: l10n.tr("tools.restart_win_detail")) {
+                    Button(l10n.tr("tools.restart_win_btn")) { Task { await model.wineboot(.restart, in: prefix, status: l10n.tr("splash.restarting_windows")) } }
                         .buttonStyle(.glass)
                 }
                 Divider()
-                Row(label: "Update the prefix", detail: "Brings its Windows files up to date after the runtime changes.") {
-                    Button("Update") { Task { await model.wineboot(.update, in: prefix, status: "Updating…") } }
+                Row(label: l10n.tr("tools.update_prefix_label"), detail: l10n.tr("tools.update_prefix_detail")) {
+                    Button(l10n.tr("tools.update_prefix_btn")) { Task { await model.wineboot(.update, in: prefix, status: l10n.tr("splash.updating")) } }
                         .buttonStyle(.glass)
                 }
                 Divider()
-                Row(label: "Shut down", detail: "Asks every program in this prefix to close, the way shutting Windows down does. Programs may ask to save.") {
-                    Button("Shut Down") { Task { await model.shutDown(prefix) } }.buttonStyle(.glass)
+                Row(label: l10n.tr("tools.shut_down_label"), detail: l10n.tr("tools.shut_down_detail")) {
+                    Button(l10n.tr("menu.shut_down")) { Task { await model.shutDown(prefix) } }.buttonStyle(.glass)
                 }
                 Divider()
-                Row(label: "Force shut down", detail: "Ends everything in this prefix at once, without asking, including a program that has frozen. Unsaved work is lost.") {
-                    Button("Force Shut Down", role: .destructive) { Task { await model.forceShutDown(prefix) } }.buttonStyle(.glass)
+                Row(label: l10n.tr("tools.force_shut_down_label"), detail: l10n.tr("tools.force_shut_down_detail")) {
+                    Button(l10n.tr("menu.force_shut_down"), role: .destructive) { Task { await model.forceShutDown(prefix) } }.buttonStyle(.glass)
                 }
             }
 
-            Card(title: "Files", symbol: "folder") {
-                Row(label: "C: drive") {
-                    Button("Show in Finder") { NSWorkspace.shared.open(prefix.driveC) }.buttonStyle(.glass)
+            Card(title: l10n.tr("tools.files_card"), symbol: "folder") {
+                Row(label: l10n.tr("tools.c_drive_label")) {
+                    Button(l10n.tr("app.show_in_finder")) { NSWorkspace.shared.open(prefix.driveC) }.buttonStyle(.glass)
                 }
                 Divider()
-                Row(label: "Logs", detail: "Wine's output from each launch.") {
-                    Button("Show in Finder") {
+                Row(label: l10n.tr("tools.logs_label"), detail: l10n.tr("tools.logs_detail")) {
+                    Button(l10n.tr("app.show_in_finder")) {
                         let logs = model.service.paths.logs.appendingPathComponent(prefix.directory.lastPathComponent)
                         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
                         NSWorkspace.shared.open(logs)
@@ -397,6 +411,7 @@ private struct ToolsTab: View {
 
 private struct DetailsTab: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject private var l10n = LanguageManager.shared
     let prefix: Prefix
     @State private var name: String
     @State private var confirmingDelete = false
@@ -409,49 +424,49 @@ private struct DetailsTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Card(title: "Name", symbol: "textformat") {
+            Card(title: l10n.tr("details.name_card"), symbol: "textformat") {
                 HStack {
-                    TextField("Name", text: $name).textFieldStyle(.roundedBorder)
-                    Button("Rename") { model.rename(prefix, to: name) }
+                    TextField(l10n.tr("details.name_card"), text: $name).textFieldStyle(.roundedBorder)
+                    Button(l10n.tr("app.rename")) { model.rename(prefix, to: name) }
                         .buttonStyle(.glass)
                         .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || name == prefix.name)
                 }
             }
 
-            Card(title: "What Windows reports", symbol: "doc.text.magnifyingglass",
-                 footnote: "Read from the prefix's registry, so it also shows changes made in Wine Configuration.") {
-                info("Windows version", snapshot.windowsVersion.flatMap { WindowsVersion(rawValue: $0)?.displayName } ?? snapshot.windowsVersion ?? "Wine default")
-                info("Build", snapshot.windowsBuild ?? "—")
-                info("DPI", snapshot.dpi.map(String.init) ?? "—")
-                info("Retina mode", snapshot.retinaMode.map { $0 ? "On" : "Off" } ?? "—")
-                info("Virtual desktop", snapshot.virtualDesktop ?? "Off")
-                info("DLL overrides", snapshot.dllOverrides.isEmpty ? "None"
-                     : snapshot.dllOverrides.sorted { $0.key < $1.key }.map { "\($0.key) = \($0.value.isEmpty ? "disabled" : $0.value)" }.joined(separator: "\n"))
+            Card(title: l10n.tr("details.reports_card"), symbol: "doc.text.magnifyingglass",
+                 footnote: l10n.tr("details.reports_footnote")) {
+                info(l10n.tr("details.win_version"), snapshot.windowsVersion.flatMap { WindowsVersion(rawValue: $0)?.displayName } ?? snapshot.windowsVersion ?? l10n.tr("details.wine_default"))
+                info(l10n.tr("details.build"), snapshot.windowsBuild ?? "—")
+                info(l10n.tr("details.dpi"), snapshot.dpi.map(String.init) ?? "—")
+                info(l10n.tr("details.retina_mode"), snapshot.retinaMode.map { $0 ? l10n.tr("app.on") : l10n.tr("app.off") } ?? "—")
+                info(l10n.tr("details.virtual_desktop"), snapshot.virtualDesktop ?? l10n.tr("app.off"))
+                info(l10n.tr("details.dll_overrides"), snapshot.dllOverrides.isEmpty ? l10n.tr("app.none")
+                     : snapshot.dllOverrides.sorted { $0.key < $1.key }.map { "\($0.key) = \($0.value.isEmpty ? l10n.tr("details.disabled") : $0.value)" }.joined(separator: "\n"))
             }
 
-            Card(title: "About this prefix", symbol: "info.circle") {
-                info("Created", prefix.metadata.createdAt.formatted(date: .abbreviated, time: .shortened))
-                info("Location", prefix.directory.path)
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([prefix.directory]) }
+            Card(title: l10n.tr("details.about_card"), symbol: "info.circle") {
+                info(l10n.tr("details.created"), prefix.metadata.createdAt.formatted(date: .abbreviated, time: .shortened))
+                info(l10n.tr("details.location"), prefix.directory.path)
+                Button(l10n.tr("app.show_in_finder")) { NSWorkspace.shared.activateFileViewerSelecting([prefix.directory]) }
                     .buttonStyle(.glass)
             }
 
-            Card(title: "Duplicate or delete", symbol: "square.on.square") {
-                Row(label: "Duplicate", detail: "Copies the whole prefix, installed programs included.") {
-                    Button("Duplicate") { Task { await model.duplicate(prefix) } }.buttonStyle(.glass)
+            Card(title: l10n.tr("details.duplicate_delete_card"), symbol: "square.on.square") {
+                Row(label: l10n.tr("details.duplicate_label"), detail: l10n.tr("details.duplicate_detail")) {
+                    Button(l10n.tr("app.duplicate")) { Task { await model.duplicate(prefix) } }.buttonStyle(.glass)
                 }
                 Divider()
-                Row(label: "Delete", detail: "Removes the prefix, everything installed in it, and its shortcut apps.") {
-                    Button("Delete…", role: .destructive) { confirmingDelete = true }.buttonStyle(.glass)
+                Row(label: l10n.tr("details.delete_label"), detail: l10n.tr("details.delete_detail")) {
+                    Button(l10n.tr("app.delete"), role: .destructive) { confirmingDelete = true }.buttonStyle(.glass)
                 }
             }
         }
         .onAppear { snapshot = PrefixRegistrySnapshot.read(prefix: prefix.directory) }
         .onChange(of: prefix.metadata.appliedSettings) { snapshot = PrefixRegistrySnapshot.read(prefix: prefix.directory) }
-        .confirmationDialog("Delete “\(prefix.name)”?", isPresented: $confirmingDelete) {
-            Button("Delete Prefix", role: .destructive) { Task { await model.delete(prefix) } }
+        .confirmationDialog(l10n.tr("details.delete_confirm_title", prefix.name), isPresented: $confirmingDelete) {
+            Button(l10n.tr("context.delete_action"), role: .destructive) { Task { await model.delete(prefix) } }
         } message: {
-            Text("Everything installed in this prefix, including saved games stored inside it, will be deleted. This can't be undone.")
+            Text(l10n.tr("details.delete_confirm_msg"))
         }
     }
 

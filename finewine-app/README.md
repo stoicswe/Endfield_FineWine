@@ -162,7 +162,8 @@ shortcut apps) under that folder instead of the real locations:
 FINEWINE_HOME=/tmp/finewine-dev finewine-app/build/FineWine.app/Contents/MacOS/FineWine
 ```
 
-The interface is in English only for now; the patcher's translations have not been carried over.
+- **Multilingual support.** Built-in localization with automatic system language detection and dynamic runtime switching in Settings or via the menu bar. Supported languages: English, Simplified Chinese (`zh-Hans`), Traditional Chinese (`zh-Hant`), Korean (`ko`), and Japanese (`ja`).
+- **Development.** Set `FINEWINE_HOME` to an absolute path to keep all of FineWine's data (prefixes, runtimes, logs, shortcut apps) under that folder instead of the real locations:
 
 ## Licence
 

@@ -24,27 +24,27 @@ public enum WineTool: String, CaseIterable, Identifiable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .winecfg: return "Wine Configuration"
-        case .regedit: return "Registry Editor"
-        case .control: return "Control Panel"
-        case .uninstaller: return "Add or Remove Programs"
-        case .taskmgr: return "Task Manager"
-        case .winefile: return "File Manager"
-        case .cmd: return "Command Prompt"
-        case .notepad: return "Notepad"
+        case .winecfg: return tr("tool.winecfg.name")
+        case .regedit: return tr("tool.regedit.name")
+        case .control: return tr("tool.control.name")
+        case .uninstaller: return tr("tool.uninstaller.name")
+        case .taskmgr: return tr("tool.taskmgr.name")
+        case .winefile: return tr("tool.winefile.name")
+        case .cmd: return tr("tool.cmd.name")
+        case .notepad: return tr("tool.notepad.name")
         }
     }
 
     public var summary: String {
         switch self {
-        case .winecfg: return "Libraries, graphics, audio, drives and per-program Windows versions."
-        case .regedit: return "Browse and edit the prefix's registry."
-        case .control: return "Windows control panel applets, such as game controllers."
-        case .uninstaller: return "Remove programs installed in this prefix."
-        case .taskmgr: return "See and end the Windows processes running in this prefix."
-        case .winefile: return "Browse the prefix's drives."
-        case .cmd: return "A Windows command line in this prefix."
-        case .notepad: return "A plain text editor, handy for checking the prefix works."
+        case .winecfg: return tr("tool.winecfg.summary")
+        case .regedit: return tr("tool.regedit.summary")
+        case .control: return tr("tool.control.summary")
+        case .uninstaller: return tr("tool.uninstaller.summary")
+        case .taskmgr: return tr("tool.taskmgr.summary")
+        case .winefile: return tr("tool.winefile.summary")
+        case .cmd: return tr("tool.cmd.summary")
+        case .notepad: return tr("tool.notepad.summary")
         }
     }
 

@@ -1,0 +1,413 @@
+/* FineWine Localization - Simplified Chinese (简体中文) */
+
+/* General / App */
+"app.name" = "FineWine";
+"app.running_count" = "%lld 个正在运行";
+"app.cancel" = "取消";
+"app.create" = "创建";
+"app.save" = "保存";
+"app.ok" = "好";
+"app.remove" = "移除";
+"app.rename" = "重命名";
+"app.duplicate" = "复制";
+"app.delete" = "删除…";
+"app.revert" = "还原";
+"app.apply" = "应用";
+"app.play" = "运行";
+"app.edit" = "编辑…";
+"app.show_in_finder" = "在访达中显示";
+"app.running" = "运行中";
+"app.none" = "无";
+"app.default" = "默认";
+"app.on" = "开启";
+"app.off" = "关闭";
+
+/* Menu Bar */
+"menu.setting_up_prefix" = "正在配置容器 “%@”…";
+"menu.empty_no_runtimes" = "请先添加 Wine 运行时，然后创建容器以安装 Windows 程序。";
+"menu.empty_has_runtimes" = "创建容器以安装 Windows 程序。";
+"menu.resize_help" = "拖动以调整列表高度";
+"menu.list_height" = "列表高度";
+"menu.manage_prefixes" = "管理容器";
+"menu.donate" = "🍷 捐赠";
+"menu.donate_help" = "FineWine 运行 Windows 程序所依赖的 Wine 依靠捐款维持。点击打开 winehq.org/donate。";
+"menu.settings" = "设置";
+"menu.quit_help" = "退出 FineWine。如果仍有程序在运行，会先提示确认并将其关闭。";
+"menu.shut_down" = "关闭";
+"menu.force_shut_down" = "强制关闭";
+"menu.shut_down_help" = "“关闭”会请求所有程序退出。“强制关闭”会直接结束无响应的程序。";
+"menu.configure_prefix" = "配置此容器";
+"menu.no_programs" = "暂无程序";
+"menu.language" = "语言";
+"menu.tools" = "工具";
+
+/* Main Window */
+"main.prefixes" = "容器";
+"main.new_prefix" = "新建容器";
+"main.settings_tooltip" = "运行时与设置";
+"main.program_count_single" = "1 个程序";
+"main.program_count_multiple" = "%lld 个程序";
+"main.add_runtime_title" = "添加 Wine 运行时";
+"main.add_runtime_desc" = "FineWine 使用 Wine 运行时启动 Windows 程序。添加 FineWine 运行时文件夹或包含 bin/wine 的 Wine 构建文件夹即可开始。";
+"main.add_runtime_btn" = "添加运行时…";
+"main.first_prefix_title" = "创建首个容器";
+"main.first_prefix_desc" = "容器是一个独立的 Windows 环境。每个游戏或程序都可以拥有自己的容器和专属配置。";
+"main.first_prefix_btn" = "新建容器…";
+
+/* New Prefix Sheet */
+"sheet.new_prefix_title" = "新建容器";
+"sheet.name_title" = "名称";
+"sheet.name_placeholder" = "例如游戏名称";
+"sheet.setup_title" = "配置";
+"sheet.profile_label" = "预设档案";
+"sheet.no_runtime_warning" = "未安装可用的 Wine 运行时。请先在“设置”中添加。";
+"sheet.runtime_label" = "运行时";
+"sheet.setting_up_windows" = "正在初始化 Windows 环境… 可能需要约一分钟。";
+
+/* Settings View */
+"settings.title" = "设置";
+"settings.language_card" = "语言 (Language)";
+"settings.language_label" = "界面语言";
+"settings.runtimes_card" = "Wine 运行时";
+"settings.runtimes_footnote" = "包含 runtime.json 的文件夹将复制到 FineWine 中。其他 Wine 文件夹将直接在原位置调用。";
+"settings.no_runtimes" = "暂无运行时。";
+"settings.external" = "外部";
+"settings.builtin" = "内置";
+"settings.remove_runtime_confirm_title" = "移除 “%@”？";
+"settings.remove_managed_msg" = "其文件将从 FineWine 中完全删除。";
+"settings.remove_external_msg" = "FineWine 将不再使用该文件夹，原文件夹不会被删除。";
+"settings.remove_users_prefix" = " 以下容器正在使用该运行时，需要重新指定运行时：%@。";
+"settings.discord_card" = "Discord 状态";
+"settings.discord_footnote" = "活动将归属至指定的 Discord 应用，你可以在 discord.com/developers 创建应用（New Application）并将其 Application ID 粘贴至此处。数据仅在当前 Mac 本地与 Discord 客户端通信。";
+"settings.discord_toggle_title" = "在 Discord 中显示正在玩的游戏";
+"settings.discord_toggle_desc" = "当从 FineWine 启动的程序运行时，其名称与运行时间将作为 Discord 活动状态展示。Wine 自带工具及安装包不会被显示。";
+"settings.discord_app_id" = "Application ID";
+"settings.discord_status_off" = "已关闭。";
+"settings.discord_status_needed" = "需要先填写 Application ID 才能显示状态。";
+"settings.discord_status_ready" = "就绪。当前无游戏运行。";
+"settings.discord_status_not_running" = "未检测到 Discord 在此 Mac 上运行。";
+"settings.discord_status_refused" = "Discord 拒绝了该 Application ID。";
+"settings.discord_status_showing" = "正在展示 “%@”。";
+"settings.support_card" = "支持 Wine";
+"settings.support_footnote" = "FineWine 并非 Wine 项目的一部分，也不会获取任何捐赠分成。";
+"settings.donate_row_label" = "向 WineHQ 捐赠";
+"settings.donate_row_desc" = "FineWine 借助 Wine 运行 Windows 程序。Wine 是由社区志愿者开发的自由开源软件，全凭捐助维持。若 FineWine 对你有所帮助，欢迎支持 Wine 开发团队。";
+"settings.donate_tooltip" = "在浏览器中打开 winehq.org/donate";
+"settings.status_card" = "状态指示";
+"settings.status_toggle_title" = "程序启动时显示状态窗口";
+"settings.status_toggle_desc" = "在容器初始化、配置更改或程序加载期间，屏幕中央会显示一个小窗口提示当前进度，直到程序主窗口出现。点击窗口可提前隐藏。";
+"settings.win_files_card" = "Windows 文件关联";
+"settings.win_files_footnote" = "容器内已有的程序总是在其所属容器内运行。无论 FineWine 是否为默认应用，“打开方式”菜单中都会出现 FineWine。";
+"settings.when_opened_label" = "打开程序时的操作";
+"settings.when_opened_desc" = "当打开容器外部的 .exe 或 .msi 文件（如刚下载的安装包）时，FineWine 可自动以软件名创建新容器，或提示你选择现有容器。";
+"settings.open_with_finewine_title" = "使用 FineWine 默认打开 Windows 程序";
+"settings.open_with_finewine_desc" = "将 FineWine 设为 .exe 和 .msi 文件的默认打开方式，在访达中双击即可直接运行。";
+"settings.currently_opens_with" = "当前打开方式为 %@。";
+"settings.general_card" = "通用";
+"settings.login_item" = "登录时自动打开 FineWine";
+"settings.shortcuts_row" = "快捷应用目录";
+"settings.prefixes_logs_row" = "容器与日志目录";
+
+/* Prefix Context Menu */
+"context.run_installer" = "运行安装程序…";
+"context.find_programs" = "扫描已安装程序";
+"context.configure" = "配置…";
+"context.wine_tools" = "Wine 工具";
+"context.show_drive_c" = "在访达中显示 C 盘";
+"context.show_logs" = "在访达中显示日志";
+"context.shut_down" = "关闭";
+"context.force_shut_down" = "强制关闭";
+"context.rename" = "重命名…";
+"context.duplicate" = "复制";
+"context.delete" = "删除…";
+"context.delete_confirm_title" = "删除 “%@”？";
+"context.delete_confirm_msg" = "该容器、其中安装的所有程序及相关快捷应用都将被彻底删除，此操作无法撤销。";
+"context.delete_action" = "删除容器";
+
+/* Prefix Detail View */
+"detail.tab_programs" = "程序";
+"detail.tab_config" = "配置";
+"detail.tab_tools" = "Wine 工具";
+"detail.tab_details" = "详细信息";
+"detail.no_runtime" = "未配置运行时";
+"detail.settings_not_applied" = "设置尚未应用";
+"detail.stop_prefix_help" = "停止该容器中运行的所有程序";
+"detail.run_installer" = "运行安装程序…";
+"detail.add_program" = "添加程序…";
+"detail.find_installed" = "扫描程序";
+"detail.find_installed_help" = "扫描安装程序留在该容器内的快捷方式和程序";
+"detail.no_programs_title" = "暂无程序";
+"detail.no_programs_desc" = "运行安装程序即可在此容器中安装 Windows 程序。安装完成后，FineWine 会在此列出已安装的应用。";
+"detail.in_applications" = "已添加至“应用程序”";
+"detail.show_shortcut" = "在访达中显示快捷方式";
+"detail.remove_shortcut" = "移除快捷方式应用";
+"detail.make_shortcut" = "生成快捷应用 (.app)";
+"detail.more_actions" = "更多操作";
+"detail.remove_from_finewine" = "从 FineWine 中移除…";
+"detail.remove_program_title" = "从 FineWine 中移除 “%@”？";
+"detail.remove_program_msg" = "将移除其列表项与快捷应用。容器内的程序文件将保留；若要卸载，请使用“Wine 工具”下的“添加或删除程序”。";
+
+/* Program Editor */
+"editor.title" = "编辑程序";
+"editor.program_card" = "程序信息";
+"editor.name_label" = "名称";
+"editor.executable_label" = "可执行文件";
+"editor.args_label" = "启动参数";
+"editor.args_prompt" = "可选";
+"editor.start_in_label" = "工作目录";
+"editor.start_in_prompt" = "可执行文件所在目录";
+"editor.environment_card" = "环境变量";
+"editor.environment_footnote" = "仅对此程序生效的环境变量（叠加在容器环境变量之上）。";
+"editor.remove_variable" = "移除此变量";
+"editor.add_variable" = "添加变量";
+
+/* Tools Tab */
+"tools.maintenance_card" = "维护与操作";
+"tools.restart_win_label" = "重启 Windows";
+"tools.restart_win_detail" = "模拟安装程序要求重启系统的操作。";
+"tools.restart_win_btn" = "重启";
+"tools.update_prefix_label" = "更新容器";
+"tools.update_prefix_detail" = "在运行时变更后将 Windows 系统文件同步至最新状态。";
+"tools.update_prefix_btn" = "更新";
+"tools.shut_down_label" = "正常关机";
+"tools.shut_down_detail" = "请求容器内的所有程序有序关闭，程序可提示保存未保存的内容。";
+"tools.force_shut_down_label" = "强制关机";
+"tools.force_shut_down_detail" = "立即结束该容器内的全部进程，未保存的工作将会丢失。";
+"tools.files_card" = "文件目录";
+"tools.c_drive_label" = "C 盘";
+"tools.logs_label" = "运行日志";
+"tools.logs_detail" = "Wine 历次启动的输出日志。";
+
+/* Details Tab */
+"details.name_card" = "容器名称";
+"details.reports_card" = "Windows 系统报告信息";
+"details.reports_footnote" = "读取自该容器的注册表，同步体现 Wine 内部设置的变动。";
+"details.win_version" = "Windows 版本";
+"details.wine_default" = "Wine 默认";
+"details.build" = "内部版本号 (Build)";
+"details.dpi" = "DPI";
+"details.retina_mode" = "Retina 模式";
+"details.virtual_desktop" = "虚拟桌面";
+"details.dll_overrides" = "DLL 覆盖";
+"details.disabled" = "已禁用";
+"details.about_card" = "关于此容器";
+"details.created" = "创建时间";
+"details.location" = "物理路径";
+"details.duplicate_delete_card" = "复制或删除";
+"details.duplicate_label" = "完整复制";
+"details.duplicate_detail" = "创建该容器的完整副本（包含已安装程序）。";
+"details.delete_label" = "删除容器";
+"details.delete_detail" = "删除该容器及其安装的所有内容和快捷方式。";
+"details.delete_confirm_title" = "删除 “%@”？";
+"details.delete_confirm_msg" = "此容器内的所有文件（包括存放在其中的存档数据）将被永久删除，不可恢复。";
+
+/* Configuration Tab */
+"config.windows_card" = "Windows 系统";
+"config.win_version_label" = "Windows 版本";
+"config.build_number_label" = "内部版本号";
+"config.build_number_detail" = "留空则使用 Wine 默认值。部分游戏需要特定的版本号（如 26100）。";
+"config.runtime_label" = "Wine 运行时";
+"config.graphics_card" = "图形与显示";
+"config.direct3d_label" = "Direct3D 后端";
+"config.retina_title" = "高分辨率模式 (Retina)";
+"config.retina_desc" = "程序按显示屏的实际物理像素渲染，呈现 Mac 原生级清晰度。若全分辨率下运行吃力可将其关闭。";
+"config.metalfx_upscale_title" = "使用 MetalFX 超分提升低分辨率画质";
+"config.metalfx_upscale_desc" = "当 Direct3D 10 或 11 游戏的渲染分辨率低于窗口物理像素时，通过 MetalFX 超分辨率放大而非简单拉伸。游戏自带超分时不生效。";
+"config.auto_dpi_title" = "自动调整缩放";
+"config.auto_dpi_desc_retina" = "根据当前屏幕自动匹配 Windows DPI（此 Mac 当前为 %@），保证文字与控件大小适中。";
+"config.auto_dpi_desc_normal" = "保持 Windows DPI 为 96，在关闭高分辨率模式时与 macOS 保持一致。";
+"config.screen_dpi_label" = "屏幕 DPI";
+"config.screen_dpi_detail" = "96 相当于 100% 缩放；192 适合 Retina 屏幕的高分辨率模式。";
+"config.virtual_desktop_title" = "虚拟桌面";
+"config.virtual_desktop_desc" = "将容器内的所有窗口限制在一个独立桌面窗口中，有助解决全屏异常问题。";
+"config.width_label" = "宽度";
+"config.height_label" = "高度";
+"config.dlss_metalfx_title" = "通过 MetalFX 桥接 NVIDIA DLSS";
+"config.dlss_metalfx_dxmt_desc" = "提供 NVIDIA DLSS 选项的游戏将调用 Apple MetalFX 进行超分辨率与插帧。FSR 不受影响（按游戏自带逻辑运行）。";
+"config.dlss_metalfx_general_desc" = "支持 DLSS 的 Direct3D 12 和 Vulkan 游戏将桥接至 MetalFX。Direct3D 11 游戏需以 DXMT 作为 Direct3D 层。FSR 不受影响。";
+"config.report_nvidia_title" = "伪装报告为 NVIDIA GPU";
+"config.report_nvidia_desc" = "向 Windows 程序汇报 GPU 为 %@（名称与硬件 ID）。多数游戏仅在检测到 NVIDIA 显卡时才开放 DLSS 选项。";
+"config.fullscreen_label" = "全屏模式";
+"config.fullscreen_detail" = "全屏呈现方式。“独立 Space 空间”模式可在顶部边缘调出菜单栏、轻扫切回桌面，且通知横幅可正常显示。";
+"config.rounded_windows_title" = "窗口圆角";
+"config.rounded_windows_desc" = "对自行绘制标题栏的游戏启动器和窗口应用赋予 macOS 圆角风格。全屏窗口与异形窗口保持原样。";
+"config.game_mode_title" = "游戏模式 (Game Mode)";
+"config.game_mode_desc" = "使用 Direct3D、Vulkan 或 OpenGL 的程序将作为游戏进程启动，全屏时触发 macOS 游戏模式。由启动器拉起的游戏从第二次运行起自动识别。";
+"config.hoyoverse_steam_title" = "以 Steam 伪装方式启动米哈游 (HoYoverse) 游戏";
+"config.hoyoverse_steam_desc" = "《原神》、《绝区零》、《崩坏3》及 HoYoPlay 启动器将通过 Steam 客户端替身启动（与 Linux 运行方式相同）。游戏将判定运行于 Steam 环境；请自行评估账号风险。";
+"config.metal_hud_title" = "启动时默认开启 Metal 性能监测面板 (HUD)";
+"config.metal_hud_desc" = "在画面上方展示实时帧率与 GPU 负载。游戏运行中亦可随时通过快捷键 Option-F12 或菜单栏切换显示。";
+"config.perf_card" = "性能与兼容性";
+"config.sync_label" = "同步机制";
+"config.sync_detail" = "Windows 事件、互斥锁与信号量的底层调度方式。";
+"config.hide_hypervisor_title" = "隐藏虚拟化/虚拟机标记 (Hypervisor)";
+"config.hide_hypervisor_desc" = "x64 模拟器默认会通过 CPU 标记表明身份，导致部分反作弊及反虚拟机游戏误判而拒绝启动。默认开启以伪装隐藏。";
+"config.appearance_card" = "外观样式";
+"config.appearance_footnote" = "适用于使用标准 Windows 控件的界面（包括 Wine 工具）。游戏自绘界面不受影响。";
+"config.mac_appearance_title" = "匹配 macOS 风格";
+"config.mac_appearance_desc" = "Windows 原生控件自动应用 macOS 的明暗外观、主题强调色与系统字体。";
+"config.keyboard_card" = "键盘映射";
+"config.left_opt_alt" = "左 Option 键映射为 Alt";
+"config.right_opt_alt" = "右 Option 键映射为 Alt";
+"config.dll_overrides_card" = "DLL 覆盖规则";
+"config.dll_overrides_footnote" = "决定加载程序自带的原生 DLL (native) 还是 Wine 内置的 DLL (builtin)。";
+"config.order_label" = "加载顺序";
+"config.remove_override" = "移除此覆盖规则";
+"config.add_override" = "添加规则";
+"config.env_card" = "容器环境变量";
+"config.env_footnote" = "对该容器内的所有程序统一生效。";
+"config.debug_card" = "调试输出";
+"config.debug_footnote" = "Wine 调试输出通道 (WINEDEBUG)。“-all”完全静默且速度最快；“err+all”记录错误信息。";
+"config.msync_note" = "MSync 需要支持此特性的运行时编译版（FineWine 官方运行时已内置）。修改此项前请先关闭运行中的程序。";
+"config.graphics_note" = "“%@” 不包含 %@，在切换到包含它的运行时之前，程序将自动回退使用 WineD3D。";
+"config.changes_running" = "改动将在随后启动的程序中生效。当前运行中的程序保持原有设置。";
+"config.changes_pending" = "你有未应用的设置更改。";
+"config.settings_applied" = "设置已应用。";
+
+/* Status Splash */
+"splash.dismiss_tooltip" = "点击以隐藏。后台任务将继续运行。";
+"splash.setting_up" = "正在设置 “%@”";
+"splash.creating_prefix" = "正在创建容器…";
+"splash.applying_settings" = "正在应用设置…";
+"splash.restarting_windows" = "正在重启 Windows…";
+"splash.updating" = "正在更新…";
+"splash.starting_program" = "正在启动 %@";
+"splash.installing" = "正在安装…";
+"splash.installing_program" = "正在安装 %@";
+"splash.reading_installer" = "正在解析安装程序…";
+"splash.installed_no_programs" = "安装完成，但未发现可列出的主程序。你可在“管理容器”中手动添加。";
+"splash.installed_success" = "安装完成。你可以从 FineWine 菜单或“应用程序”文件夹中启动它。";
+"splash.installed_title" = "%@ 已安装完成";
+"splash.quitting_title" = "正在退出 FineWine";
+"splash.closing_single" = "正在关闭 1 个程序…";
+"splash.closing_multiple" = "正在关闭 %lld 个程序…";
+"splash.duplicating" = "正在复制…";
+"splash.deleting" = "正在删除…";
+"splash.stopping" = "正在停止…";
+"splash.shutting_down" = "正在关闭…";
+"splash.forcing_shut_down" = "正在强制关闭…";
+"splash.matching_appearance" = "正在匹配 Mac 外观…";
+
+/* Dialogs & Alerts */
+"dialog.quit_title_single" = "退出 FineWine 并关闭 1 个正在运行的程序？";
+"dialog.quit_title_multiple" = "退出 FineWine 并关闭 %lld 个正在运行的程序？";
+"dialog.quit_info" = "以下程序仍在运行：\n\n%@\n\n系统将请求它们保存并关闭。若 5 秒后仍未退出将被强制结束，未保存的数据可能丢失。";
+"dialog.close_and_quit" = "关闭并退出";
+"dialog.err_prefix_create" = "无法创建容器";
+"dialog.err_settings_save" = "无法保存设置";
+"dialog.err_settings_apply" = "无法应用设置";
+"dialog.err_prefix_rename" = "无法重命名容器";
+"dialog.err_prefix_duplicate" = "无法复制容器";
+"dialog.err_prefix_delete" = "无法删除容器";
+"dialog.err_programs_stop" = "无法停止容器内的程序";
+"dialog.err_prefix_shutdown" = "无法关闭容器";
+"dialog.err_prefix_force_shutdown" = "无法强制关闭容器";
+"dialog.wine_problem" = "Wine 报告了异常";
+"dialog.err_prog_add" = "无法添加程序";
+"dialog.err_prog_save" = "无法保存程序";
+"dialog.err_prog_remove" = "无法移除程序";
+"dialog.no_new_programs_title" = "未找到新程序";
+"dialog.no_new_programs_msg" = "FineWine 会检查“开始”菜单和桌面上留下的快捷方式。若安装程序未生成快捷方式，可通过“添加程序”手动指定。";
+"dialog.err_prefix_search" = "搜索容器程序失败";
+"dialog.err_shortcut_make" = "无法生成快捷应用";
+"dialog.err_shortcut_remove" = "无法移除快捷方式";
+"dialog.err_prog_start" = "无法启动 “%@”";
+"dialog.err_appearance_update" = "更新外观失败";
+"dialog.32bit_title" = "“%@” 是 32 位程序";
+"dialog.32bit_msg" = "FineWine 仅支持运行 64 位 Windows 程序：Apple 芯片 Mac 不向 32 位程序分配所需低位内存。使用 NSIS 封装的 32 位安装程序可由 FineWine 原生解析执行；该程序属于其他类型。请寻找 64 位版本或绿色便携版。";
+"dialog.32bit_install_failed_title" = "“%@” 安装失败";
+"dialog.32bit_install_failed_msg" = "该安装程序为 32 位程序，FineWine 尝试自动执行其内嵌安装脚本时出错：\n\n%@";
+"dialog.dead_shortcut_title" = "该快捷方式已失效";
+"dialog.dead_shortcut_msg" = "其关联的程序已从 FineWine 中移除。你可以直接删除此快捷方式。";
+"dialog.err_runtime_add" = "无法添加运行时";
+"dialog.err_runtime_remove" = "无法移除运行时";
+"dialog.cant_open_title" = "FineWine 无法打开 “%@”";
+"dialog.cant_open_msg" = "FineWine 支持打开 Windows 可执行程序与安装包（.exe 与 .msi 文件）。";
+"dialog.no_runtime_title" = "缺少 Wine 运行时";
+"dialog.no_runtime_msg" = "“%@” 需要在容器中运行，但当前没有可用的 Wine 运行时。请先在“设置”中添加运行时后再试。";
+"dialog.choose_another_app_title" = "请在访达中更改默认打开方式";
+"dialog.choose_another_app_msg" = "此前没有其他应用作为该类型文件的默认程序。如需修改，请在访达中选中 .exe 文件，按 Command-I 显示简介，在“打开方式”中选择其他应用并点击“全部更改”。";
+"dialog.err_default_app" = "无法更改默认应用";
+"dialog.err_login_setting" = "无法更改开机自启动设置";
+"dialog.choose_executable" = "选择要在 “%@” 中运行的 Windows 安装程序或文件";
+"dialog.choose_program_in_prefix" = "选择此容器内的程序";
+"dialog.choose_runtime_folder" = "选择 Wine 运行时文件夹";
+"dialog.run_with_finewine_title" = "使用 FineWine 运行 “%@”？";
+"dialog.run_with_finewine_msg" = "请选择运行的目标容器。请仅运行可信软件：程序将拥有与 FineWine 相同的文件访问权限。";
+"dialog.run_btn" = "运行";
+"dialog.new_prefix_popup" = "新建容器 “%@”";
+
+/* Wine Tools */
+"tool.winecfg.name" = "Wine 配置工具 (winecfg)";
+"tool.winecfg.summary" = "配置 DLL 库、图形渲染、音频驱动、驱动器盘符及针对特定程序的 Windows 版本。";
+"tool.regedit.name" = "注册表编辑器 (regedit)";
+"tool.regedit.summary" = "浏览与修改该容器内的 Windows 注册表键值。";
+"tool.control.name" = "控制面板 (control)";
+"tool.control.summary" = "打开 Windows 控制面板小程序（如游戏手柄校准）。";
+"tool.uninstaller.name" = "添加或删除程序";
+"tool.uninstaller.summary" = "卸载并清理在此容器中安装的 Windows 软件。";
+"tool.taskmgr.name" = "任务管理器 (taskmgr)";
+"tool.taskmgr.summary" = "查看并管理该容器内运行的 Windows 进程。";
+"tool.winefile.name" = "文件管理器 (winefile)";
+"tool.winefile.summary" = "浏览与管理容器内的虚拟驱动器目录。";
+"tool.cmd.name" = "命令提示符 (cmd)";
+"tool.cmd.summary" = "在此容器环境中打开 Windows 命令行终端。";
+"tool.notepad.name" = "记事本 (notepad)";
+"tool.notepad.summary" = "简单的纯文本编辑器，适合快速验证容器运行状态。";
+
+/* Opened File Policy */
+"opened_file_policy.auto_create" = "自动创建新容器";
+"opened_file_policy.ask" = "每次询问我";
+
+/* Graphics Backends */
+"backend.dxmt" = "DXMT (基于 Metal 的 Direct3D 10/11)";
+"backend.dxvk" = "DXVK (基于 Vulkan / MoltenVK 的 Direct3D)";
+"backend.wined3d" = "WineD3D (内置实现)";
+"backend.scope_note" = "选择 Direct3D 9、10 和 11 的渲染后端。Direct3D 12 与 Vulkan 始终通过 MoltenVK 原生可用。";
+
+/* Full Screen Modes */
+"fullscreen.space" = "Mac 原生全屏 (独立 Space 空间)";
+"fullscreen.borderless" = "桌面无边框窗口模式";
+"fullscreen.exclusive" = "独占全屏 (覆盖菜单栏)";
+
+/* Sync Modes */
+"sync.standard" = "Wine 服务器同步 (兼容性最好，开销较大)";
+"sync.msync" = "MSync 同步 (基于 Mach 信号量，性能极高)";
+
+/* DLL Load Order */
+"dll_order.native_builtin" = "原生 (Native) 优先，后选内置 (Builtin)";
+"dll_order.builtin_native" = "内置 (Builtin) 优先，后选原生 (Native)";
+"dll_order.native" = "仅原生 (Native)";
+"dll_order.builtin" = "仅内置 (Builtin)";
+"dll_order.disabled" = "禁用";
+
+/* Startup Status Messages */
+"startup.updating_prefix" = "正在为此运行时版本同步更新容器…";
+"startup.still_updating" = "仍在此同步更新容器中。仅在更换运行时版本后的首次启动发生。";
+"startup.starting_wine" = "正在初始化 Wine 环境…";
+"startup.loading_program" = "正在加载程序…";
+"startup.still_loading" = "仍在加载中。大型程序需要稍作等待才能展现窗口。";
+"startup.still_working" = "正在启动。你可以继续使用 Mac，程序窗口稍后会自动呈现。";
+"startup.seconds" = "%d 秒";
+"startup.min_seconds" = "%d 分 %d 秒";
+
+/* Validation Problems */
+"validation.win_build_number" = "Windows 内部版本号必须为数字（如 26100）。";
+"validation.dpi_range" = "DPI 必须介于 72 与 480 之间。";
+"validation.desktop_min" = "虚拟桌面分辨率至少为 640 × 480。";
+"validation.env_invalid" = "“%@” 不是有效的环境变量名称。";
+"validation.dll_empty" = "存在未填写 DLL 名称的覆盖项。";
+"validation.dll_duplicate" = "DLL 覆盖列表中存在重复的名称。";
+
+/* Runtime Problems */
+"runtime_problem.wine_missing" = "bin/wine 缺失或不可执行。";
+"runtime_problem.wineserver_missing" = "bin/wineserver 缺失或不可执行。";
+"runtime_problem.lib_missing" = "lib/wine 目录缺失。";
+
+/* Prefix Setup Progress */
+"setup.creating_windows_env" = "正在创建 Windows 文件夹和注册表，大约需要一分钟。";
+"setup.applying_settings" = "正在应用容器设置…";
+"nsis.reading" = "正在读取安装包…";
+"nsis.unpacking" = "正在解压安装包… %d%%";
+"nsis.installing_file" = "正在安装 %@";
+"nsis.writing_registry" = "正在写入注册表项…";

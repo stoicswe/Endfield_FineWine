@@ -239,7 +239,7 @@ struct StatusSplashView: View {
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(.white.opacity(0.12)))
         .contentShape(Rectangle())
         .onTapGesture { splash.dismissAll() }
-        .help("Click to hide. What is being done carries on.")
+        .help(tr("splash.dismiss_tooltip"))
         .accessibilityElement(children: .combine)
     }
 }

@@ -23,14 +23,14 @@ public enum StartupStatus {
     public static func launchMessage(elapsed: TimeInterval, updatingPrefix: Bool) -> String {
         if updatingPrefix {
             return elapsed < 45
-                ? "Updating the prefix for this version of the runtime…"
-                : "Still updating the prefix. This happens once after the runtime changes."
+                ? tr("startup.updating_prefix")
+                : tr("startup.still_updating")
         }
         switch elapsed {
-        case ..<4: return "Starting Wine…"
-        case ..<15: return "Loading the program…"
-        case ..<40: return "Still loading. Large programs take a while to show their window."
-        default: return "Still working. You can keep using your Mac; the window will appear by itself."
+        case ..<4: return tr("startup.starting_wine")
+        case ..<15: return tr("startup.loading_program")
+        case ..<40: return tr("startup.still_loading")
+        default: return tr("startup.still_working")
         }
     }
 
