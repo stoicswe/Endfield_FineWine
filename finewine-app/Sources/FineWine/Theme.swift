@@ -46,15 +46,71 @@ struct Backdrop: View {
     }
 }
 
+// MARK: Liquid Glass, where macOS has it
+//
+// FineWine runs on macOS 15 and later. Liquid Glass (glass effects, glass buttons, glass
+// containers) is macOS 26's; on macOS 15 the same places get the system's materials and
+// standard bordered buttons. Every use of glass goes through these, so nothing calls a macOS 26
+// interface without checking first.
+
 extension View {
     /// A glass card around the view.
     func glassCard(padding: CGFloat = 16, tint: Color? = nil, interactive: Bool = false) -> some View {
-        var glass = Glass.regular
-        if let tint { glass = glass.tint(tint.opacity(0.22)) }
-        if interactive { glass = glass.interactive() }
-        return self
+        self
             .padding(padding)
-            .glassEffect(glass, in: .rect(cornerRadius: Look.cardRadius))
+            .fwGlass(tint: tint.map { $0.opacity(0.22) }, interactive: interactive,
+                     in: RoundedRectangle(cornerRadius: Look.cardRadius, style: .continuous))
+    }
+
+    /// Liquid Glass in `shape` on macOS 26 and later; the regular material on macOS 15.
+    @ViewBuilder
+    func fwGlass<S: Shape>(tint: Color? = nil, interactive: Bool = false, in shape: S) -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(Self.fwGlassKind(tint: tint, interactive: interactive), in: shape)
+        } else {
+            self.background {
+                ZStack {
+                    shape.fill(.regularMaterial)
+                    if let tint { shape.fill(tint) }
+                    shape.stroke(.white.opacity(0.12), lineWidth: 1)
+                }
+            }
+        }
+    }
+
+    @available(macOS 26.0, *)
+    private static func fwGlassKind(tint: Color?, interactive: Bool) -> Glass {
+        var glass = Glass.regular
+        if let tint { glass = glass.tint(tint) }
+        if interactive { glass = glass.interactive() }
+        return glass
+    }
+
+    /// A glass button on macOS 26 and later; a bordered one on macOS 15.
+    @ViewBuilder
+    func fwButton() -> some View {
+        if #available(macOS 26.0, *) { self.fwButton() } else { self.buttonStyle(.bordered) }
+    }
+
+    /// A prominent glass button on macOS 26 and later; a prominent bordered one on macOS 15.
+    @ViewBuilder
+    func fwProminentButton() -> some View {
+        if #available(macOS 26.0, *) { self.fwProminentButton() } else { self.buttonStyle(.borderedProminent) }
+    }
+}
+
+/// Groups glass shapes so they blend into each other on macOS 26 and later; on macOS 15 the
+/// content as it is.
+struct FWGlassContainer<Content: View>: View {
+    var spacing: CGFloat
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) { content() }
+        } else {
+            content()
+        }
     }
 }
 
@@ -117,7 +173,7 @@ struct Pill: View {
         .foregroundStyle(tint)
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .glassEffect(.regular.tint(tint.opacity(0.18)), in: .capsule)
+        .fwGlass(tint: tint.opacity(0.18), in: Capsule())
     }
 }
 
@@ -136,7 +192,7 @@ struct ProgramIcon: View {
                 .font(.system(size: size * 0.5, weight: .medium))
                 .foregroundStyle(Look.accent)
                 .frame(width: size, height: size)
-                .glassEffect(.regular.tint(Look.wine.opacity(0.2)), in: .rect(cornerRadius: size * 0.28))
+                .fwGlass(tint: Look.wine.opacity(0.2), in: RoundedRectangle(cornerRadius: size * 0.28, style: .continuous))
         }
     }
 }
@@ -154,7 +210,7 @@ struct EmptyState<Actions: View>: View {
                 .font(.system(size: 34, weight: .medium))
                 .foregroundStyle(Look.accent)
                 .frame(width: 76, height: 76)
-                .glassEffect(.regular.tint(Look.wine.opacity(0.2)), in: .circle)
+                .fwGlass(tint: Look.wine.opacity(0.2), in: Circle())
             Text(title).font(.title2.weight(.semibold))
             Text(message)
                 .foregroundStyle(.secondary)

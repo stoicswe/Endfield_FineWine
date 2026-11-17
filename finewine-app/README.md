@@ -1,6 +1,6 @@
 # FineWine
 
-FineWine is a menu bar app for macOS 26 and later that runs Windows programs with Wine. It
+FineWine is a menu bar app for macOS 15 and later that runs Windows programs with Wine. It
 manages Wine prefixes, launches the programs installed in them, and makes a small `.app` for each
 program so it can be started from Finder, Launchpad or the Dock.
 
@@ -65,8 +65,9 @@ and will later become one function of this app.
 ```
 
 This runs the unit tests, builds a release binary, assembles `finewine-app/build/FineWine.app`
-and signs it ad hoc. It needs the macOS 26 SDK or later (Xcode 26+), because the interface uses
-Liquid Glass. Environment variables: `VERSION`, `CODESIGN_ID`, `ICON_VARIANT`, `SKIP_TESTS=1`.
+and signs it ad hoc. It needs the macOS 26 SDK or later (Xcode 26+) to build, because the interface
+uses Liquid Glass; the app runs on macOS 15 and later, with standard controls in place of the
+glass below macOS 26 (`Theme.swift`). Environment variables: `VERSION`, `CODESIGN_ID`, `ICON_VARIANT`, `SKIP_TESTS=1`.
 
 **The Wine runtime is built into the app.** If `build/finewine-runtime` exists, it is copied to
 `FineWine.app/Contents/Resources/Runtime` (about 860 MB). The app lists it first as "Built in",

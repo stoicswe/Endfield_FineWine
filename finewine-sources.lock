@@ -39,6 +39,16 @@ DXMT_LLVM_COMMIT=8dfdcc7b7bf66834a761bd8de445840ef68e4d1a
 MVK_TAG=v1.4.2
 MVK_COMMIT=db66022459ffb663aa2b50f6b018bc2e124f5edf
 
+# The libraries the runtime bundles (GnuTLS with Nettle and GMP, and FreeType), built for the
+# runtime's oldest macOS by scripts/build-finewine-deps.sh from CrossOver's source archive,
+# which pins their versions in turn (GnuTLS 3.8.3; Nettle 3.10 comes from GNU, below).
+CROSSOVER_SOURCES_VERSION=26.3.0
+CROSSOVER_SOURCES_SHA256=ac99c8ca4b3848f3e81784135f023df266b61c2345726ea55a50b3e030dd6872
+# Nettle's release archive from GNU: CrossOver's archive has Nettle's sources but not its top
+# Makefile.in. Same version; every source file the two share is identical (checked 2026-11-17).
+NETTLE_VERSION=3.10
+NETTLE_SHA256=b4c518adb174e484cb4acea54118f02380c7133771e7e9beb98a0787194ee47c
+
 # Build tools from Homebrew. Homebrew offers only its newest version of each, so these cannot
 # be pinned the way the sources are; the build checks the major version instead and stops on
 # a different one. llvm and lld compile Wine's Windows side, so a new major version of them

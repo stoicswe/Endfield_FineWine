@@ -26,7 +26,7 @@ struct MainWindow: View {
                         Text(l10n.tr("menu.setting_up_prefix", name))
                     }
                     .padding(.horizontal, 16).padding(.vertical, 10)
-                    .glassEffect()
+                    .fwGlass(in: Capsule())
                     .padding(.bottom, 18)
                 }
             }
@@ -80,14 +80,14 @@ struct MainWindow: View {
                 } label: {
                     Label(l10n.tr("main.new_prefix"), systemImage: "plus")
                 }
-                .buttonStyle(.glass)
+                .fwButton()
                 Spacer()
                 Button {
                     openSettings()
                 } label: {
                     Image(systemName: "gearshape")
                 }
-                .buttonStyle(.glass)
+                .fwButton()
                 .help(l10n.tr("main.settings_tooltip"))
             }
             .padding(12)
@@ -110,14 +110,14 @@ struct MainWindow: View {
                 Button(l10n.tr("main.add_runtime_btn")) {
                     if let folder = Panels.chooseFolder(message: l10n.tr("dialog.choose_runtime_folder")) { model.addRuntime(from: folder) }
                 }
-                .buttonStyle(.glassProminent).tint(Look.wine)
+                .fwProminentButton().tint(Look.wine)
                 .controlSize(.large)
             }
         } else {
             EmptyState(symbol: "shippingbox", title: l10n.tr("main.first_prefix_title"),
                        message: l10n.tr("main.first_prefix_desc")) {
                 Button(l10n.tr("main.first_prefix_btn")) { showingNewPrefix = true }
-                    .buttonStyle(.glassProminent).tint(Look.wine)
+                    .fwProminentButton().tint(Look.wine)
                     .controlSize(.large)
             }
         }
@@ -180,7 +180,7 @@ struct NewPrefixSheet: View {
                 }
                 Spacer()
                 Button(l10n.tr("app.cancel")) { dismiss() }
-                    .buttonStyle(.glass)
+                    .fwButton()
                     .keyboardShortcut(.cancelAction)
                     .disabled(model.isCreatingPrefix)
                 Button(l10n.tr("app.create")) {
@@ -189,7 +189,7 @@ struct NewPrefixSheet: View {
                         if await model.createPrefix(name: name, runtime: runtime, profile: profile) { dismiss() }
                     }
                 }
-                .buttonStyle(.glassProminent).tint(Look.wine)
+                .fwProminentButton().tint(Look.wine)
                 .keyboardShortcut(.defaultAction)
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || runtime == nil || model.isCreatingPrefix)
             }
@@ -243,7 +243,7 @@ struct SettingsView: View {
                     Button(l10n.tr("main.add_runtime_btn")) {
                         if let folder = Panels.chooseFolder(message: l10n.tr("dialog.choose_runtime_folder")) { model.addRuntime(from: folder) }
                     }
-                    .buttonStyle(.glass)
+                    .fwButton()
                 }
 
                 Card(title: l10n.tr("settings.discord_card"), symbol: "bubble.left.and.bubble.right",
@@ -266,7 +266,7 @@ struct SettingsView: View {
                      footnote: l10n.tr("settings.support_footnote")) {
                     Row(label: l10n.tr("settings.donate_row_label"), detail: l10n.tr("settings.donate_row_desc")) {
                         Button(l10n.tr("menu.donate")) { NSWorkspace.shared.open(Links.wineDonate) }
-                            .buttonStyle(.glassProminent).tint(Look.wine)
+                            .fwProminentButton().tint(Look.wine)
                             .help(l10n.tr("settings.donate_tooltip"))
                     }
                 }
@@ -303,10 +303,10 @@ struct SettingsView: View {
                                                                    set: { model.setLaunchesAtLogin($0) }))
                     Divider()
                     Row(label: l10n.tr("settings.shortcuts_row"), detail: model.service.paths.shortcuts.path) {
-                        Button(l10n.tr("app.show_in_finder")) { reveal(model.service.paths.shortcuts) }.buttonStyle(.glass)
+                        Button(l10n.tr("app.show_in_finder")) { reveal(model.service.paths.shortcuts) }.fwButton()
                     }
                     Row(label: l10n.tr("settings.prefixes_logs_row"), detail: model.service.paths.root.path) {
-                        Button(l10n.tr("app.show_in_finder")) { reveal(model.service.paths.root) }.buttonStyle(.glass)
+                        Button(l10n.tr("app.show_in_finder")) { reveal(model.service.paths.root) }.fwButton()
                     }
                 }
             }
@@ -351,7 +351,7 @@ private struct RuntimeRow: View {
             Spacer()
             if runtime.kind != .bundled {
                 Button(l10n.tr("app.remove")) { confirmingRemoval = true }
-                    .buttonStyle(.glass)
+                    .fwButton()
                     .controlSize(.small)
             }
         }

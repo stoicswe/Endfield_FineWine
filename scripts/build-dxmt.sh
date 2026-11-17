@@ -33,6 +33,8 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 . "$REPO/scripts/lib/sources-lock.sh"; lock_load   # DXMT_COMMIT, DXMT_LLVM_TAG, DXMT_LLVM_COMMIT
 BUILD_DIR="${BUILD_DIR:-$REPO/build}"
+# winemetal.so runs in FineWine's runtime, which supports macOS 15 and later.
+export MACOSX_DEPLOYMENT_TARGET="15.0"
 RUNTIME_DIR="${RUNTIME_DIR:-$BUILD_DIR/finewine-runtime}"
 SRC="$BUILD_DIR/dxmt-src"
 OBJ="$BUILD_DIR/dxmt-build"

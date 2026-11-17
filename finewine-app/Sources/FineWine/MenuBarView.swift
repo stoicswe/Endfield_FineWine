@@ -39,7 +39,7 @@ struct MenuBarView: View {
                 // handle below it. (Left to itself a scroll view in this panel takes almost no
                 // height at all, and the cards were cut off.)
                 ScrollView {
-                    GlassEffectContainer(spacing: 10) {
+                    FWGlassContainer(spacing: 10) {
                         VStack(spacing: 10) {
                             ForEach(model.prefixes) { prefix in
                                 MenuPrefixCard(prefix: prefix)
@@ -107,10 +107,10 @@ struct MenuBarView: View {
             } label: {
                 Label(l10n.tr("menu.manage_prefixes"), systemImage: "square.grid.2x2")
             }
-            .buttonStyle(.glassProminent).tint(Look.wine)
+            .fwProminentButton().tint(Look.wine)
             Spacer()
             Button(l10n.tr("menu.donate")) { NSWorkspace.shared.open(Links.wineDonate) }
-                .buttonStyle(.glass)
+                .fwButton()
                 .help(l10n.tr("menu.donate_help"))
             Button {
                 openSettings()
@@ -118,14 +118,14 @@ struct MenuBarView: View {
             } label: {
                 Image(systemName: "gearshape")
             }
-            .buttonStyle(.glass)
+            .fwButton()
             .help(l10n.tr("menu.settings"))
             Button {
                 NSApp.terminate(nil)
             } label: {
                 Image(systemName: "power")
             }
-            .buttonStyle(.glass)
+            .fwButton()
             .help(l10n.tr("menu.quit_help"))
         }
     }
@@ -149,7 +149,7 @@ private struct MenuPrefixCard: View {
                         Button(l10n.tr("menu.force_shut_down"), role: .destructive) { Task { await model.forceShutDown(prefix) } }
                     }
                     .menuStyle(.button)
-                    .buttonStyle(.glass)
+                    .fwButton()
                     .controlSize(.small)
                     .fixedSize()
                     .help(l10n.tr("menu.shut_down_help"))

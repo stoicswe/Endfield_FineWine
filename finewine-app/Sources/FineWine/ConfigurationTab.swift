@@ -197,7 +197,7 @@ struct ConfigurationTab: View {
                 } label: {
                     Label(l10n.tr("config.add_override"), systemImage: "plus")
                 }
-                .buttonStyle(.glass).controlSize(.small)
+                .fwButton().controlSize(.small)
             }
 
             Card(title: l10n.tr("config.env_card"), symbol: "terminal",
@@ -256,12 +256,12 @@ struct ConfigurationTab: View {
                 runtimeID = prefix.metadata.runtimeID
                 desktopEnabled = draft.virtualDesktop != nil
             }
-            .buttonStyle(.glass)
+            .fwButton()
             .disabled(edited == prefix.metadata.settings && runtimeID == prefix.metadata.runtimeID)
             Button(l10n.tr("app.apply")) {
                 Task { await model.apply(edited, runtimeID: runtimeID, to: prefix) }
             }
-            .buttonStyle(.glassProminent).tint(Look.wine)
+            .fwProminentButton().tint(Look.wine)
             .disabled(!hasChanges || !problems.isEmpty)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
