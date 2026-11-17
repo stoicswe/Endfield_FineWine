@@ -446,6 +446,7 @@ private struct DetailsTab: View {
 
             Card(title: l10n.tr("details.about_card"), symbol: "info.circle") {
                 info(l10n.tr("details.created"), prefix.metadata.createdAt.formatted(date: .abbreviated, time: .shortened))
+                info(l10n.tr("drive.stored_on_label"), model.placeName(prefix.place))
                 info(l10n.tr("details.location"), prefix.directory.path)
                 Button(l10n.tr("app.show_in_finder")) { NSWorkspace.shared.activateFileViewerSelecting([prefix.directory]) }
                     .fwButton()

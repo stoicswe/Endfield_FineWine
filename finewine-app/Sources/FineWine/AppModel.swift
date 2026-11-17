@@ -19,6 +19,10 @@ final class AppModel: ObservableObject {
     let service: PrefixService
 
     @Published var prefixes: [Prefix] = []
+    /// Every drive FineWine keeps prefixes on, plugged in or not.
+    @Published var drives: [PrefixDrive] = []
+    /// The UUIDs of the drives among them that are plugged in now.
+    @Published var connectedDrives: Set<String> = []
     @Published var runtimes: [WineRuntime] = []
     @Published var profiles: [GameProfile] = []
     @Published var selection: UUID?
@@ -53,6 +57,96 @@ final class AppModel: ObservableObject {
         self.service = service
         try? service.paths.ensureDirectories()
         reload()
+        watchDrives()
+    }
+
+    // MARK: Drives
+
+    /// Reloads when drives are plugged in, ejected or renamed. A drive FineWine has used comes
+    /// back with its prefixes ready to run, and says so.
+    private func watchDrives() {
+        let center = NSWorkspace.shared.notificationCenter
+        center.addObserver(forName: NSWorkspace.didMountNotification, object: nil, queue: .main) { note in
+            let root = note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL
+            Task { @MainActor in AppModel.shared.driveMounted(at: root) }
+        }
+        for name in [NSWorkspace.didUnmountNotification, NSWorkspace.didRenameVolumeNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                Task { @MainActor in AppModel.shared.reload() }
+            }
+        }
+    }
+
+    private func driveMounted(at root: URL?) {
+        let before = Set(prefixes.map(\.id))
+        reload()
+        let arrived = prefixes.filter { !before.contains($0.id) }
+        guard !arrived.isEmpty else { return }
+        let drive = arrived.first.map { placeName($0.place) } ?? root?.lastPathComponent ?? ""
+        let names = arrived.map(\.name).joined(separator: ", ")
+        if let token = StatusSplash.shared.show(title: tr("drive.connected_title", drive), message: tr("drive.connected_msg", names)) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { StatusSplash.shared.hide(token) }
+        }
+    }
+
+    /// Show prefixes on drives that are not plugged in (greyed out, saying which drive to
+    /// connect), or leave them out until the drive is back.
+    static let showDisconnectedKey = "ShowPrefixesOnDisconnectedDrives"
+    var showsDisconnectedPrefixes: Bool {
+        get { UserDefaults.standard.object(forKey: Self.showDisconnectedKey) as? Bool ?? true }
+        set {
+            objectWillChange.send()
+            UserDefaults.standard.set(newValue, forKey: Self.showDisconnectedKey)
+        }
+    }
+
+    /// Prefixes on drives that are not plugged in, as FineWine last saw them.
+    var disconnectedPrefixes: [(drive: PrefixDrive, prefix: KnownPrefix)] {
+        drives.filter { !connectedDrives.contains($0.uuid) }
+            .flatMap { drive in drive.prefixes.map { (drive, $0) } }
+            .sorted { $0.prefix.name.localizedStandardCompare($1.prefix.name) == .orderedAscending }
+    }
+
+    /// "This Mac", or the drive's name.
+    func placeName(_ place: PrefixPlace) -> String {
+        switch place {
+        case .thisMac: return tr("drive.this_mac")
+        case .drive(let uuid): return drives.first { $0.uuid == uuid }?.name ?? tr("drive.unknown")
+        }
+    }
+
+    func placeSymbol(_ place: PrefixPlace) -> String {
+        if case .drive = place { return "externaldrive" }
+        return "desktopcomputer"
+    }
+
+    /// Where new prefixes go, as the user set it (the default drive may be unplugged).
+    var preferredPlace: PrefixPlace { service.prefixes.drives.preferredPlace }
+
+    /// Drives a prefix could be put on now, each with the reason it can't, if it can't.
+    func candidateVolumes() -> [(volume: VolumeInfo, problem: String?)] { service.prefixes.drives.candidateVolumes() }
+
+    /// Gets a drive ready for prefixes (`FineWine/Prefixes` on it) and remembers it.
+    func useDrive(_ volume: VolumeInfo) -> PrefixPlace? {
+        do {
+            let place = try service.prefixes.drives.use(volume)
+            reload()
+            return place
+        } catch {
+            show(error, title: tr("drive.err_title"))
+            return nil
+        }
+    }
+
+    func setDefaultPlace(_ place: PrefixPlace) {
+        do { try service.prefixes.drives.setDefault(place) } catch { show(error, title: tr("drive.err_title")) }
+        objectWillChange.send()
+    }
+
+    /// Forgets a drive. Its prefixes stay on it, and come back if it is plugged in again.
+    func forgetDrive(_ uuid: String) {
+        do { try service.prefixes.drives.forget(uuid) } catch { show(error, title: tr("drive.err_title")) }
+        reload()
     }
 
     /// The Mac's current look: light or dark, and the accent colour.
@@ -77,7 +171,10 @@ final class AppModel: ObservableObject {
     // MARK: State
 
     func reload() {
+        service.prefixes.refreshDrives()
         prefixes = service.prefixes.list()
+        drives = service.prefixes.drives.drives
+        connectedDrives = Set(drives.map(\.uuid).filter { service.prefixes.drives.mountedVolume($0) != nil })
         runtimes = service.runtimes.list()
         profiles = service.profiles.list()
         if selection == nil || !prefixes.contains(where: { $0.id == selection }) {
@@ -140,14 +237,15 @@ final class AppModel: ObservableObject {
 
     // MARK: Prefixes
 
-    func createPrefix(name: String, runtime: WineRuntime, profile: GameProfile?) async -> Bool {
+    func createPrefix(name: String, runtime: WineRuntime, profile: GameProfile?, place: PrefixPlace? = nil) async -> Bool {
+        let place = place ?? service.prefixes.drives.defaultPlace
         isCreatingPrefix = true
         defer { isCreatingPrefix = false }
         let appearance = currentAppearance
         let token = StatusSplash.shared.show(title: tr("splash.setting_up", name), message: tr("splash.creating_prefix"))
         defer { StatusSplash.shared.hide(token) }
         let created = await work(on: nil, "", failure: tr("dialog.err_prefix_create")) {
-            try $0.createPrefix(name: name, runtime: runtime, profile: profile, appearance: appearance) { stage in
+            try $0.createPrefix(name: name, runtime: runtime, profile: profile, place: place, appearance: appearance) { stage in
                 Task { @MainActor in StatusSplash.shared.update(token, message: stage) }
             }
         }
@@ -571,6 +669,13 @@ final class AppModel: ObservableObject {
         switch link {
         case .launch(let prefixID, let programID):
             guard let prefix = prefix(prefixID), let program = prefix.program(id: programID) else {
+                // A prefix on a drive that is unplugged: say which drive to connect.
+                if let away = disconnectedPrefixes.first(where: { $0.prefix.id == prefixID }) {
+                    alert = AppAlert(title: tr("drive.not_connected_title", away.drive.name),
+                                     message: tr("drive.not_connected_msg", away.prefix.name, away.drive.name))
+                    openMainWindow()
+                    return
+                }
                 alert = AppAlert(title: tr("dialog.dead_shortcut_title"),
                                  message: tr("dialog.dead_shortcut_msg"))
                 openMainWindow()

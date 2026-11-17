@@ -44,6 +44,24 @@ struct MenuBarView: View {
                             ForEach(model.prefixes) { prefix in
                                 MenuPrefixCard(prefix: prefix)
                             }
+                            if model.showsDisconnectedPrefixes, !model.disconnectedPrefixes.isEmpty {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(l10n.tr("drive.not_connected_section")).font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                    ForEach(model.disconnectedPrefixes, id: \.prefix.id) { entry in
+                                        HStack(spacing: 8) {
+                                            Image(systemName: "externaldrive.badge.xmark").foregroundStyle(.tertiary)
+                                            Text(entry.prefix.name).lineLimit(1).foregroundStyle(.secondary)
+                                            Spacer()
+                                            Text(l10n.tr("drive.connect_to_use", entry.drive.name))
+                                                .font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                                        }
+                                        .help(l10n.tr("drive.not_connected_msg", entry.prefix.name, entry.drive.name))
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .glassCard(padding: 12)
+                            }
                         }
                     }
                     .padding(1)
@@ -139,7 +157,11 @@ private struct MenuPrefixCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(prefix.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(prefix.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Label(model.placeName(prefix.place), systemImage: model.placeSymbol(prefix.place))
+                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
                 Spacer()
                 if let status = model.busy[prefix.id] {
                     Text(status).font(.caption).foregroundStyle(.secondary)
