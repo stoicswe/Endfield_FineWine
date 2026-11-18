@@ -13,7 +13,9 @@ after starting.
 
 On macOS the map now starts out reserved. The first read of a page of it faults,
 virtual_handle_fault commits that host page read-only (leaving alone the 4K pages already
-committed writable) and the read runs again. A reader that asks first what is committed, as a
+committed writable) and the read runs again. When two threads fault on one page at the same
+time, the second finds it committed and just runs its read again; tests/runtime/code-map-race.c
+checks that with 16 threads. A reader that asks first what is committed, as a
 scanner does, no longer sees the unused parts. The cost is one fault for each 512 MB of
 address space a program jumps into.
 
@@ -21,7 +23,7 @@ tests/runtime/scan-memory.c reads every committed page with 16 idle x64 threads 
 before (9 GB without the FEX patch), 370 MB after.
 
 --- a/dlls/ntdll/unix/virtual.c	2026-11-18 15:16:34
-+++ b/dlls/ntdll/unix/virtual.c	2026-11-18 15:26:22
++++ b/dlls/ntdll/unix/virtual.c	2026-11-18 16:08:15
 @@ -2733,7 +2733,17 @@
      SIZE_T size = ((ULONG_PTR)address_space_limit + page_size) >> (page_shift + 3);  /* one bit per page */
  
@@ -40,29 +42,34 @@ before (9 GB without the FEX patch), 370 MB after.
      if (status)
      {
          ERR( "failed to allocate ARM64EC map: %08x\n", status );
-@@ -4596,6 +4606,25 @@
-     }
- #endif
+@@ -4586,6 +4596,30 @@
  
+     mutex_lock( &virtual_mutex );  /* no need for signal masking inside signal handler */
+     vprot = get_host_page_vprot( page );
++
 +#ifdef __APPLE__
 +    /* FineWine: the ARM64EC code map is committed as it is read (see alloc_arm64ec_map). Only
-+     * the pages not committed yet are touched: ones that hold code ranges are writable. */
++     * the pages not committed yet are touched: ones that hold code ranges are writable. Two
++     * threads can fault on the same page at once; the second finds it committed by the first
++     * and only has to run its read again. This comes before the check below, which would take
++     * that second fault, a read fault on a page that is readable by now, for a write. */
 +    if (arm64ec_view && err == EXCEPTION_READ_FAULT &&
-+        (char *)addr >= (char *)arm64ec_view->base && (char *)addr < (char *)arm64ec_view->base + arm64ec_view->size &&
-+        !(get_page_vprot( addr ) & VPROT_COMMITTED))
++        (char *)addr >= (char *)arm64ec_view->base && (char *)addr < (char *)arm64ec_view->base + arm64ec_view->size)
 +    {
-+        char *ptr, *end = min( page + host_page_size, (char *)arm64ec_view->base + arm64ec_view->size );
++        if (!(get_page_vprot( addr ) & VPROT_COMMITTED))
++        {
++            char *ptr, *end = min( page + host_page_size, (char *)arm64ec_view->base + arm64ec_view->size );
 +
-+        for (ptr = page; ptr < end; ptr += page_size)
-+            if (!(get_page_vprot( ptr ) & VPROT_COMMITTED))
-+                set_page_vprot( ptr, page_size, VPROT_READ | VPROT_COMMITTED );
-+        mprotect_range( page, end - page, 0, 0 );
++            for (ptr = page; ptr < end; ptr += page_size)
++                if (!(get_page_vprot( ptr ) & VPROT_COMMITTED))
++                    set_page_vprot( ptr, page_size, VPROT_READ | VPROT_COMMITTED );
++            mprotect_range( page, end - page, 0, 0 );
++        }
 +        mutex_unlock( &virtual_mutex );
 +        rec->ExceptionCode = STATUS_SUCCESS;
 +        return STATUS_SUCCESS;
 +    }
 +#endif
-+
- #if defined(__APPLE__) && defined(__aarch64__)
-     /* FineWine: a page that Windows has as writable and executable is one or the other on the
-      * Mac side. Running it while it is writable, or writing it while it is executable, lands
+ 
+ #ifdef __APPLE__
+     /* Rosetta on Apple Silicon misreports certain write faults as read faults. */

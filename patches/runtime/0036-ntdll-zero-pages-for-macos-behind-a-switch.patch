@@ -1,0 +1,148 @@
+ntdll: zero pages for macOS, behind FINEWINE_ZERO_PAGES (off by default)
+
+Programs written for Windows and Linux take for granted that reading memory which was never
+written costs nothing. macOS has no shared zero page for anonymous memory: the first read of a
+page allocates it and it counts in the program's footprint from then on. A program that reads
+through its committed memory (anti-cheat, some garbage collectors, memory scanners) pays for
+everything it has committed and never used. Patches 0035 and fex 0005 to 0007 remove the
+emulator's and Wine's own large cases one by one; this is the general answer, for the game's
+own memory and for cases nobody has found yet.
+
+With FINEWINE_ZERO_PAGES=1, memory from NtAllocateVirtualMemory and thread stacks is backed by
+private mappings of one 32 MB file that is never written (created unlinked in TMPDIR), mapped
+as often as needed to cover a range. Decommitted memory goes back to it. A read shares the
+file's pages, which belong to the file cache, not to the program. The first write to a page
+copies it and makes it the program's own, exactly as with anonymous memory. Everything else in
+the memory code works on protections and is unchanged; such memory can be made executable the
+same way anonymous memory can (checked natively and by the suite's generated-code test).
+
+Measured natively for 1 GB: reading costs 1 MB of footprint instead of 1025 MB and takes 29 ms
+instead of 72; the first write to a page takes 1.1 us instead of 0.76 (2.2 us if it was read
+first); 512 mappings take 0.8 ms. Under Wine: a test with 32 emulated threads that reads all
+its committed memory ends at 143 MB instead of 265 MB (109 MB before the read); the first
+write to a fresh 64 KB piece takes 1.9 us instead of 0.9, a decommit 2.6 us instead of 1.5.
+
+Off by default until it has been run with games: it changes what backs nearly all of a
+program's memory.
+
+--- a/dlls/ntdll/unix/virtual.c	2026-11-18 16:22:34
++++ b/dlls/ntdll/unix/virtual.c	2026-11-18 16:28:38
+@@ -287,7 +287,65 @@
+ 
+     return mmap( NULL, size, prot, MAP_PRIVATE | MAP_ANON, -1, 0 );
+ }
++
++#ifdef __APPLE__
++/* FineWine: zero pages (FINEWINE_ZERO_PAGES=1, off by default).
++ *
++ * Linux and Windows-on-Linux programs take for granted that reading memory which was never
++ * written is free: the kernel maps one shared page of zeroes. macOS has no such page for
++ * anonymous memory; the first read of a page allocates it, and it counts in the footprint from
++ * then on. A program that reads through its committed memory (anti-cheat does, so do some
++ * garbage collectors and memory scanners) then pays for every page it has committed and never
++ * used. Arknights: Endfield reached 40 GB that way.
++ *
++ * With this on, memory from NtAllocateVirtualMemory and thread stacks is backed by private
++ * mappings of one small file that is never written, mapped again and again. A read shares the
++ * file's pages, which belong to the file cache and not to the program. The first write to a
++ * page copies it and makes it the program's own, as with anonymous memory. Measured for 1 GB:
++ * reading costs 1 MB instead of 1 GB; the first write to a page takes 1.1 us instead of 0.76.
++ * Such memory can be made executable like anonymous memory can. */
++static int zero_pages_fd = -1;
++static const size_t zero_pages_size = 32 * 1024 * 1024;
+ 
++static void zero_pages_init(void)
++{
++    const char *env = getenv( "FINEWINE_ZERO_PAGES" ), *tmp = getenv( "TMPDIR" );
++    char path[1024];
++    int fd;
++
++    if (!env || !atoi( env )) return;
++    snprintf( path, sizeof(path), "%s/finewine-zero-XXXXXX", tmp && tmp[0] ? tmp : "/tmp" );
++    if ((fd = mkstemp( path )) == -1) return;
++    unlink( path );
++    if (ftruncate( fd, zero_pages_size ) == -1)
++    {
++        close( fd );
++        return;
++    }
++    fcntl( fd, F_SETFD, FD_CLOEXEC );
++    zero_pages_fd = fd;
++}
++
++/* back a range with zero pages; it must hold nothing that is still needed.
++ * virtual_mutex must be held by caller. */
++static void zero_pages_map( void *base, size_t size, int prot )
++{
++    char *ptr = base, *end = ptr + size;
++
++    assert( !((UINT_PTR)base & host_page_mask) );
++    assert( !(size & host_page_mask) );
++
++    while (ptr < end)
++    {
++        size_t len = min( (size_t)(end - ptr), zero_pages_size );
++
++        if (mmap( ptr, len, prot, MAP_PRIVATE | MAP_FIXED, zero_pages_fd, 0 ) == MAP_FAILED)
++            mmap( ptr, len, prot, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0 );
++        ptr += len;
++    }
++}
++#endif
++
+ static inline UINT_PTR make_mem_area( void *base, enum area_state state )
+ {
+     return (UINT_PTR)base | state;
+@@ -2370,6 +2428,10 @@
+     }
+     else host_end = ROUND_ADDR( base + size, host_page_mask );
+ 
++#ifdef __APPLE__
++    if (host_start < host_end && zero_pages_fd != -1) zero_pages_map( host_start, host_end - host_start, PROT_NONE );
++    else
++#endif
+     if (host_start < host_end) anon_mmap_fixed( host_start, host_end - host_start, PROT_NONE, 0 );
+     /* FineWine: memory that is committed again after being decommitted must read as zeroes.
+      * Whole host pages get that from the fresh mapping above. Where the host's pages are larger
+@@ -3581,6 +3643,9 @@
+ 
+     mem_areas = anon_mmap_alloc( mem_areas_size * sizeof(*mem_areas), PROT_READ | PROT_WRITE );
+     memcpy( mem_areas, initial_mem_areas, mem_areas_count * sizeof(*mem_areas) );
++#ifdef __APPLE__
++    zero_pages_init();
++#endif
+ 
+     if (preload_info) for (int i = 0; preload_info[i].size; i++)
+     {
+@@ -4407,6 +4472,15 @@
+     status = map_view( &view, NULL, size, 0, VPROT_READ | VPROT_WRITE | VPROT_COMMITTED,
+                        limit_low, limit_high, 0 );
+     if (status != STATUS_SUCCESS) goto done;
++
++#ifdef __APPLE__
++    /* FineWine: a stack is committed whole and mostly never touched; see zero_pages_init */
++    if (zero_pages_fd != -1)
++    {
++        zero_pages_map( view->base, ROUND_SIZE( 0, view->size, host_page_mask ), PROT_NONE );
++        mprotect_range( view->base, view->size, 0, 0 );
++    }
++#endif
+ 
+ #ifdef VALGRIND_STACK_REGISTER
+     VALGRIND_STACK_REGISTER( view->base, (char *)view->base + view->size );
+@@ -5175,6 +5249,15 @@
+             if (status == STATUS_SUCCESS)
+             {
+                 base = view->base;
++#ifdef __APPLE__
++                /* FineWine: see zero_pages_init */
++                if (zero_pages_fd != -1 && !is_dos_memory && !(type & MEM_RESERVE_PLACEHOLDER))
++                {
++                    zero_pages_map( view->base, ROUND_SIZE( 0, view->size, host_page_mask ), PROT_NONE );
++                    mprotect_range( view->base, view->size, 0, 0 );
++                }
++                else
++#endif
+                 if (vprot & VPROT_EXEC || force_exec_prot) mprotect_range( base, size, 0, 0 );
+             }
+         }

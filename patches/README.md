@@ -212,7 +212,14 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
   pages hold ARM64EC code is 4 GB and was committed in full, read-only. On macOS a page that is
   read becomes real memory, so a program that reads through its committed memory paid for all
   of it (3.6 GB in Arknights: Endfield). The map now starts reserved and a page is committed
-  when it is first read. Tested by `tests/runtime/scan-memory.c` together with fex 0005.
+  when it is first read. Tested by `tests/runtime/scan-memory.c` together with fex 0005. Threads that
+  fault on the same page at once all get through (`tests/runtime/code-map-race.c`; the first
+  version of this patch crashed there).
+- `0036-ntdll-zero-pages-for-macos-behind-a-switch.patch`: with `FINEWINE_ZERO_PAGES=1`,
+  memory from NtAllocateVirtualMemory and thread stacks is backed by private mappings of one
+  32 MB file of zeroes instead of anonymous memory, so reading memory that was never written
+  costs nothing, as on Linux. The first write to a page is about 1 µs slower. Off by default
+  until it has been run with games.
 - `0033-winemac-read-the-displays-again-on-activation-only-when-they-changed.patch`: switching
   to a Wine program made Wine read every display again (modes, EDID, GPUs, registry keys) on the
   program's message thread, 2.4 seconds in a game. Now only when the displays differ from what
@@ -372,6 +379,16 @@ FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`.
   Committed memory can be read, and on macOS a page that is only read still becomes real memory.
   Arknights: Endfield reads through its writable memory and grew to 40 GB in seven minutes.
   Tested by `tests/runtime/scan-memory.c` (16 idle threads: about 5 GB before, 370 MB after).
+- `0006-rpmalloc-commit-a-page-as-its-blocks-are-handed-out.patch`: FEX's allocator committed
+  a whole page at first use, 4 MB for an object up to 256 KB and 64 MB for one up to 8 MB. It
+  hands blocks out in address order, so a page is now committed in 64 KB pieces as far as its
+  blocks have been handed out. 6.5 GB of Endfield's 15.4 GB was in these pages. The patch
+  reaches into the `External/rpmalloc` submodule; `git apply` in the FEX tree handles that.
+- `0007-windows-commit-call-return-stacks-and-compile-buffers-as-they-are-used.patch`: the
+  4 MB call-return stack and the 8 and 16 MB compile buffers of each thread are reserved and
+  committed by the fault handler 64 KB at a time (`FEXCore::Allocator::VirtualOvercommit`).
+  Only for memory that system calls never see. With 0006: 32 threads that ran 24,000 blocks
+  each and then had all their memory read went from 1655 MB to 265 MB; speed unchanged.
 
 ## `dxmt/` — Direct3D on Metal
 

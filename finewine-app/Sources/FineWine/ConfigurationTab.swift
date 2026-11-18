@@ -163,6 +163,11 @@ struct ConfigurationTab: View {
                     Text(l10n.tr("config.hide_hypervisor_title"))
                     Text(l10n.tr("config.hide_hypervisor_desc"))
                 }
+                Divider()
+                Toggle(isOn: $draft.zeroPages) {
+                    Text(l10n.tr("config.zero_pages_title"))
+                    Text(l10n.tr("config.zero_pages_desc"))
+                }
             }
 
             Card(title: l10n.tr("config.appearance_card"), symbol: "paintbrush",
