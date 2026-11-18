@@ -156,6 +156,35 @@ else
   else
     fail "could not build tests/runtime/code-map-race.c"; tail -n 3 "$WORK/code-map-race-build.log"
   fi
+  # Threads starting while others exit: an exiting thread freed its lookup tables before taking
+  # them off FEX's list of ranges to commit on a fault, and could take a new thread's tables off
+  # it instead; that thread then hung in exception handling. patches/fex/0009. The program is
+  # given 60 seconds (it needs about one).
+  if "$MINGW" -O1 -o "$WORK/thread-churn.exe" "$REPO/tests/runtime/thread-churn.c" >"$WORK/thread-churn-build.log" 2>&1; then
+    ( "$RT/bin/wine" "$WORK/thread-churn.exe" </dev/null >"$WORK/thread-churn.out" 2>/dev/null ) & churn=$!
+    n=0; while kill -0 "$churn" 2>/dev/null && [ "$n" -lt 120 ]; do sleep 0.5; n=$((n+1)); done
+    if kill -0 "$churn" 2>/dev/null; then
+      pkill -f "$WORK/thread-churn.exe" 2>/dev/null; wait "$churn" 2>/dev/null
+      fail "x64: threads starting while others exit hang"
+    else
+      out="$(tr -d '\r' <"$WORK/thread-churn.out" | tail -n 1)"
+      case "$out" in "thread-churn: ok "*) pass "x64: ${out#thread-churn: ok } short threads start while others exit" ;;
+        *) fail "short x64 threads: $out" ;; esac
+    fi
+  else
+    fail "could not build tests/runtime/thread-churn.c"; tail -n 3 "$WORK/thread-churn-build.log"
+  fi
+  # Code that is rewritten, protected and rewritten, or freed and replaced must never run in its
+  # old form on any thread, with FEX's usual record of cached blocks and with the compact one
+  # (FEX_COMPACTBLOCKRECORDS=1, patches/fex/0008).
+  if "$MINGW" -O1 -o "$WORK/code-rewrite.exe" "$REPO/tests/runtime/code-rewrite.c" >"$WORK/code-rewrite-build.log" 2>&1; then
+    out="$(FEX_COMPACTBLOCKRECORDS=0 "$RT/bin/wine" "$WORK/code-rewrite.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    out2="$(FEX_COMPACTBLOCKRECORDS=1 "$RT/bin/wine" "$WORK/code-rewrite.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$out|$out2" in "code-rewrite: ok "*"|code-rewrite: ok "*) pass "x64: rewritten and replaced code never runs in its old form on 8 threads (usual and compact block records)" ;;
+      *) fail "x64 code rewriting: usual records: $out; compact records: $out2" ;; esac
+  else
+    fail "could not build tests/runtime/code-rewrite.c"; tail -n 3 "$WORK/code-rewrite-build.log"
+  fi
   # FINEWINE_MEMORY_TRACE=<folder> makes each program log its large memory operations, with the
   # modules that asked for them, and totals with its footprint every five seconds (patch 0034).
   if "$MINGW" -O1 -o "$WORK/memtrace.exe" "$REPO/tests/runtime/memtrace.c" >"$WORK/memtrace-build.log" 2>&1; then

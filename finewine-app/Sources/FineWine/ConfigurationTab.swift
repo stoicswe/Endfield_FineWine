@@ -168,6 +168,11 @@ struct ConfigurationTab: View {
                     Text(l10n.tr("config.zero_pages_title"))
                     Text(l10n.tr("config.zero_pages_desc"))
                 }
+                Divider()
+                Toggle(isOn: $draft.compactBlockRecords) {
+                    Text(l10n.tr("config.compact_records_title"))
+                    Text(l10n.tr("config.compact_records_desc"))
+                }
             }
 
             Card(title: l10n.tr("config.appearance_card"), symbol: "paintbrush",
