@@ -1,0 +1,258 @@
+windows: commit call-return stacks and compile buffers as they are used
+
+Two more things were committed in full for each emulated thread and barely used:
+
+ - the call-return stack, 4 MB, of which a thread uses a few KB around its starting point;
+ - the compile buffers a thread takes from the pools once it has translated something: 8 MB
+   for IR, 16 MB for the backend's temporary code, and the decoder's buffer.
+
+On macOS committed memory that something merely reads becomes real memory (see 0005, 0006), so
+a game that reads through its memory paid 28 MB for each thread that had ever compiled.
+
+Only the emulator's own code touches these, never a system call, so they can be committed by
+the fault handler: FEXCore::Allocator::VirtualOvercommit is a hook the Windows frontend points
+at its OvercommitTracker, which already commits the lookup tables 64 KB at a time. With the
+hook set, the pools reserve their buffers and mark them (the guarded pool leaves its last
+page unmarked, which makes it the guard without a protect call), and the call-return stack
+commits 128 KB around its starting point and marks the rest. Clearing the stack no longer
+commits all of it again. Without the hook everything is committed as before.
+
+The WOW64 frontend asks the tracker before it asks the call-return stack, as the ARM64EC one
+does, so that a marked part of the stack is committed and not taken for an imbalance.
+
+Measured with 32 threads that each ran 24,000 blocks, reading all committed memory afterwards:
+1655 MB before 0006 and this, 265 MB after (110 MB before the read). A fault costs about 5 us
+and happens once for each 64 KB a thread comes to use. Compiling 48,000 blocks and starting
+256 threads measure the same as before.
+
+--- a/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
++++ b/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
+@@ -103,6 +103,40 @@
+ 
+ FEX_DEFAULT_VISIBILITY extern VirtualNamePtr VirtualName;
+ FEX_DEFAULT_VISIBILITY extern VirtualTHPPtr VirtualTHPControl;
++
++// FineWine: memory that only the emulator's own code touches can be left reserved and committed
++// by the frontend's fault handler as it is used (64 KB at a time), instead of all at once.
++// Committed memory can be read, and on macOS memory that is only read still becomes real memory,
++// so a buffer of 8 or 16 MB that a thread uses a few KB of should not be committed whole.
++// The frontend sets VirtualOvercommit to mark (true) or unmark (false) such a range; while it is
++// unset the memory is committed in full as before. Never use this for memory that is passed to
++// a system call: Wine's side of the call does not go through the fault handler.
++using VirtualOvercommitPtr = void (*)(void* Ptr, size_t Size, bool Mark);
++FEX_DEFAULT_VISIBILITY extern VirtualOvercommitPtr VirtualOvercommit;
++
++// GuardSize bytes at the end are never committed, so touching them always faults.
++inline void* VirtualAllocLazy(size_t Size, size_t GuardSize = 0) {
++  const auto Hook = VirtualOvercommit;
++  if (!Hook) {
++    return VirtualAlloc(Size);
++  }
++  void* Ptr = VirtualAlloc(Size, false, false);
++  if (Ptr) {
++    Hook(Ptr, Size - GuardSize, true);
++  }
++  return Ptr;
++}
++
++inline void VirtualFreeLazy(void* Ptr, size_t Size, size_t GuardSize = 0) {
++  if (const auto Hook = VirtualOvercommit) {
++    Hook(Ptr, Size - GuardSize, false);
++  }
++  VirtualFree(Ptr, Size);
++}
++
++inline bool VirtualIsLazy() {
++  return VirtualOvercommit != nullptr;
++}
+ #else
+ using MMAP_Hook = void* (*)(void*, size_t, int, int, int, off_t);
+ using MUNMAP_Hook = int (*)(void*, size_t);
+@@ -127,6 +161,15 @@
+ inline void VirtualDontNeed(void* Ptr, size_t Size, bool Recommit = true) {
+   ::madvise(reinterpret_cast<void*>(Ptr), Size, MADV_DONTNEED);
+ }
++inline void* VirtualAllocLazy(size_t Size, size_t GuardSize = 0) {
++  return VirtualAlloc(Size);
++}
++inline void VirtualFreeLazy(void* Ptr, size_t Size, size_t GuardSize = 0) {
++  VirtualFree(Ptr, Size);
++}
++inline bool VirtualIsLazy() {
++  return false;
++}
+ inline bool VirtualProtect(void* Ptr, size_t Size, ProtectOptions options) {
+   int prot {PROT_NONE};
+   if ((options & ProtectOptions::Read) == ProtectOptions::Read) {
+--- a/FEXCore/Source/Utils/Allocator.cpp
++++ b/FEXCore/Source/Utils/Allocator.cpp
+@@ -393,6 +393,7 @@
+ 
+ VirtualNamePtr VirtualName {VirtualNameNOP};
+ VirtualTHPPtr VirtualTHPControl {VirtualTHPNOP};
++VirtualOvercommitPtr VirtualOvercommit {};
+ 
+ void SetupHooks(size_t PageSize, HookPtrs Ptrs) {
+   VirtualName = Ptrs.VirtualName;
+--- a/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
++++ b/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
+@@ -387,8 +387,10 @@
+   }
+ 
+ private:
++  // FineWine: these buffers (8 MB of IR, decoded instructions) are committed as they are used.
+   void* Alloc(size_t Size) override {
+-    auto Result = FEXCore::Allocator::VirtualAlloc(Size);
++    Lazy = FEXCore::Allocator::VirtualIsLazy();
++    auto Result = Lazy ? FEXCore::Allocator::VirtualAllocLazy(Size) : FEXCore::Allocator::VirtualAlloc(Size);
+     if (Name) {
+       FEXCore::Allocator::VirtualName(Name, Result, Size);
+     }
+@@ -396,9 +398,17 @@
+   }
+ 
+   void Free(void* Ptr, size_t Size) override {
+-    FEXCore::Allocator::VirtualFree(Ptr, Size);
++    if (Lazy) {
++      FEXCore::Allocator::VirtualFreeLazy(Ptr, Size);
++    } else {
++      FEXCore::Allocator::VirtualFree(Ptr, Size);
++    }
+   }
+ 
++  // Whether this pool's buffers were allocated lazily: decided at the first allocation, so a
++  // buffer is always freed the way it was allocated.
++  bool Lazy {};
++
+   const char* Name {};
+ };
+ 
+@@ -418,7 +428,16 @@
+   }
+ 
+ private:
++  // FineWine: committed as it is used; the last page is left out of that, so it is the guard.
+   void* Alloc(size_t Size) override {
++    Lazy = FEXCore::Allocator::VirtualIsLazy();
++    if (Lazy) {
++      auto Ptr = FEXCore::Allocator::VirtualAllocLazy(Size, FEXCore::Utils::FEX_PAGE_SIZE);
++      if (Name) {
++        FEXCore::Allocator::VirtualName(Name, Ptr, Size);
++      }
++      return Ptr;
++    }
+     auto Ptr = FEXCore::Allocator::VirtualAlloc(Size);
+     uintptr_t LastPageAddr = AlignDown(reinterpret_cast<uintptr_t>(Ptr) + Size - 1, FEXCore::Utils::FEX_PAGE_SIZE);
+     if (!FEXCore::Allocator::VirtualProtect(reinterpret_cast<void*>(LastPageAddr), FEXCore::Utils::FEX_PAGE_SIZE,
+@@ -432,9 +451,15 @@
+   }
+ 
+   void Free(void* Ptr, size_t Size) override {
+-    FEXCore::Allocator::VirtualFree(Ptr, Size);
++    if (Lazy) {
++      FEXCore::Allocator::VirtualFreeLazy(Ptr, Size, FEXCore::Utils::FEX_PAGE_SIZE);
++    } else {
++      FEXCore::Allocator::VirtualFree(Ptr, Size);
++    }
+   }
+ 
++  bool Lazy {};
++
+   const char* Name {};
+ };
+ 
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -503,7 +503,7 @@
+     auto lk = Thread->LookupCache->AcquireWriteLock();
+     Thread->LookupCache->ClearCache(lk);
+   }
+-  Allocator::VirtualDontNeed(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE);
++  Allocator::VirtualDontNeed(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, !Allocator::VirtualIsLazy());
+ }
+ 
+ static void IRDumper(FEXCore::Core::InternalThreadState* Thread, IR::IREmitter* IREmitter, uint64_t GuestRIP) {
+@@ -1078,7 +1078,7 @@
+     FEXCORE_PROFILE_SCOPED("InvalidateCallRet");
+ 
+     // This may cause access violations in the thread on Windows as zeroing is not atomic, this is handled by the frontend
+-    Allocator::VirtualDontNeed(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE);
++    Allocator::VirtualDontNeed(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, !Allocator::VirtualIsLazy());
+   }
+ }
+ 
+--- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+@@ -832,7 +832,7 @@
+                                                                                                "doesn't match up!\n");
+   // Bring CodeBuffer up to date
+   if (auto Prev = CheckCodeBufferUpdate()) {
+-    Allocator::VirtualDontNeed(ThreadState->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE);
++    Allocator::VirtualDontNeed(ThreadState->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, !Allocator::VirtualIsLazy());
+     auto lk = ThreadState->LookupCache->AcquireWriteLock();
+     ThreadState->LookupCache->ChangeGuestToHostMapping(*Prev, *CurrentCodeBuffer->LookupCache, lk);
+   }
+--- a/Source/Windows/Common/CallRetStack.h
++++ b/Source/Windows/Common/CallRetStack.h
+@@ -39,13 +39,24 @@
+                                         FEXCore::Allocator::THPControl::Disable);
+ 
+   Thread->CallRetStackBase = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(CallRetStackAlloc) + GUARD_SIZE);
+-  ::VirtualAlloc(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, MEM_COMMIT, PAGE_READWRITE);
++  // FineWine: the stack is 4 MB and a thread seldom uses more than a few KB of it. Where the
++  // frontend commits on faults, only the 128 KB around the starting point is committed here
++  // and the rest follows as it is touched. See FEXCore::Allocator::VirtualOvercommit.
++  if (const auto Hook = FEXCore::Allocator::VirtualOvercommit) {
++    Hook(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, true);
++    ::VirtualAlloc(reinterpret_cast<void*>(GetInfoThread(Thread).DefaultLocation - GUARD_SIZE), 2 * GUARD_SIZE, MEM_COMMIT, PAGE_READWRITE);
++  } else {
++    ::VirtualAlloc(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, MEM_COMMIT, PAGE_READWRITE);
++  }
+ 
+   Thread->CurrentFrame->State.callret_sp = GetInfoThread(Thread).DefaultLocation;
+ }
+ 
+ void DestroyThread(FEXCore::Core::InternalThreadState* Thread) {
+   auto CallRetStackInfo = GetInfoThread(Thread);
++  if (const auto Hook = FEXCore::Allocator::VirtualOvercommit) {
++    Hook(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, false);
++  }
+   ::VirtualFree(reinterpret_cast<void*>(CallRetStackInfo.AllocationBase), 0, MEM_RELEASE);
+ }
+ 
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -776,6 +776,15 @@
+   const auto NtDll = GetModuleHandleW(L"ntdll.dll");
+   const bool IsWine = !!GetProcAddress(NtDll, "wine_get_version");
+   OvercommitTracker.emplace(IsWine);
++  // FineWine: let emulator-only memory (call-return stacks, compile buffers) be committed as
++  // it is used. Unmarking a range that was never marked is harmless.
++  FEXCore::Allocator::VirtualOvercommit = [](void* Ptr, size_t Size, bool Mark) {
++    if (Mark) {
++      OvercommitTracker->MarkRange(reinterpret_cast<uint64_t>(Ptr), Size);
++    } else {
++      OvercommitTracker->UnmarkRange(reinterpret_cast<uint64_t>(Ptr), Size);
++    }
++  };
+ 
+   FEX::Windows::SetupEnvironmentVariableValues(NtDll);
+ 
+--- a/Source/Windows/WOW64/Module.cpp
++++ b/Source/Windows/WOW64/Module.cpp
+@@ -852,11 +852,13 @@
+   if (Exception->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+     const auto FaultAddress = static_cast<uint64_t>(Exception->ExceptionInformation[1]);
+ 
+-    if (FEX::Windows::CallRetStack::HandleAccessViolation(Thread, FaultAddress, Context->X25)) {
++    // FineWine: first, so that a marked part of the call-return stack is committed and not
++    // taken for an imbalance.
++    if (OvercommitTracker && OvercommitTracker->HandleAccessViolation(FaultAddress)) {
+       return true;
+     }
+ 
+-    if (OvercommitTracker && OvercommitTracker->HandleAccessViolation(FaultAddress)) {
++    if (FEX::Windows::CallRetStack::HandleAccessViolation(Thread, FaultAddress, Context->X25)) {
+       return true;
+     }
+ 

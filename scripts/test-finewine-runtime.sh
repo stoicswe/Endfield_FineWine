@@ -146,6 +146,16 @@ else
   else
     fail "could not build tests/runtime/scan-memory.c"; tail -n 3 "$WORK/scan-memory-build.log"
   fi
+  # Wine's ARM64EC code map is committed a page at a time as it is read (runtime patch 0035).
+  # Threads that read the same new page at once must all get through: the first version failed
+  # every thread but the first with an access violation.
+  if "$MINGW" -O1 -o "$WORK/code-map-race.exe" "$REPO/tests/runtime/code-map-race.c" >"$WORK/code-map-race-build.log" 2>&1; then
+    out="$("$RT/bin/wine" "$WORK/code-map-race.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$out" in "code-map-race: ok "*) pass "x64: 16 threads jumping into new code at the same moment all run it" ;;
+      *) fail "threads entering new code together crash or hang: $out" ;; esac
+  else
+    fail "could not build tests/runtime/code-map-race.c"; tail -n 3 "$WORK/code-map-race-build.log"
+  fi
   # FINEWINE_MEMORY_TRACE=<folder> makes each program log its large memory operations, with the
   # modules that asked for them, and totals with its footprint every five seconds (patch 0034).
   if "$MINGW" -O1 -o "$WORK/memtrace.exe" "$REPO/tests/runtime/memtrace.c" >"$WORK/memtrace-build.log" 2>&1; then

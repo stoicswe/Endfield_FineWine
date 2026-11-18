@@ -174,6 +174,13 @@ final class PrefixSettingsTests: XCTestCase {
         // The hypervisor flag is hidden unless the prefix says otherwise.
         var shown = PrefixSettings(); shown.hideHypervisor = false
         XCTAssertFalse(shown.environmentVariables().contains { $0.name == "FEX_HIDEHYPERVISORBIT" })
+        // Zero pages are an experiment: off unless the prefix turns them on, and off for a
+        // prefix saved before the setting existed.
+        XCTAssertFalse(PrefixSettings().zeroPages)
+        var zero = PrefixSettings(); zero.zeroPages = true
+        XCTAssertEqual(zero.environmentVariables().first { $0.name == "FINEWINE_ZERO_PAGES" }?.value, "1")
+        XCTAssertFalse(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).zeroPages)
+        XCTAssertTrue(try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(zero)).zeroPages)
 
         settings.metalHUD = true
         settings.hideHypervisor = true

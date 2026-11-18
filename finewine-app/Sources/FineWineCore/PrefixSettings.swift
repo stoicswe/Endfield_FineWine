@@ -247,6 +247,13 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// games that refuse to run in one ("cannot run under a Virtual Machine") refuse here too.
     /// On by default, by the user's decision (2026-11-15).
     public var hideHypervisor: Bool = true
+    /// Back a program's memory with a shared file of zeroes instead of anonymous memory
+    /// (runtime patch 0036, `FINEWINE_ZERO_PAGES`). macOS charges a program for every page it
+    /// reads, even one it never wrote; a game that reads through its own memory (anti-cheat
+    /// does) then pays for everything it has set aside and not used. With this on such reads
+    /// cost nothing; the first write to a page is about a microsecond slower. Experimental and
+    /// off by default: it changes what backs nearly all of a program's memory.
+    public var zeroPages: Bool = false
     /// Let games that offer NVIDIA DLSS use Apple's MetalFX instead: super resolution as
     /// MetalFX upscaling, frame generation as MetalFX frame interpolation. Direct3D 10 and 11
     /// games get it from DXMT; Direct3D 12 and Vulkan games from the runtime's MoltenVK. FSR
@@ -311,6 +318,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         rightOptionIsAlt = try c.decodeIfPresent(Bool.self, forKey: .rightOptionIsAlt) ?? d.rightOptionIsAlt
         metalHUD = try c.decodeIfPresent(Bool.self, forKey: .metalHUD) ?? d.metalHUD
         hideHypervisor = try c.decodeIfPresent(Bool.self, forKey: .hideHypervisor) ?? d.hideHypervisor
+        zeroPages = try c.decodeIfPresent(Bool.self, forKey: .zeroPages) ?? d.zeroPages
         debugChannels = try c.decodeIfPresent(String.self, forKey: .debugChannels) ?? d.debugChannels
         macAppearance = try c.decodeIfPresent(Bool.self, forKey: .macAppearance) ?? d.macAppearance
         dlssThroughMetalFX = try c.decodeIfPresent(Bool.self, forKey: .dlssThroughMetalFX) ?? d.dlssThroughMetalFX
@@ -443,6 +451,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         if !metalFXUpscaling { out.append(("FINEWINE_METALFX_AUTO", "0")) }
         if !macStyleIcons { out.append(("FINEWINE_MAC_ICONS", "0")) }
         if hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
+        if zeroPages { out.append(("FINEWINE_ZERO_PAGES", "1")) }
         // Wine takes the ANSI code page from LC_CTYPE, and the interface language from
         // LC_MESSAGES or LANG (or, with neither, the Mac's language), which stay as they are.
         // LC_ALL would override LC_CTYPE, so the environment drops it (LaunchPlanner).

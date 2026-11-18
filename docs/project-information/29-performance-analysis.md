@@ -202,12 +202,17 @@ That run showed the same reader in a second place: 3.6 GB in Wine's ARM64EC code
 table with one bit for each page of the address space, committed in full and read-only.
 Runtime patch 0035 reserves it on macOS and commits a page when it is first read. With both
 fixes the test program, which reads every committed page, ends at 370 MB (9 GB with neither).
-The second fix has not been run with the game; it should take the plateau to about 16 GB.
+A third logged run with both fixes: 15.7 GB at four minutes and level (20 GB before, at the
+same point). The code map held 0.14 GB instead of 3.6 GB.
 
 What the 20 GB was at three minutes: 9.3 GB writable memory in Wine's area (the game's own
 heaps, mostly swapped out), 3.6 GB the code map, 2.4 GB graphics memory, 1.5 GB Mac-side
 allocations (Metal, MoltenVK), 1.1 GB translated code.
 
-Still open: whether the 9 GB of writable memory is all the game's. Candidates for waste in it
-are FEX's call-return stacks (4 MB committed for each thread, about 0.7 GB) and memory handed
-back in pieces smaller than a 16K page (2.5 GB over the run, not all of it live at once).
+Still open, from the third run: about 6.5 GB of the writable memory is inside the emulator's
+own heap, not the game's. FEX allocates through rpmalloc, which reserves two 256 MB spans for
+each thread and commits whole pages of them: 64 KB for small objects, 4 MB for medium ones,
+64 MB for large ones. A thread that makes one medium allocation has 4 MB committed, and the
+reader in the game turns the unused rest into real memory. Committing those pages as they
+fill is the next fix. The reads are plain memory reads inside the process, not
+ReadProcessMemory calls, so they cannot be answered more cheaply at that level.

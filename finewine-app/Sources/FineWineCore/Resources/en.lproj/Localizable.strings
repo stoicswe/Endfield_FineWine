@@ -248,6 +248,8 @@
 "config.sync_detail" = "How Windows events, mutexes and semaphores are handled.";
 "config.hide_hypervisor_title" = "Hide the hypervisor flag";
 "config.hide_hypervisor_desc" = "The x64 emulator announces itself to programs through the CPU flag a virtual machine sets. Games that refuse to run in a virtual machine then refuse to start, though the Mac is not one. On by default; turn it off for a program that needs to know it is emulated.";
+"config.zero_pages_title" = "Don't charge for reading unused memory (experimental)";
+"config.zero_pages_desc" = "macOS counts memory against a program as soon as it is read, even if nothing was ever written to it. Games that read through their own memory, as anti-cheat does, then use many gigabytes more than they need. With this on, such reads cost nothing; the first write to each piece of memory is slightly slower. Off by default; turn it off again if a program misbehaves.";
 "config.appearance_card" = "Appearance";
 "config.appearance_footnote" = "Applies to anything in this prefix that uses standard Windows controls, including the Wine tools. Window frames and title bars are always drawn by macOS. Games that draw their own interface are not affected.";
 "config.mac_appearance_title" = "Match macOS";
