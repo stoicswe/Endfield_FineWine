@@ -6,6 +6,7 @@
 #   2. runs a Windows console program and returns its output
 #   3. lets a program generate code and run it (tests/runtime/jit.c)
 #   4. runs x64 programs through FEX (tests/runtime/x64-hello.c, x64-stress.c), if FEX is installed
+#   4a. creates 300 x64 threads that stay alive, quickly (tests/runtime/threads.c)
 #   5. creates a Vulkan device and renders with Direct3D 12, both through MoltenVK, from ARM64 and
 #      x64, with and without DXMT selected (tests/runtime/vulkan-device.c, d3d12-clear.c)
 #   5a. builds acceleration structures (in command buffers and on the host), compacts, serializes
@@ -103,6 +104,16 @@ else
       *) fail "decommitted memory kept its contents (ARM64: '$one', x64: '$two')" ;; esac
   else
     fail "could not build tests/runtime/decommit.c"; tail -n 3 "$WORK/decommit-build.log"
+  fi
+  # Each x64 thread gets an emulator stack above 4 GB, past macOS's own mappings. Finding room
+  # for it stepped over those 64K at a time: 300 threads took 420 seconds, with all other memory
+  # calls of the program waiting (a game's loading screen). Now well under a second.
+  if "$MINGW" -O1 -o "$WORK/threads.exe" "$REPO/tests/runtime/threads.c" >"$WORK/threads-build.log" 2>&1; then
+    out="$("$RT/bin/wine" "$WORK/threads.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$out" in "threads: ok "*) pass "x64: 300 threads alive at once start quickly (${out#threads: ok } ms)" ;;
+      *) fail "creating many x64 threads is slow or fails: $out" ;; esac
+  else
+    fail "could not build tests/runtime/threads.c"; tail -n 3 "$WORK/threads-build.log"
   fi
   # 32-bit programs cannot run here (no memory below 4 GB). An installer that starts the 32-bit
   # setup program of a runtime Wine has built in must see it succeed; any other 32-bit program
