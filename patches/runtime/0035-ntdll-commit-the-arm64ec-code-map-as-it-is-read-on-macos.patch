@@ -1,0 +1,68 @@
+ntdll: commit the ARM64EC code map as it is read, on macOS
+
+The map has one bit for each 4K page of the address space, 4 GB in all, and says which pages
+hold ARM64EC code. FEX reads it at every indirect jump and ntdll reads it in RtlIsEcCode, for
+any address, so upstream commits all of it read-only and commits the parts that cover loaded
+modules writable. Nearly all of it is never looked at.
+
+That is free on Linux, where reading an untouched page gives the shared zero page. macOS has
+no such page: a page that is read becomes real memory and counts in the footprint. A program
+that reads through its committed memory pays for the whole map. Arknights: Endfield does: with
+FEX's lookup tables fixed (patches/fex/0005) it still had 3.6 GB in this map three minutes
+after starting.
+
+On macOS the map now starts out reserved. The first read of a page of it faults,
+virtual_handle_fault commits that host page read-only (leaving alone the 4K pages already
+committed writable) and the read runs again. A reader that asks first what is committed, as a
+scanner does, no longer sees the unused parts. The cost is one fault for each 512 MB of
+address space a program jumps into.
+
+tests/runtime/scan-memory.c reads every committed page with 16 idle x64 threads alive: 4.5 GB
+before (9 GB without the FEX patch), 370 MB after.
+
+--- a/dlls/ntdll/unix/virtual.c	2026-11-18 15:16:34
++++ b/dlls/ntdll/unix/virtual.c	2026-11-18 15:26:22
+@@ -2733,7 +2733,17 @@
+     SIZE_T size = ((ULONG_PTR)address_space_limit + page_size) >> (page_shift + 3);  /* one bit per page */
+ 
+     size = ROUND_SIZE( 0, size, host_page_mask );
++#ifdef __APPLE__
++    /* FineWine: the map is 4 GB, one bit for each page of the address space, and almost all of
++     * it is never looked at. Upstream commits all of it read-only, which costs nothing where
++     * reading an untouched page gives the shared zero page. macOS has no such page: every page
++     * that is read becomes real memory, and a program that reads through its committed memory
++     * (anti-cheat does) pays the whole 4 GB. So it starts out reserved, and a page is committed
++     * the first time something reads it, in virtual_handle_fault. */
++    status = map_view( &arm64ec_view, NULL, size, MEM_TOP_DOWN, VPROT_READ, 0, 0, 0 );
++#else
+     status = map_view( &arm64ec_view, NULL, size, MEM_TOP_DOWN, VPROT_READ | VPROT_COMMITTED, 0, 0, 0 );
++#endif
+     if (status)
+     {
+         ERR( "failed to allocate ARM64EC map: %08x\n", status );
+@@ -4596,6 +4606,25 @@
+     }
+ #endif
+ 
++#ifdef __APPLE__
++    /* FineWine: the ARM64EC code map is committed as it is read (see alloc_arm64ec_map). Only
++     * the pages not committed yet are touched: ones that hold code ranges are writable. */
++    if (arm64ec_view && err == EXCEPTION_READ_FAULT &&
++        (char *)addr >= (char *)arm64ec_view->base && (char *)addr < (char *)arm64ec_view->base + arm64ec_view->size &&
++        !(get_page_vprot( addr ) & VPROT_COMMITTED))
++    {
++        char *ptr, *end = min( page + host_page_size, (char *)arm64ec_view->base + arm64ec_view->size );
++
++        for (ptr = page; ptr < end; ptr += page_size)
++            if (!(get_page_vprot( ptr ) & VPROT_COMMITTED))
++                set_page_vprot( ptr, page_size, VPROT_READ | VPROT_COMMITTED );
++        mprotect_range( page, end - page, 0, 0 );
++        mutex_unlock( &virtual_mutex );
++        rec->ExceptionCode = STATUS_SUCCESS;
++        return STATUS_SUCCESS;
++    }
++#endif
++
+ #if defined(__APPLE__) && defined(__aarch64__)
+     /* FineWine: a page that Windows has as writable and executable is one or the other on the
+      * Mac side. Running it while it is writable, or writing it while it is executable, lands

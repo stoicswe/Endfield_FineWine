@@ -132,16 +132,16 @@ else
   else
     fail "could not build tests/runtime/suspend-spin.c"; tail -n 3 "$WORK/suspend-spin-build.log"
   fi
-  # A program that reads through its own writable memory (anti-cheat does) must not turn each
-  # thread's FEX lookup tables into real memory: 272 MB a thread, 40 GB in Arknights: Endfield.
-  # FEX now commits them 64 KB at a time under Wine, as it does on Windows. patches/fex/0005.
+  # A program that reads through its own memory (anti-cheat does) must not turn FEX's lookup
+  # tables (272 MB a thread) or Wine's ARM64EC code map (4 GB) into real memory; Arknights:
+  # Endfield reached 40 GB. Both are now committed as they are used. patches/fex/0005, runtime 0035.
   if "$MINGW" -O1 -o "$WORK/scan-memory.exe" "$REPO/tests/runtime/scan-memory.c" >"$WORK/scan-memory-build.log" 2>&1; then
     mkdir -p "$WORK/scan-memory"
     out="$(FINEWINE_MEMORY_TRACE="$WORK/scan-memory" "$RT/bin/wine" "$WORK/scan-memory.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
     mb="$(cat "$WORK/scan-memory"/scan-memory-*.log 2>/dev/null | sed -n 's/.*totals footprint=\([0-9]*\).*/\1/p' | tail -n 1)"
     case "$out" in "scan-memory: ok "*)
-      if [ -n "$mb" ] && [ "$mb" -lt 1000 ]; then pass "x64: reading through all writable memory with 16 threads alive costs ${mb} MB"
-      else fail "x64: reading through all writable memory grew the program to ${mb:-?} MB"; fi ;;
+      if [ -n "$mb" ] && [ "$mb" -lt 1000 ]; then pass "x64: reading through all committed memory with 16 threads alive costs ${mb} MB"
+      else fail "x64: reading through all committed memory grew the program to ${mb:-?} MB"; fi ;;
       *) fail "the memory scan test failed: $out" ;; esac
   else
     fail "could not build tests/runtime/scan-memory.c"; tail -n 3 "$WORK/scan-memory-build.log"
