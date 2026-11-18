@@ -207,6 +207,46 @@ final class RealDriveCycleTests: XCTestCase {
             XCTAssertTrue(prefix.isInitialized)
             XCTAssertEqual(service.prefixes.drives.defaultPlace, prefix.place)
             print("back: \(prefix.directory.path)")
+        case "copies":
+            // Move the drive's prefix to this Mac and back, snapshot it both ways and restore,
+            // running an x64 program (FINEWINE_TEST_EXE, prints "hello from x64") after each.
+            let exe = URL(fileURLWithPath: try XCTUnwrap(env["FINEWINE_TEST_EXE"]))
+            func runs(_ prefix: Prefix, _ step: String) throws {
+                let result = try service.runner.run(try service.planner(for: prefix).plan(forExecutableAt: exe))
+                XCTAssertTrue(result.output.contains("hello from x64"), "\(step): \(result.output)")
+                print("\(step): ran from \(prefix.directory.path)")
+            }
+            func timed<T>(_ step: String, _ body: () throws -> T) rethrows -> T {
+                let start = Date()
+                defer { print("\(step): \(String(format: "%.1f", Date().timeIntervalSince(start))) s") }
+                return try body()
+            }
+            let onDrive = try XCTUnwrap(service.prefixes.list().first)
+            guard case .drive = onDrive.place else { return XCTFail("run the create phase first") }
+            try runs(onDrive, "on the drive")
+            let home = try timed("move to this Mac") { try service.movePrefix(onDrive, to: .thisMac) }
+            XCTAssertEqual(home.place, .thisMac)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: onDrive.directory.path))
+            for reg in ["system.reg", "user.reg", "userdef.reg"] {
+                let text = (try? String(contentsOf: home.directory.appendingPathComponent(reg), encoding: .utf8)) ?? ""
+                XCTAssertFalse(text.contains(onDrive.directory.path), "\(reg) names the old place")
+            }
+            try runs(home, "after the move")
+
+            let clone = try timed("snapshot next to it (clone)") { try service.takeSnapshot(of: home, note: "clone") }
+            let copy = try timed("snapshot on the drive (copy)") { try service.takeSnapshot(of: home, note: "copy", on: onDrive.place) }
+            print("snapshot sizes: \(clone.bytes) bytes; on the drive at \(copy.directory.path)")
+            let marker = home.driveC.appendingPathComponent("after-snapshot.txt")
+            try Data("x".utf8).write(to: marker)
+            let restored = try timed("restore from the drive") {
+                try service.restoreSnapshot(copy, over: home, keepingCurrent: false).prefix
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+            try runs(restored, "after the restore")
+
+            let back = try timed("move back to the drive") { try service.movePrefix(restored, to: onDrive.place) }
+            try runs(back, "back on the drive")
+            for snapshot in service.prefixes.snapshots(of: back.id) { try service.prefixes.deleteSnapshot(snapshot) }
         default: XCTFail("unknown phase \(phase)")
         }
     }

@@ -133,7 +133,9 @@ public struct PrefixStore {
     /// readable metadata are skipped.
     public func list() -> [Prefix] {
         availableFolders().flatMap { place, folder in
-            ((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []).compactMap {
+            // Hidden folders are a move, snapshot restore or copy under way (see `recoverInterruptedWork`).
+            ((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
+                .filter { !$0.lastPathComponent.hasPrefix(".") }.compactMap {
                 load(directory: $0).map { var prefix = $0; prefix.place = place; return prefix }
             }
         }
@@ -154,6 +156,7 @@ public struct PrefixStore {
     @discardableResult
     public func refreshDrives() -> [PrefixDrive] {
         let added = drives.discover()
+        recoverInterruptedWork()
         var byDrive: [String: [Prefix]] = [:]
         for prefix in list() {
             if case .drive(let uuid) = prefix.place { byDrive[uuid, default: []].append(prefix) }

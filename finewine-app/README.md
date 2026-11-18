@@ -51,6 +51,12 @@ and will later become one function of this app.
   on. A drive's prefixes leave the list when it is unplugged (or show greyed out, saying which
   drive to connect) and come back, ready to run, when it is plugged in again. See
   [docs/project-information/27-prefixes-on-external-drives.md](../docs/project-information/27-prefixes-on-external-drives.md).
+- **Moving and snapshots.** A prefix moves between this Mac and a drive from its right-click
+  menu or Details tab, with progress and Cancel, and shortcuts keep working. A snapshot saves the
+  whole prefix next to it (an instant APFS clone) or on another drive (a backup). A prefix can be
+  restored from a snapshot, or a snapshot made into a new prefix, even after the prefix was
+  deleted. See
+  [docs/project-information/28-moving-prefixes-and-snapshots.md](../docs/project-information/28-moving-prefixes-and-snapshots.md).
 - **Configuration.** Windows version and build number, Direct3D backend, Retina mode, DPI,
   virtual desktop, Metal overlay, full-screen behaviour (a Mac full-screen Space by default), Game Mode (programs that use Direct3D, Vulkan or OpenGL run as games), starting HoYoverse games through a Steam stand-in, DLSS through MetalFX, reporting an NVIDIA GPU (the ids of an RTX 5080, for games that only offer DLSS on NVIDIA), MSync, the hypervisor flag, macOS styling for Windows controls,
   Mac-style app icons (running programs and shortcut apps get the program's largest icon on a
