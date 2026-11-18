@@ -9,6 +9,8 @@
 #   4a. creates 300 x64 threads that stay alive, quickly (tests/runtime/threads.c)
 #   4b. suspends an x64 thread spinning in a tight loop and reads its registers
 #      (tests/runtime/suspend-spin.c)
+#   4c. writes a memory log when asked: large allocations with their caller, and totals
+#      (tests/runtime/memtrace.c)
 #   5. creates a Vulkan device and renders with Direct3D 12, both through MoltenVK, from ARM64 and
 #      x64, with and without DXMT selected (tests/runtime/vulkan-device.c, d3d12-clear.c)
 #   5a. builds acceleration structures (in command buffers and on the host), compacts, serializes
@@ -26,6 +28,8 @@
 #   6a. draws Chinese, Japanese and Korean text, and uses each language's code page when asked
 #      (tests/runtime/cjk.c)
 #   6b. gives the Dock a program's largest icon, drawn as a Mac app icon (tests/runtime/app-icon.c)
+#   6c. with FINEWINE_TEST_ACTIVATE=1 (it switches apps three times): switching to a program does
+#      not make Wine read the displays again when they have not changed (tests/runtime/idle-window.c)
 #   7. boots a second prefix with MSync on
 # Wine writes .update-timestamp as soon as a prefix is set up; the registry files only appear
 # when its server exits, so they are not a usable marker. No windows or dialogs are shown. Exit status is 0 only if every check passes.
@@ -127,6 +131,24 @@ else
       *) fail "suspending a spinning x64 thread hangs or fails: $out" ;; esac
   else
     fail "could not build tests/runtime/suspend-spin.c"; tail -n 3 "$WORK/suspend-spin-build.log"
+  fi
+  # FINEWINE_MEMORY_TRACE=<folder> makes each program log its large memory operations, with the
+  # modules that asked for them, and totals with its footprint every five seconds (patch 0034).
+  if "$MINGW" -O1 -o "$WORK/memtrace.exe" "$REPO/tests/runtime/memtrace.c" >"$WORK/memtrace-build.log" 2>&1; then
+    mkdir -p "$WORK/memtrace"
+    out="$(FINEWINE_MEMORY_TRACE="$WORK/memtrace" "$RT/bin/wine" "$WORK/memtrace.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    mlog="$(ls "$WORK/memtrace"/memtrace-*.log 2>/dev/null | head -n 1)"
+    missing=""
+    for want in 'reserve+commit .*size=32.00 .*callers: .*memtrace.exe' 'reset .*size=32.00' 'decommit .*size=32.00' \
+                'release .*size=32.00' 'map .*size=16.00' 'unmap .*size=16.00' 'totals footprint=[1-9].* decommit-kept=[0-9]'; do
+      [ -n "$mlog" ] && [ "$(grep -c -e "$want" "$mlog")" -ge 1 ] || missing="$missing [$want]"
+    done
+    quiet="$("$RT/bin/wine" "$WORK/memtrace.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    if [ "$out" = "memtrace: ok" ] && [ "$quiet" = "memtrace: ok" ] && [ -z "$missing" ]; then
+      pass "memory log: large allocations with their caller, resets, decommits, mappings and totals with the footprint"
+    else fail "memory log is missing lines:$missing (program said '$out')"; fi
+  else
+    fail "could not build tests/runtime/memtrace.c"; tail -n 3 "$WORK/memtrace-build.log"
   fi
   # 32-bit programs cannot run here (no memory below 4 GB). An installer that starts the 32-bit
   # setup program of a runtime Wine has built in must see it succeed; any other 32-bit program
@@ -660,6 +682,21 @@ fi
 
 # MSync announces itself only once per user session, so the check is that the prefix boots
 # with it switched on; a broken MSync hangs or aborts here.
+# Switching to a Wine program made Wine read every display again (modes, EDID, GPUs, registry) on
+# the program's message thread: 2.4 seconds in a game at each switch back to it. It now does so
+# only when the displays changed (patch 0033). The check switches apps, so it runs only when asked.
+if [ "${FINEWINE_TEST_ACTIVATE:-0}" = 1 ] && [ -x "$MINGW" ] && "$MINGW" -O1 -o "$WORK/idle-window.exe" "$REPO/tests/runtime/idle-window.c" -luser32 -lgdi32 >"$WORK/idle-build.log" 2>&1; then
+  WINEDEBUG=trace+display "$RT/bin/wine" "$WORK/idle-window.exe" 9 >"$WORK/idle.out" 2>"$WORK/idle.err" </dev/null &
+  for _ in $(seq 1 60); do grep -c ready "$WORK/idle.out" >/dev/null 2>&1 && break; sleep 0.25; done
+  sleep 1; idle_pid="$(pgrep -f 'idle-window.exe' | head -n 1)"
+  swift "$REPO/tests/runtime/activate.swift" "$idle_pid" 3 >/dev/null 2>&1
+  sleep 1; reads="$(grep -c 'GPU count' "$WORK/idle.err")"; wait
+  if [ "$reads" -le 1 ]; then pass "switching to a program three times read the displays $reads time(s), not three"
+  else fail "switching to a program three times read the displays $reads times"; fi
+else
+  echo "  - display reads on switching to a program not checked: it switches apps (FINEWINE_TEST_ACTIVATE=1 to run it)"
+fi
+
 export WINEPREFIX="$WORK/pfx2" WINEMSYNC=1 WINEDEBUG=-all
 if "$RT/bin/wine" wineboot --init </dev/null >"$WORK/msync.log" 2>&1 && [ -f "$WINEPREFIX/.update-timestamp" ] \
    && [ "$("$RT/bin/wine" cmd /c echo msync-ok </dev/null 2>/dev/null | tr -d '\r')" = "msync-ok" ]; then

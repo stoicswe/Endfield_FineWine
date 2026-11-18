@@ -143,6 +143,8 @@
 "detail.remove_shortcut" = "Remove Shortcut App";
 "detail.make_shortcut" = "Make Shortcut App";
 "detail.more_actions" = "More actions";
+"detail.diagnostics" = "Diagnostics";
+"detail.play_memory_log" = "Play with Memory Log";
 "detail.remove_from_finewine" = "Remove from FineWine…";
 "detail.remove_program_title" = "Remove “%@” from FineWine?";
 "detail.remove_program_msg" = "Its entry and shortcut app are removed. The program's files stay in the prefix; use Add or Remove Programs under Wine Tools to uninstall it.";

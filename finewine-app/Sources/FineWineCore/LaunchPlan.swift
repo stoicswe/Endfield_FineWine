@@ -144,6 +144,13 @@ public struct LaunchPlanner {
         return env
     }
 
+    // MARK: Memory trace
+
+    /// The environment variable naming the folder the runtime writes memory logs into, one file
+    /// per process: every reservation, commit, decommit, release and mapping of 8 MB or more
+    /// with the modules that asked for it, and totals every five seconds.
+    public static let memoryTraceVariable = "FINEWINE_MEMORY_TRACE"
+
     // MARK: Game Mode
 
     /// The environment variable naming the file the runtime creates when a program first uses
@@ -195,7 +202,11 @@ public struct LaunchPlanner {
     }
 
     /// Runs a program installed in the prefix.
-    public func plan(for program: Program) throws -> LaunchPlan {
+    ///
+    /// With `memoryTraceFolder`, the runtime writes a memory log for the program and everything
+    /// it starts into that folder: its large allocations with their likely callers, and running
+    /// totals with the memory footprint (see `memoryTraceVariable`).
+    public func plan(for program: Program, memoryTraceFolder: URL? = nil) throws -> LaunchPlan {
         var arguments = [program.windowsPath]
         if let profile, profile.matches(windowsPath: program.windowsPath) {
             arguments += profile.launchArguments.filter { !program.arguments.contains($0) }
@@ -222,6 +233,7 @@ public struct LaunchPlanner {
         }
         // The program's own variables keep the last word, as everywhere else.
         for (name, value) in gameModeEnvironment(for: program) where env[name] == nil { env[name] = value }
+        if let memoryTraceFolder { env[Self.memoryTraceVariable] = memoryTraceFolder.path }
         return LaunchPlan(executable: try wine(), arguments: arguments,
                           environment: env, workingDirectory: cwd ?? prefix.directory)
     }

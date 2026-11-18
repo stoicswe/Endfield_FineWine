@@ -557,14 +557,14 @@ final class AppModel: ObservableObject {
         return StatusSplash.shared.showLaunch(title: tr("splash.starting_program", name), icon: icon, updatingPrefix: updating)
     }
 
-    func launch(_ program: Program, in prefix: Prefix) {
+    func launch(_ program: Program, in prefix: Prefix, memoryTrace: Bool = false) {
         let box = PIDBox()
         let prefixID = prefix.id
         // The icon of the program's shortcut app, when it has one: that is the program's own.
         let icon = program.shortcutPath.flatMap { FileManager.default.fileExists(atPath: $0) ? NSWorkspace.shared.icon(forFile: $0) : nil }
         let status = startingStatus(program.name, icon: icon, in: prefix)
         do {
-            let pid = try service.launch(programID: program.id, in: prefix, onExit: exitHandler(prefixID: prefix.id, pidBox: box) {
+            let pid = try service.launch(programID: program.id, in: prefix, memoryTrace: memoryTrace, onExit: exitHandler(prefixID: prefix.id, pidBox: box) {
                 StatusSplash.shared.hide(status)
                 AppModel.shared.adoptNewPrograms(in: prefixID)
             })

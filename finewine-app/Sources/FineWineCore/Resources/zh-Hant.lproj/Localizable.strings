@@ -143,6 +143,8 @@
 "detail.remove_shortcut" = "移除捷徑 App";
 "detail.make_shortcut" = "製作捷徑 App (.app)";
 "detail.more_actions" = "更多動作";
+"detail.diagnostics" = "診斷";
+"detail.play_memory_log" = "執行並記錄記憶體記錄檔";
 "detail.remove_from_finewine" = "從 FineWine 中移除…";
 "detail.remove_program_title" = "從 FineWine 中移除「%@」？";
 "detail.remove_program_msg" = "將移除其列表項目與捷徑 App。容器內的程式檔案將保留；若要解除安裝，請使用「Wine 工具」下的「新增或移除程式」。";

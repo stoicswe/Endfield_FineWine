@@ -330,6 +330,13 @@ public struct PrefixService {
             .appendingPathComponent("\(formatter.string(from: date)) \(safe).log")
     }
 
+    /// Where the memory logs of a launch go: a folder named after its log file,
+    /// `<timestamp> <name> memory`.
+    public func memoryTraceFolder(forLog log: URL) -> URL {
+        log.deletingLastPathComponent()
+            .appendingPathComponent(log.deletingPathExtension().lastPathComponent + " memory", isDirectory: true)
+    }
+
     /// Puts the runtime's stand-in for Steam where Steam is in a prefix, unless that very file
     /// is there already. A real Steam installed in the prefix is left alone and used instead.
     func installSteamStandIn(from runtime: WineRuntime, in prefix: Prefix) throws {
@@ -350,7 +357,10 @@ public struct PrefixService {
 
     /// Starts a program and returns its pid.
     @discardableResult
-    public func launch(programID: UUID, in prefix: Prefix,
+    ///
+    /// With `memoryTrace`, the launch also gets a folder beside its log file
+    /// (`memoryTraceFolder`) that the runtime fills with memory logs.
+    public func launch(programID: UUID, in prefix: Prefix, memoryTrace: Bool = false,
                        onExit: @escaping @Sendable (Int32) -> Void = { _ in }) throws -> Int32 {
         guard let program = prefix.program(id: programID) else {
             throw FineWineError("That program is no longer in “\(prefix.name)”.")
@@ -366,8 +376,15 @@ public struct PrefixService {
         keepDesktopInPrefix(prefix)
         refreshEmulator(in: prefix, from: planner.runtime)
         if planner.steamAppID(for: program) != nil { try installSteamStandIn(from: planner.runtime, in: prefix) }
-        return try runner.start(try planner.plan(for: program),
-                                logFile: logFile(for: prefix, name: program.name), onExit: onExit)
+        let log = logFile(for: prefix, name: program.name)
+        var traceFolder: URL?
+        if memoryTrace {
+            let folder = memoryTraceFolder(forLog: log)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            traceFolder = folder
+        }
+        return try runner.start(try planner.plan(for: program, memoryTraceFolder: traceFolder),
+                                logFile: log, onExit: onExit)
     }
 
     @discardableResult

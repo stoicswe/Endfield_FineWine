@@ -211,6 +211,14 @@ private struct ProgramCard: View {
                     Button(l10n.tr("detail.make_shortcut")) { model.createShortcut(for: program.id, in: prefix) }
                 }
                 Button(l10n.tr("app.edit"), action: edit)
+                Menu(l10n.tr("detail.diagnostics")) {
+                    Button(l10n.tr("detail.play_memory_log")) { model.launch(program, in: prefix, memoryTrace: true) }
+                    Button(l10n.tr("context.show_logs")) {
+                        let logs = model.service.paths.logs.appendingPathComponent(prefix.directory.lastPathComponent)
+                        try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+                        NSWorkspace.shared.open(logs)
+                    }
+                }
                 Divider()
                 Button(l10n.tr("detail.remove_from_finewine"), role: .destructive) { confirmingRemoval = true }
             } label: {
