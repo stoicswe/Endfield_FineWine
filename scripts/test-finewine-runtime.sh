@@ -622,6 +622,12 @@ if python3 -I "$REPO/tests/runtime/make-icons.py" "$ICONS" >"$WORK/icon-build.lo
       && pass "the Dock gets every size of a program's icon (4 of 4, up to 256 pixels), drawn as a 1024-pixel Mac app icon" \
       || fail "Dock icon not drawn as a Mac app icon (width $(width "$ICONS/round.png"))" ;;
     *) fail "the Dock did not get every size of the program's icon:"; echo "$log1" | grep -E "offered|entry" | head -n 5 ;; esac
+  # Game Mode's menu and notice take the icon from the bundle on disk, not from the Dock.
+  bundle="$(find "$WINEPREFIX/.finewine-apps" -maxdepth 2 -name 'icon-round*.app' 2>/dev/null | head -n 1)"
+  if [ -n "$bundle" ] && [ "$(plutil -extract CFBundleIconFile raw "$bundle/Contents/Info.plist" 2>/dev/null)" = AppIcon ] \
+     && sips -g pixelWidth "$bundle/Contents/Resources/AppIcon.icns" 2>/dev/null | grep -q 'pixelWidth: 1024'; then
+    pass "the program's bundle carries its icon too (AppIcon.icns, 1024 pixels), which is what Game Mode shows"
+  else fail "no icon in the program's bundle (${bundle:-no bundle found})"; fi
   log2="$(dock "$ICONS/tiny.png" "$ICONS/icon-tiny.exe" own)"
   case "$log2" in *"Dock icon now 32 pixels"*) case "$log2" in *"Dock icon now 256"*) fail "Wine's stand-in icon replaced a program's own" ;;
       *) pass "a window without an icon does not put Wine's logo in the Dock in place of the program's own" ;; esac ;;
