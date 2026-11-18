@@ -303,6 +303,7 @@ struct SettingsView: View {
                 }
 
                 DrivesCard()
+                SnapshotsSettingsCard()
 
                 Card(title: l10n.tr("settings.discord_card"), symbol: "bubble.left.and.bubble.right",
                      footnote: l10n.tr("settings.discord_footnote")) {
@@ -480,6 +481,10 @@ struct PrefixContextMenu: View {
         }
         .disabled(busy)
         Button(l10n.tr("context.duplicate")) { Task { await model.duplicate(prefix) } }.disabled(busy)
+        Menu(l10n.tr("move.menu")) { MoveDestinations(prefix: prefix) }
+            .disabled(busy || model.isRunning(prefix))
+        Button(l10n.tr("snapshot.take_now")) { Task { await model.takeSnapshot(of: prefix) } }
+            .disabled(busy || model.isRunning(prefix))
         Button(l10n.tr("context.delete"), role: .destructive) {
             if Panels.confirm(title: l10n.tr("context.delete_confirm_title", prefix.name),
                               message: l10n.tr("context.delete_confirm_msg"),

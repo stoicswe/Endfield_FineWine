@@ -80,8 +80,15 @@ struct PrefixDetailView: View {
                 }
                 Spacer()
                 if let status = model.busy[prefix.id] {
-                    ProgressView().controlSize(.small)
-                    Text(status).foregroundStyle(.secondary)
+                    if let copy = model.copies[prefix.id] {
+                        ProgressView(value: copy.fraction).frame(width: 90)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text(status).foregroundStyle(.secondary).monospacedDigit()
+                    if model.copies[prefix.id] != nil {
+                        Button(l10n.tr("app.cancel")) { model.cancelCopy(prefix.id) }.fwButton()
+                    }
                 } else if model.isRunning(prefix) {
                     Menu {
                         Button(l10n.tr("menu.shut_down")) { Task { await model.shutDown(prefix) } }
@@ -448,9 +455,14 @@ private struct DetailsTab: View {
                 info(l10n.tr("details.created"), prefix.metadata.createdAt.formatted(date: .abbreviated, time: .shortened))
                 info(l10n.tr("drive.stored_on_label"), model.placeName(prefix.place))
                 info(l10n.tr("details.location"), prefix.directory.path)
-                Button(l10n.tr("app.show_in_finder")) { NSWorkspace.shared.activateFileViewerSelecting([prefix.directory]) }
-                    .fwButton()
+                HStack {
+                    Button(l10n.tr("app.show_in_finder")) { NSWorkspace.shared.activateFileViewerSelecting([prefix.directory]) }
+                        .fwButton()
+                    MoveMenu(prefix: prefix)
+                }
             }
+
+            SnapshotsCard(prefix: prefix)
 
             Card(title: l10n.tr("details.duplicate_delete_card"), symbol: "square.on.square") {
                 Row(label: l10n.tr("details.duplicate_label"), detail: l10n.tr("details.duplicate_detail")) {

@@ -30,6 +30,10 @@ final class AppModel: ObservableObject {
     @Published var running: [UUID: Set<Int32>] = [:]
     /// What a prefix is busy with ("Setting up…"), shown in place of its controls.
     @Published var busy: [UUID: String] = [:]
+    /// Copies under way (a move, snapshot or restore), by prefix, so they can be cancelled.
+    @Published var copies: [UUID: CopyProgress] = [:]
+    /// Every snapshot on this Mac and on the drives plugged in, newest first.
+    @Published var snapshots: [PrefixSnapshot] = []
     @Published var alert: AppAlert?
     @Published var isCreatingPrefix = false
     /// The prefix being made for a file opened from Finder, shown while it is set up.
@@ -177,6 +181,7 @@ final class AppModel: ObservableObject {
         connectedDrives = Set(drives.map(\.uuid).filter { service.prefixes.drives.mountedVolume($0) != nil })
         runtimes = service.runtimes.list()
         profiles = service.profiles.list()
+        snapshots = service.prefixes.snapshots()
         if selection == nil || !prefixes.contains(where: { $0.id == selection }) {
             selection = prefixes.first?.id
         }
