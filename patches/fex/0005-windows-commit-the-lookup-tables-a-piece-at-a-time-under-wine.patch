@@ -1,0 +1,67 @@
+windows: commit the lookup tables a piece at a time under Wine too
+
+Each emulated thread has a 272 MB reservation for its block lookup tables (128 MB of page
+pointers, 128 MB of page memory, 16 MB for L1), committed when a fault says a part is needed.
+On Windows 64 KB is committed around the fault. Under Wine everything from the start of the
+reservation to the end of the faulting region was committed at once, so in practice all 272 MB
+of every thread was committed memory from the thread's first block on.
+
+Committed memory can be read. On macOS a page of anonymous memory that is only ever read still
+becomes a real page (there is no shared zero page), and it counts in the process's footprint
+until it is decommitted. Arknights: Endfield reads through its writable memory, in address
+order, at about 100 MB a second. With some 160 threads that walked through up to 44 GB of
+tables that held nearly nothing: the footprint went from 1 GB to 40 GB in seven minutes on a
+24 GB Mac, and the machine swapped. The memory log (runtime patch 0034) and vmmap showed it:
+tables of threads that had never run more than a few blocks were fully resident, L1 included,
+in one contiguous run of addresses that ended in the middle of a table.
+
+Wine now gets the same 64 KB pieces as Windows, aligned and kept inside the reservation. A
+thread that fills its tables takes about 4000 more faults to do so. tests/runtime/scan-memory.c
+reads all writable memory with 16 idle threads alive: about 5 GB before, about 370 MB after.
+
+diff --git a/Source/Windows/Common/OvercommitTracker.h b/Source/Windows/Common/OvercommitTracker.h
+index ba521e8..9befa48 100644
+--- a/Source/Windows/Common/OvercommitTracker.h
++++ b/Source/Windows/Common/OvercommitTracker.h
+@@ -2,6 +2,7 @@
+ #pragma once
+ 
+ #include <FEXCore/Utils/IntervalList.h>
++#include <algorithm>
+ #include <thread>
+ #include <shared_mutex>
+ 
+@@ -12,7 +13,7 @@ namespace FEX::Windows {
+  */
+ class OvercommitTracker {
+ private:
+-  bool IsWine;
++  [[maybe_unused]] bool IsWine;
+   FEXCore::IntervalList<uint64_t> OvercommitIntervals;
+   std::shared_mutex OvercommitIntervalsMutex;
+ 
+@@ -35,16 +36,14 @@ public:
+     auto Query = OvercommitIntervals.Query(FaultAddress);
+ 
+     if (Query.Enclosed) {
+-      if (IsWine) {
+-        MEMORY_BASIC_INFORMATION Info;
+-        NtQueryVirtualMemory(NtCurrentProcess(), reinterpret_cast<void*>(FaultAddress), MemoryBasicInformation, &Info, sizeof(Info), nullptr);
+-        const auto CommitSize = reinterpret_cast<SIZE_T>(Info.BaseAddress) + Info.RegionSize - reinterpret_cast<SIZE_T>(Info.AllocationBase);
+-        VirtualAlloc(reinterpret_cast<void*>(Info.AllocationBase), CommitSize, MEM_COMMIT, PAGE_READWRITE);
+-      } else {
+-        static constexpr size_t MaxFaultCommitSize = 1024 * 64;
+-        const auto AlignedFaultAddress = reinterpret_cast<void*>(FaultAddress & FEXCore::Utils::FEX_PAGE_MASK);
+-        VirtualAlloc(AlignedFaultAddress, std::min(Query.Size, MaxFaultCommitSize), MEM_COMMIT, PAGE_READWRITE);
+-      }
++      // FineWine: commit a small piece around the fault, under Wine as on Windows. Committing the
++      // whole reservation makes all of it readable, and on macOS a page that is only ever read
++      // still costs memory (there is no shared zero page): a program that reads through its own
++      // committed memory then turns each thread's 272 MB of lookup tables into real memory.
++      static constexpr uint64_t FaultCommitSize = 1024 * 64;
++      const uint64_t Start = std::max<uint64_t>(FaultAddress & ~(FaultCommitSize - 1), Query.Interval.Offset);
++      const uint64_t End = std::min<uint64_t>(Start + FaultCommitSize, Query.Interval.End);
++      VirtualAlloc(reinterpret_cast<void*>(Start), End - Start, MEM_COMMIT, PAGE_READWRITE);
+       return true;
+     }
+     return false;

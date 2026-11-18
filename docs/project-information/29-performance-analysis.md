@@ -164,3 +164,37 @@ the memory trace first.
   render-scale and FSR 2 settings; FineWine's automatic MetalFX spatial upscaling applies to
   Direct3D 11 games that render smaller than their window.
 - **Open: the launcher's CPU use behind the game, and Endfield's memory growth.**
+
+## Endfield's memory growth: found and fixed (2026-11-18)
+
+A program can now be started with a memory log: its "…" menu, Diagnostics, Play with Memory
+Log (runtime patch 0034, `FINEWINE_MEMORY_TRACE`). The log has a line for each memory operation
+of 8 MB or more with its likely callers, and totals with the process's footprint every five
+seconds. Endfield was run this way for seven minutes.
+
+What the log and `vmmap` showed:
+
+- The footprint rose from 1 GB at 15 s to 18.6 GB at two minutes and 40.7 GB at seven, about
+  100 MB a second.
+- The game did not ask for it. Reset requests: none. Decommits too small to free a 16K page:
+  2 GB over the whole run. Both earlier suspects are ruled out.
+- The memory was in FEX's lookup tables. Each emulated thread reserves 272 MB for them (128 MB
+  of page pointers, 128 MB of page memory, 16 MB for the first-level cache). 163 were alive at
+  four minutes. Of the 27 GB footprint then, 17.8 GB was in these tables.
+- The tables were full in threads that had never done anything: one commit at birth, no other
+  operation, and all 272 MB resident. Sorted by address, every table in one contiguous run of
+  addresses was full, every table outside it empty, and the run ended in the middle of a table.
+  Something was reading through the process's memory in address order.
+
+Why reading costs memory: under Wine, FEX committed the whole 272 MB at a thread's first block.
+Committed memory is readable, and macOS has no shared zero page, so reading a page that was
+never written still allocates it. `tests/runtime/scan-memory.c` shows it without the game: a
+program with 16 idle threads that reads its own writable memory reached 5 GB.
+
+The fix (fex patch 0005) commits 64 KB around each fault, which is what FEX does on Windows.
+Memory that FEX has not used stays reserved, cannot be read, and costs nothing. The test
+program now ends at 370 MB. Not yet run with the game.
+
+Still open from this run: the game really does fill these tables in its busy threads (up to
+128 MB of page memory a thread, by FEX's design of 64 KB for each page of game code a thread
+runs). How much that is with the fix in needs another logged run.
