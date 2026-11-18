@@ -78,7 +78,7 @@
 "settings.remove_external_msg" = "FineWine에서 해당 폴더 연결을 해제하며, 원본 폴더는 삭제되지 않습니다.";
 "settings.remove_users_prefix" = " 다음 프리픽스들이 이 런타임을 사용 중이며 다른 런타임이 필요합니다: %@.";
 "settings.discord_card" = "Discord 연동";
-"settings.discord_footnote" = "활동 상태는 사용자가 지정한 Discord 애플리케이션 이름과 이미지로 표시됩니다. discord.com/developers(New Application)에서 생성 후 해당 Application ID를 여기에 입력하십시오. 데이터는 이 Mac의 Discord 앱으로만 전송됩니다.";
+"settings.discord_footnote" = "활동은 FineWine 자체 Discord 애플리케이션으로 표시됩니다. 직접 만든 것을 쓰려면(Discord에 그 이름과 그림이 표시됨) discord.com/developers에서 만들고 Application ID를 여기에 붙여 넣으세요. 비워 두면 FineWine 것을 사용합니다. 이 Mac의 Discord 앱 외에는 아무것도 보내지 않습니다.";
 "settings.discord_toggle_title" = "Discord에 플레이 중인 게임 표시";
 "settings.discord_toggle_desc" = "FineWine에서 시작한 프로그램이 실행되는 동안 해당 이름과 플레이 시간이 Discord 상태에 표시됩니다. Wine 자체 도구 및 설치 프로그램은 표시되지 않습니다.";
 "settings.discord_app_id" = "Application ID";
@@ -509,3 +509,4 @@
 "snapshot.err_other_prefix" = "그 스냅샷은 다른 프리픽스의 것입니다.";
 "snapshot.err_damaged" = "스냅샷이 불완전하거나 손상되었습니다. 프리픽스 사본에 FineWine 설정 파일이 없습니다.";
 "snapshot.err_outside" = "그 폴더는 FineWine 스냅샷이 아니므로 그대로 두었습니다.";
+"settings.discord_app_id_placeholder" = "FineWine 기본값(비워 두기)";

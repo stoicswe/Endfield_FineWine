@@ -78,7 +78,7 @@
 "settings.remove_external_msg" = "FineWine will forget this folder; the folder itself is not deleted.";
 "settings.remove_users_prefix" = " These prefixes use it and will need another runtime: %@.";
 "settings.discord_card" = "Discord";
-"settings.discord_footnote" = "The activity is filed under a Discord application, whose name and picture you choose: make one at discord.com/developers (New Application), and paste its Application ID here. Nothing is sent anywhere but to the Discord app on this Mac.";
+"settings.discord_footnote" = "The activity appears under FineWine’s own Discord application. To use your own instead (its name and picture are what Discord shows), make one at discord.com/developers and paste its Application ID here; leave it empty for FineWine’s. Nothing is sent anywhere but to the Discord app on this Mac.";
 "settings.discord_toggle_title" = "Show what I'm playing in Discord";
 "settings.discord_toggle_desc" = "While a program started from FineWine is running, its name is your Discord activity, with how long you have been playing. Wine's own tools and installers are never shown.";
 "settings.discord_app_id" = "Application ID";
@@ -509,3 +509,4 @@
 "snapshot.err_other_prefix" = "That snapshot is of another prefix.";
 "snapshot.err_damaged" = "The snapshot is incomplete or damaged: its copy of the prefix has no FineWine settings file.";
 "snapshot.err_outside" = "That folder isn’t one of FineWine’s snapshots, so it was left alone.";
+"settings.discord_app_id_placeholder" = "FineWine’s (leave empty)";

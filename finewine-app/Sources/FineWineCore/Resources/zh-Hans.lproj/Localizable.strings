@@ -78,7 +78,7 @@
 "settings.remove_external_msg" = "FineWine 将不再使用该文件夹，原文件夹不会被删除。";
 "settings.remove_users_prefix" = " 以下容器正在使用该运行时，需要重新指定运行时：%@。";
 "settings.discord_card" = "Discord 状态";
-"settings.discord_footnote" = "活动将归属至指定的 Discord 应用，你可以在 discord.com/developers 创建应用（New Application）并将其 Application ID 粘贴至此处。数据仅在当前 Mac 本地与 Discord 客户端通信。";
+"settings.discord_footnote" = "活动会显示在 FineWine 自己的 Discord 应用程序下。若要改用你自己的（Discord 会显示它的名称和图片），请在 discord.com/developers 创建一个并将其 Application ID 粘贴到这里；留空则使用 FineWine 的。除了这台 Mac 上的 Discord 应用，不会向任何地方发送内容。";
 "settings.discord_toggle_title" = "在 Discord 中显示正在玩的游戏";
 "settings.discord_toggle_desc" = "当从 FineWine 启动的程序运行时，其名称与运行时间将作为 Discord 活动状态展示。Wine 自带工具及安装包不会被显示。";
 "settings.discord_app_id" = "Application ID";
@@ -509,3 +509,4 @@
 "snapshot.err_other_prefix" = "该快照属于另一个前缀。";
 "snapshot.err_damaged" = "快照不完整或已损坏：其前缀副本中没有 FineWine 设置文件。";
 "snapshot.err_outside" = "该文件夹不是 FineWine 的快照，因此未作改动。";
+"settings.discord_app_id_placeholder" = "FineWine 默认（留空）";

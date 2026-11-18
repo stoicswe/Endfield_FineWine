@@ -78,12 +78,21 @@ struct MainWindow: View {
             if model.showsDisconnectedPrefixes, !model.disconnectedPrefixes.isEmpty {
                 Section(l10n.tr("drive.not_connected_section")) {
                     ForEach(model.disconnectedPrefixes, id: \.prefix.id) { entry in
+                        // Not selectable: the prefix isn't here to show. Its id is a UUID like a
+                        // real prefix's, so without this a click selected a prefix that isn't
+                        // loaded and emptied the window.
                         DisconnectedPrefixRow(drive: entry.drive, prefix: entry.prefix)
+                            .selectionDisabled()
                     }
                 }
             }
         }
         .navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 320)
+        // Only prefixes that are here can be selected; anything else goes back to one that is.
+        .onChange(of: model.selection) { _, selected in
+            guard let selected, model.prefix(selected) == nil else { return }
+            model.selection = model.prefixes.first?.id
+        }
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Button {
@@ -113,7 +122,7 @@ struct MainWindow: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let prefix = model.prefix(model.selection) {
+        if let prefix = model.prefix(model.selection) ?? model.prefixes.first {
             PrefixDetailView(prefix: prefix).id(prefix.id)
         } else if model.usableRuntimes.isEmpty {
             EmptyState(symbol: "wineglass", title: l10n.tr("main.add_runtime_title"),
@@ -313,8 +322,9 @@ struct SettingsView: View {
                     }
                     Divider()
                     Row(label: l10n.tr("settings.discord_app_id"), detail: discordStatus) {
-                        TextField(l10n.tr("settings.discord_app_id"), text: Binding(get: { model.discordApplicationID },
-                                                                 set: { model.discordApplicationID = $0 }))
+                        TextField(l10n.tr("settings.discord_app_id_placeholder"),
+                                  text: Binding(get: { model.customDiscordApplicationID },
+                                                set: { model.customDiscordApplicationID = $0 }))
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 200)
                             .labelsHidden()

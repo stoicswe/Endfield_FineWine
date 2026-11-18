@@ -78,7 +78,7 @@
 "settings.remove_external_msg" = "FineWine 將不再取用該資料夾，原始資料夾不會被刪除。";
 "settings.remove_users_prefix" = " 以下容器正在使用此執行階段，需要重新指定執行階段：%@。";
 "settings.discord_card" = "Discord 狀態";
-"settings.discord_footnote" = "活動將歸屬至指定的 Discord 應用程式，你可以在 discord.com/developers 建立應用程式（New Application）並將其 Application ID 貼至此處。資料僅在目前 Mac 本機與 Discord 應用程式通訊。";
+"settings.discord_footnote" = "活動會顯示在 FineWine 自己的 Discord 應用程式下。若要改用你自己的（Discord 會顯示它的名稱和圖片），請在 discord.com/developers 建立一個並將其 Application ID 貼到這裡；留空則使用 FineWine 的。除了這台 Mac 上的 Discord App，不會傳送到任何地方。";
 "settings.discord_toggle_title" = "在 Discord 中顯示正在玩的遊戲";
 "settings.discord_toggle_desc" = "當自 FineWine 啟動的程式執行時，其名稱與執行時長將作為 Discord 活動狀態展示。Wine 自帶工具及安裝程式不會被顯示。";
 "settings.discord_app_id" = "Application ID";
@@ -509,3 +509,4 @@
 "snapshot.err_other_prefix" = "該快照屬於另一個前綴。";
 "snapshot.err_damaged" = "快照不完整或已損壞：其前綴副本中沒有 FineWine 設定檔。";
 "snapshot.err_outside" = "該資料夾不是 FineWine 的快照，因此未作更動。";
+"settings.discord_app_id_placeholder" = "FineWine 預設（留空）";

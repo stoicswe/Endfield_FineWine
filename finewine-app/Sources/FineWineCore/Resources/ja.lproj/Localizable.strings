@@ -78,7 +78,7 @@
 "settings.remove_external_msg" = "FineWine はこのフォルダの参照を解除します。元のフォルダ自体は削除されません。";
 "settings.remove_users_prefix" = " 次のプレフィックスがこれを使用しており、別のランタイムが必要になります: %@。";
 "settings.discord_card" = "Discord";
-"settings.discord_footnote" = "アクティビティは指定した Discord アプリケーション名と画像で表示されます。discord.com/developers で作成（New Application）し、その Application ID をここに入力してください。この Mac 上の Discord アプリとのみ通信します。";
+"settings.discord_footnote" = "アクティビティは FineWine 自身の Discord アプリケーションとして表示されます。独自のものを使う場合 (Discord にはその名前と画像が表示されます) は discord.com/developers で作成し、Application ID をここに貼り付けてください。空欄なら FineWine のものを使います。この Mac の Discord アプリ以外には何も送信されません。";
 "settings.discord_toggle_title" = "プレイ中のゲームを Discord に表示";
 "settings.discord_toggle_desc" = "FineWine から起動したアプリの実行中、その名前とプレイ時間が Discord のアクティビティとして表示されます。Wine ツールやインストーラーは表示されません。";
 "settings.discord_app_id" = "Application ID";
@@ -509,3 +509,4 @@
 "snapshot.err_other_prefix" = "そのスナップショットは別のプレフィックスのものです。";
 "snapshot.err_damaged" = "スナップショットが不完全か破損しています。プレフィックスのコピーに FineWine の設定ファイルがありません。";
 "snapshot.err_outside" = "そのフォルダは FineWine のスナップショットではないため、そのままにしました。";
+"settings.discord_app_id_placeholder" = "FineWine のもの (空欄)";

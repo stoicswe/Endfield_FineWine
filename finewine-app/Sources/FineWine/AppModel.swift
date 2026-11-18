@@ -337,8 +337,18 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// The id of the Discord application the activity is filed under.
+    /// FineWine's own Discord application (its name and icon are what Discord shows).
+    static let builtInDiscordApplicationID = "1572416361274015815"
+
+    /// The id of the Discord application the activity is filed under: the user's own if they
+    /// entered one in Settings, else FineWine's.
     var discordApplicationID: String {
+        let custom = customDiscordApplicationID
+        return custom.isEmpty ? Self.builtInDiscordApplicationID : custom
+    }
+
+    /// An application id the user entered instead of FineWine's; empty for FineWine's.
+    var customDiscordApplicationID: String {
         get { UserDefaults.standard.string(forKey: Self.discordApplicationKey) ?? "" }
         set {
             objectWillChange.send()
