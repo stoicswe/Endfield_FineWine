@@ -181,6 +181,13 @@ final class PrefixSettingsTests: XCTestCase {
         XCTAssertEqual(zero.environmentVariables().first { $0.name == "FINEWINE_ZERO_PAGES" }?.value, "1")
         XCTAssertFalse(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).zeroPages)
         XCTAssertTrue(try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(zero)).zeroPages)
+        // The emulator's compact records: the same rules.
+        XCTAssertFalse(PrefixSettings().compactBlockRecords)
+        var compact = PrefixSettings(); compact.compactBlockRecords = true
+        XCTAssertEqual(compact.environmentVariables().first { $0.name == "FEX_COMPACTBLOCKRECORDS" }?.value, "1")
+        XCTAssertFalse(compact.environmentVariables().contains { $0.name == "FINEWINE_ZERO_PAGES" })
+        XCTAssertFalse(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).compactBlockRecords)
+        XCTAssertTrue(try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(compact)).compactBlockRecords)
 
         settings.metalHUD = true
         settings.hideHypervisor = true

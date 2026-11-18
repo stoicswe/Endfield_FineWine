@@ -235,3 +235,35 @@ The 2.4 GB left in the emulator heap is what FEX really uses, a little above the
 estimated. It is concentrated: 8 of the 422 spans hold 1.4 GB, two of them the full 256 MB.
 That is the per-thread record of translated blocks (option C). The thread stacks and whatever
 the game itself commits and does not use are what B would address.
+
+## C, built behind a switch (2026-11-18)
+
+On the user's decision. FEX patch 0008, `FEX_COMPACTBLOCKRECORDS=1`, off by default; in the
+app it is the "Compact emulator records (experimental)" toggle in a prefix's Configuration
+tab, under the zero-pages one.
+
+What it changes: each thread's record of the blocks it has cached, by page of guest code. The
+usual form is a hash set for each page; the compact form is a sorted array of 32-bit offsets
+for each page. Both are in the build and one check picks between them, so the same build and
+the same game can be compared with it on and off. The switch is read when a program starts.
+
+One thing learned while writing it: FEX's second-level lookup cache is off by default, so
+every first-level miss goes to the shared table and then adds to this record. The add is
+therefore on a warm path, not a rare one. With the compact form it is a binary search in a
+page's array; when the block is new, the offsets after it move up.
+
+Test with 32 threads that each ran 48,000 blocks: FEX's heap 103 MB with the switch off, 56 MB
+on. Compiling 48,000 blocks and starting 256 threads measured within the usual spread either
+way. `tests/runtime/code-rewrite.c` checks with both settings that code which is rewritten in
+place, protected and rewritten, or freed and replaced never runs in its old form on any of 8
+threads.
+
+Not yet confirmed with a game that this record is what fills Endfield's large heap spans. A
+logged run with the toggle on and one with it off will show it directly.
+
+**A second bug found on the way, this one upstream's.** A benchmark hung once in about 140
+runs with one core busy. An exiting thread freed its lookup tables and only then took them off
+the list of ranges the fault handler commits; a thread starting in between could be given the
+same address and lose its own entry, after which its first lookup faulted with nothing to
+handle it. `tests/runtime/thread-churn.c` (3,840 short threads in a second) hung every time on
+the previous build. Fixed by FEX patch 0009.

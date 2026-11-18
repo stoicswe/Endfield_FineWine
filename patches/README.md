@@ -389,6 +389,16 @@ FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`.
   committed by the fault handler 64 KB at a time (`FEXCore::Allocator::VirtualOvercommit`).
   Only for memory that system calls never see. With 0006: 32 threads that ran 24,000 blocks
   each and then had all their memory read went from 1655 MB to 265 MB; speed unchanged.
+- `0008-lookup-cache-a-compact-record-of-each-threads-cached-blocks.patch`: with
+  `FEX_COMPACTBLOCKRECORDS=1`, each thread's record of the blocks it has cached is a sorted
+  array of 32-bit offsets for each page of guest code instead of a hash set (about 60 bytes a
+  block). Off by default; the original record is untouched. In a 32-thread test FEX's heap
+  went from 103 MB to 56 MB. Tested either way by `tests/runtime/code-rewrite.c`.
+- `0009-lookup-cache-remove-the-overcommit-mark-before-freeing-the-tables.patch`: an exiting
+  thread freed its lookup tables and then removed their mark from the list of ranges that are
+  committed on a fault; a thread starting in between could get the same address and lose its
+  own mark, and then hung in exception handling. An upstream ordering bug.
+  `tests/runtime/thread-churn.c` hung every time before.
 
 ## `dxmt/` — Direct3D on Metal
 

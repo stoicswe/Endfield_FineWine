@@ -250,6 +250,8 @@
 "config.hide_hypervisor_desc" = "x64 模拟器默认会通过 CPU 标记表明身份，导致部分反作弊及反虚拟机游戏误判而拒绝启动。默认开启以伪装隐藏。";
 "config.zero_pages_title" = "读取未使用的内存不计入占用（实验性）";
 "config.zero_pages_desc" = "在 macOS 上，内存只要被读取就会计入程序的占用，即使从未写入过。像反作弊那样会读取自身全部内存的游戏，因此会多占用许多 GB。开启后，这类读取不再计入占用；每块内存的首次写入会略慢。默认关闭；如果程序出现异常，请重新关闭。";
+"config.compact_records_title" = "压缩模拟器记录（实验性）";
+"config.compact_records_desc" = "x64 模拟器会为每个线程记录该线程运行过的每一段游戏代码。在线程很多的大型游戏中，这些记录会占用数 GB。开启后，记录以只需一半或更少空间的形式保存。默认关闭；如果游戏卡顿增多或出现异常，请重新关闭。";
 "config.appearance_card" = "外观样式";
 "config.appearance_footnote" = "适用于使用标准 Windows 控件的界面（包括 Wine 工具）。游戏自绘界面不受影响。";
 "config.mac_appearance_title" = "匹配 macOS 风格";

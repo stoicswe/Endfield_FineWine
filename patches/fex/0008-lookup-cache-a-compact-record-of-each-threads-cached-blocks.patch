@@ -1,0 +1,165 @@
+lookup cache: a compact record of each thread's cached blocks, behind a switch
+
+Every thread records which translated blocks it has put in its own lookup caches, by page of
+guest code, so that when a page changes it can drop exactly those. The record is a map from
+page to a hash set of block addresses. A hash set has at least 16 buckets of 16 bytes and
+doubles from there, so the record costs about 60 bytes for each block a thread has cached, and
+every thread has its own. With much translated code and many busy threads that is gigabytes:
+once everything unused was out of the way (0005 to 0007), 2.4 GB of Arknights: Endfield's
+11.3 GB was FEX's heap, 1.4 GB of it in eight threads.
+
+With FEX_COMPACTBLOCKRECORDS=1 a page instead has a sorted array of 32-bit offsets (the
+block's address less the page's; a block is recorded under every page it covers, so the
+offset can be negative). Finding a block is a binary search, adding one moves at most a page's
+worth of offsets, and invalidating a range walks the same ordered map as before. A block more
+than 2 GB from a page it is recorded under goes into a short list on the side; there are
+normally none. The original record is untouched and is what runs with the switch off, which
+is the default.
+
+Test with 32 threads that each ran 48,000 blocks: FEX's heap 103 MB with the switch off, 56 MB
+with it on. tests/runtime/code-rewrite.c checks with either setting that code which is
+rewritten in place, protected and rewritten, or freed and replaced never runs in its old form
+on any of 8 threads.
+
+--- a/FEXCore/Source/Interface/Config/Config.json.in
++++ b/FEXCore/Source/Interface/Config/Config.json.in
+@@ -339,6 +339,16 @@
+         "Desc": [
+           "Disables FEXCore's JIT L2 cache lookup. Saving memory.",
+           "Can potentially introduce more stutters."
++        ]
++      },
++      "CompactBlockRecords": {
++        "Type": "bool",
++        "Default": "false",
++        "AffectsCodeGen": "false",
++        "Desc": [
++          "FineWine: keep each thread's record of the blocks it has cached as sorted arrays",
++          "of 32-bit offsets instead of a hash set for each page of guest code.",
++          "Uses a quarter of the memory or less in programs with much code and many threads."
+         ]
+       },
+       "DynamicL1Cache": {
+--- a/FEXCore/Source/Interface/Core/LookupCache.h
++++ b/FEXCore/Source/Interface/Core/LookupCache.h
+@@ -12,6 +12,7 @@
+ #include <FEXCore/fextl/vector.h>
+ #include <FEXCore/fextl/memory_resource.h>
+ 
++#include <algorithm>
+ #include <cstdint>
+ #include <span>
+ #include <stddef.h>
+@@ -341,7 +342,36 @@
+   // Invalidates all L1/L2 entries for all guest block that intersect the given range
+   bool InvalidateCacheRange(uint64_t Start, uint64_t Length) {
+     auto lk = Shared->AcquireWriteLock();
++
++    if (CompactBlockRecords()) {
++      const uint64_t FirstPage = Start >> 12;
++      const uint64_t LastPage = (Start + Length - 1) >> 12;
++      auto lower = CompactCodePages.lower_bound(FirstPage);
++      auto upper = CompactCodePages.upper_bound(LastPage);
++
++      for (auto it = lower; it != upper; it++) {
++        const uint64_t PageBase = it->first << 12;
++        for (const int32_t Offset : it->second) {
++          InvalidateCache(PageBase + static_cast<int64_t>(Offset), lk);
++        }
++      }
++      bool ret = upper != lower;
++      CompactCodePages.erase(lower, upper);
+ 
++      // Blocks too far from their page for a 32-bit offset; there are normally none.
++      for (size_t i = 0; i < FarCodePages.size();) {
++        if (FarCodePages[i].first >= FirstPage && FarCodePages[i].first <= LastPage) {
++          InvalidateCache(FarCodePages[i].second, lk);
++          FarCodePages[i] = FarCodePages.back();
++          FarCodePages.pop_back();
++          ret = true;
++        } else {
++          ++i;
++        }
++      }
++      return ret;
++    }
++
+     auto lower = CachedCodePages.lower_bound(Start >> 12);
+     auto upper = CachedCodePages.upper_bound((Start + Length - 1) >> 12);
+ 
+@@ -396,8 +426,14 @@
+   }
+ 
+   void CacheBlockMapping(uint64_t Address, const GuestToHostMap::BlockEntry& Entry, bool L1Only, const LookupCacheBaseLockToken& lk) {
+-    for (const auto& CodePage : Entry.CodePages) {
+-      CachedCodePages[CodePage >> 12].insert(Address);
++    if (CompactBlockRecords()) {
++      for (const auto& CodePage : Entry.CodePages) {
++        RecordCompact(CodePage >> 12, Address);
++      }
++    } else {
++      for (const auto& CodePage : Entry.CodePages) {
++        CachedCodePages[CodePage >> 12].insert(Address);
++      }
+     }
+ 
+     // Do L1
+@@ -453,6 +489,40 @@
+   // Maps from a page index to all blocks in the page that have at some point been fetched into L1/L2
+   fextl::map<uint64_t, fextl::robin_set<uint64_t>> CachedCodePages;
+ 
++  // FineWine: the same record in a compact form, used instead when CompactBlockRecords is set.
++  //
++  // The hash set for each page costs about 60 bytes for each block a thread has cached (a set
++  // has at least 16 buckets of 16 bytes and doubles from there). Every thread keeps its own
++  // record, so a game with a gigabyte of translated code and dozens of busy threads spends
++  // gigabytes on it: 2.4 GB in Arknights: Endfield once everything unused was out of the way.
++  //
++  // Here a page has a sorted array of 32-bit offsets, the block's address less the page's.
++  // A block is recorded under every page it covers, so the offset can be negative. Looking a
++  // block up is a binary search and adding one moves at most a page's worth of offsets. A
++  // block further than 2 GB from a page it is recorded under goes into FarCodePages.
++  fextl::map<uint64_t, fextl::vector<int32_t>> CompactCodePages;
++  fextl::vector<std::pair<uint64_t, uint64_t>> FarCodePages;
++
++  void RecordCompact(uint64_t Page, uint64_t Address) {
++    const int64_t Offset = static_cast<int64_t>(Address - (Page << 12));
++    if (Offset != static_cast<int32_t>(Offset)) [[unlikely]] {
++      for (const auto& Far : FarCodePages) {
++        if (Far.first == Page && Far.second == Address) {
++          return;
++        }
++      }
++      FarCodePages.emplace_back(Page, Address);
++      return;
++    }
++
++    auto& Offsets = CompactCodePages[Page];
++    const auto Value = static_cast<int32_t>(Offset);
++    const auto It = std::lower_bound(Offsets.begin(), Offsets.end(), Value);
++    if (It == Offsets.end() || *It != Value) {
++      Offsets.insert(It, Value);
++    }
++  }
++
+   uintptr_t PagePointer;
+   uintptr_t PageMemory;
+   uintptr_t L1Pointer;
+@@ -483,5 +553,6 @@
+ 
+   FEX_CONFIG_OPT(DynamicL1Cache, DYNAMICL1CACHE);
+   FEX_CONFIG_OPT(DisableL2Cache, DISABLEL2CACHE);
++  FEX_CONFIG_OPT(CompactBlockRecords, COMPACTBLOCKRECORDS);
+ };
+ } // namespace FEXCore
+--- a/FEXCore/Source/Interface/Core/LookupCache.cpp
++++ b/FEXCore/Source/Interface/Core/LookupCache.cpp
+@@ -93,6 +93,8 @@
+ 
+   // TODO: Rename this member to avoid confusion with code caching
+   CachedCodePages.clear();
++  CompactCodePages.clear();
++  FarCodePages.clear();
+ }
+ 
+ void LookupCache::ClearCache(const LookupCacheWriteLockToken& lk) {
