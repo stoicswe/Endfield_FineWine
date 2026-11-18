@@ -157,10 +157,20 @@ public struct LaunchPlanner {
             .appendingPathComponent("\(program.id.uuidString).rendered")
     }
 
-    /// Whether to start the program as a game: it has rendered before (it, or a game its
-    /// launcher started), or its executable imports a rendering API.
+    /// Whether to start the program as a game: it is a HoYoverse game or HoYoPlay (which only
+    /// starts games), it or another entry for the same executable has rendered before (it, or a
+    /// game its launcher started), or its executable imports a rendering API.
+    ///
+    /// macOS decides whether an app is a game when it starts, so the game a launcher starts can
+    /// only be in Game Mode if the launcher was started as one. A launcher's own imports say
+    /// nothing, and its marker only appears once the game has rendered, too late for that launch.
     public func isGame(_ program: Program) -> Bool {
-        if FileManager.default.fileExists(atPath: gameMarker(for: program).path) { return true }
+        if SteamStandIn.appID(forWindowsPath: program.windowsPath) != nil { return true }
+        let sameExecutable = prefix.metadata.programs.filter {
+            $0.id != program.id && $0.windowsPath.caseInsensitiveCompare(program.windowsPath) == .orderedSame
+        }
+        for entry in [program] + sameExecutable
+        where FileManager.default.fileExists(atPath: gameMarker(for: entry).path) { return true }
         guard let exe = WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory) else { return false }
         return PEImports.usesRenderingAPI(at: exe)
     }

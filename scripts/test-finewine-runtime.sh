@@ -7,6 +7,8 @@
 #   3. lets a program generate code and run it (tests/runtime/jit.c)
 #   4. runs x64 programs through FEX (tests/runtime/x64-hello.c, x64-stress.c), if FEX is installed
 #   4a. creates 300 x64 threads that stay alive, quickly (tests/runtime/threads.c)
+#   4b. suspends an x64 thread spinning in a tight loop and reads its registers
+#      (tests/runtime/suspend-spin.c)
 #   5. creates a Vulkan device and renders with Direct3D 12, both through MoltenVK, from ARM64 and
 #      x64, with and without DXMT selected (tests/runtime/vulkan-device.c, d3d12-clear.c)
 #   5a. builds acceleration structures (in command buffers and on the host), compacts, serializes
@@ -114,6 +116,17 @@ else
       *) fail "creating many x64 threads is slow or fails: $out" ;; esac
   else
     fail "could not build tests/runtime/threads.c"; tail -n 3 "$WORK/threads-build.log"
+  fi
+  # A garbage collector suspends every thread and reads its registers. FEX looked for a suspend
+  # request only at block starts and unconditional jumps back, so a thread spinning in a loop that
+  # ends in a conditional jump could never be suspended and the collector waited forever
+  # (Genshin Impact on its warning screen). patches/fex/0004.
+  if "$MINGW" -O1 -o "$WORK/suspend-spin.exe" "$REPO/tests/runtime/suspend-spin.c" >"$WORK/suspend-spin-build.log" 2>&1; then
+    out="$("$RT/bin/wine" "$WORK/suspend-spin.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$out" in "suspend-spin: ok "*) pass "x64: a thread spinning in a tight loop can be suspended and its registers read" ;;
+      *) fail "suspending a spinning x64 thread hangs or fails: $out" ;; esac
+  else
+    fail "could not build tests/runtime/suspend-spin.c"; tail -n 3 "$WORK/suspend-spin-build.log"
   fi
   # 32-bit programs cannot run here (no memory below 4 GB). An installer that starts the 32-bit
   # setup program of a runtime Wine has built in must see it succeed; any other 32-bit program

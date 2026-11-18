@@ -1,0 +1,43 @@
+jit: let a thread spinning in a conditional loop be suspended
+
+Another thread suspends an emulated one cooperatively: Wine sets the thread's suspend doorbell
+and FEX's generated code looks at it, stopping at a brk #0xCAFE with its state saved. The code
+looks at the start of each block and before unconditional jumps back, but not before
+conditional ones. A spin loop like "while (!flag) count++;" ends in a conditional jump back, so
+a thread in one never saw the doorbell, and SuspendThread + GetThreadContext on it waited
+forever. Garbage collectors stop every thread this way. Genshin Impact froze on its warning
+screen: one thread spun at 100% in emulated code while another waited in NtGetContextThread
+for it, with no disk reads.
+
+The check now also goes before a conditional jump back to guest code, meaning a block that is an
+entry point or sits at a nonzero guest offset. A guest jcc has computed its flags and flushed the
+register cache already, so the state can be reconstructed there, and the check (ldr + cbz)
+leaves NZCV alone. Loops the translator makes inside one guest instruction (rep string ops) jump
+to neither and are unchanged. tests/runtime/suspend-spin.c checks loops on the zero and carry
+flags.
+
+diff --git a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
+index ae3ed51..4814f9e 100644
+--- a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
+@@ -250,6 +250,20 @@ DEF_OP(CondJump) {
+ 
+   auto TrueTargetLabel = JumpTarget(Op->TrueBlock);
+ 
++  // A conditional jump back to a guest instruction is a guest loop, such as a spin loop waiting
++  // for a flag. Without a check here such a loop never sees a suspend request, so another
++  // thread's SuspendThread + GetThreadContext on it waits forever (a garbage collector stopping
++  // every thread). The flags are already computed and the register cache flushed before a guest
++  // jcc, so the state can be reconstructed here, and the check leaves NZCV alone. Blocks of guest
++  // code are entry points or sit at a nonzero guest offset; loops the translator makes inside one
++  // guest instruction (rep string ops) jump to neither and keep running as before.
++  if (TrueTargetLabel->Backward.Location) {
++    const auto TrueBlock = IR->GetOp<IR::IROp_CodeBlock>(Op->TrueBlock);
++    if (TrueBlock->EntryPoint || TrueBlock->GuestEntryOffset != 0) {
++      EmitSuspendInterruptCheck();
++    }
++  }
++
+   if (Op->FromNZCV) {
+     b_OrRestart(MapCC(Op->Cond), TrueTargetLabel);
+   } else {

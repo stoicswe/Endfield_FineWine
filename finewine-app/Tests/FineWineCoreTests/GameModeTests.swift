@@ -113,6 +113,29 @@ final class GameModeLaunchTests: XCTestCase {
         XCTAssertEqual(env["FINEWINE_LOADER"], WineRuntime.gameLoaderName, "from then on it runs as a game")
     }
 
+    func testAnotherEntryForTheSameExecutableThatRenderedCounts() throws {
+        var f = Fixture(imports: ["KERNEL32.dll", "USER32.dll"])
+        // Two shortcuts to one launcher (HoYoPlay, and a game started through it).
+        let other = Program(name: "Other", windowsPath: #"c:\game\GAME.exe"#)
+        let unrelated = Program(name: "Tool", windowsPath: #"C:\Game\Tool.exe"#)
+        f.prefix.metadata.programs = [f.program, other, unrelated]
+        f.sandbox.write(Data(), to: f.planner.gameMarker(for: unrelated))
+        XCTAssertNil(try f.planner.plan(for: f.program).environment["FINEWINE_LOADER"], "another program's marker says nothing")
+
+        f.sandbox.write(Data(), to: f.planner.gameMarker(for: other))
+        XCTAssertEqual(try f.planner.plan(for: f.program).environment["FINEWINE_LOADER"], WineRuntime.gameLoaderName)
+    }
+
+    func testHoYoverseGamesAndHoYoPlayAreGamesFromTheFirstLaunch() {
+        let f = Fixture(imports: ["KERNEL32.dll", "USER32.dll"])
+        for path in [#"C:\Program Files\HoYoPlay\launcher.exe"#,
+                     #"C:\Program Files\HoYoPlay\games\Genshin Impact game\GenshinImpact.exe"#,
+                     #"D:\ZZZ\ZenlessZoneZero.exe"#] {
+            XCTAssertTrue(f.planner.isGame(Program(name: "H", windowsPath: path)), path)
+        }
+        XCTAssertFalse(f.planner.isGame(Program(name: "L", windowsPath: #"C:\Other\launcher.exe"#)))
+    }
+
     func testGameModeOffOrARuntimeWithoutTheLoaderChangesNothing() throws {
         var f = Fixture()
         f.prefix.metadata.settings.gameMode = false

@@ -340,6 +340,12 @@ FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`.
   the CPU ID FEX names CPUs by). The source form of the patcher's `ArmEmulatorIdentity` brand
   edit for CrossOver ARM. Its other part, the hypervisor bit, is FineWine's "Hide the hypervisor
   flag" setting (`FEX_HIDEHYPERVISORBIT=1`), on by default.
+- `0004-jit-let-conditional-loops-be-suspended.patch`: a thread spinning in a loop that ends in a
+  conditional jump back can be suspended. FEX looked for suspend requests only at block starts
+  and unconditional jumps back, so SuspendThread + GetThreadContext on such a thread waited
+  forever. Garbage collectors stop threads this way; Genshin Impact froze on its warning screen.
+  Costs about 5% in a three-instruction loop, less in real ones. Tested by
+  `tests/runtime/suspend-spin.c`.
 
 ## `dxmt/` — Direct3D on Metal
 
