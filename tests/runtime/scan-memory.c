@@ -1,14 +1,16 @@
 /* A program that reads through all of its own committed memory, as anti-cheat and other scanners
- * do, must not grow by hundreds of megabytes for each thread.
+ * do, must not grow by gigabytes.
  *
- * FEX keeps lookup tables for each emulated thread in a 272 MB reservation that it commits as
- * it is used. Under Wine it used to commit the whole reservation at the first use. Committed
- * memory can be read, and macOS has no shared zero page: a page that is only ever read still
- * becomes real memory. Arknights: Endfield reads through its memory and grew by about 100 MB a
- * second, to 40 GB in seven minutes. patches/fex/0005 commits 64 KB at a time instead.
+ * macOS has no shared zero page: a page that is only ever read still becomes real memory. Two
+ * things were committed in full and nearly unused, so reading through them was expensive:
+ *  - FEX's lookup tables, 272 MB for each emulated thread (patches/fex/0005 commits them 64 KB
+ *    at a time, as FEX does on Windows);
+ *  - Wine's ARM64EC code map, 4 GB for the process (runtime patch 0035 commits a page of it
+ *    when it is first read).
+ * Arknights: Endfield reads through its memory and grew to 40 GB in seven minutes.
  *
- * Run with FINEWINE_MEMORY_TRACE set; the test script reads the footprint from the log (about 5 GB
- * before the fix, about 370 MB after). Prints "scan-memory: ok <MB read>". */
+ * Run with FINEWINE_MEMORY_TRACE set; the test script reads the footprint from the log: about
+ * 9 GB with neither fix, 370 MB with both. Prints "scan-memory: ok <MB read>". */
 #include <windows.h>
 #include <stdio.h>
 
@@ -37,9 +39,8 @@ int main(void)
     }
     while (VirtualQuery(p, &info, sizeof(info)) == sizeof(info))
     {
-        /* writable memory only: the read-only tables Wine keeps for the whole process are not the point */
-        if (info.State == MEM_COMMIT && info.Type == MEM_PRIVATE && !(info.Protect & PAGE_GUARD)
-            && (info.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
+        if (info.State == MEM_COMMIT && info.Type == MEM_PRIVATE && !(info.Protect & (PAGE_GUARD | PAGE_NOACCESS))
+            && (info.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE)))
         {
             for (SIZE_T i = 0; i < info.RegionSize; i += 4096) sum += ((char *)info.BaseAddress)[i];
             total += info.RegionSize;

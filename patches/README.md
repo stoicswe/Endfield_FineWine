@@ -208,6 +208,11 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
   (`FINEWINE_MEMORY_TRACE_MIN`) with its thread and likely callers, and totals with the footprint
   every five seconds. FineWine's "Play with Memory Log" sets it. Checked by
   `tests/runtime/memtrace.c`.
+- `0035-ntdll-commit-the-arm64ec-code-map-as-it-is-read-on-macos.patch`: Wine's map of which
+  pages hold ARM64EC code is 4 GB and was committed in full, read-only. On macOS a page that is
+  read becomes real memory, so a program that reads through its committed memory paid for all
+  of it (3.6 GB in Arknights: Endfield). The map now starts reserved and a page is committed
+  when it is first read. Tested by `tests/runtime/scan-memory.c` together with fex 0005.
 - `0033-winemac-read-the-displays-again-on-activation-only-when-they-changed.patch`: switching
   to a Wine program made Wine read every display again (modes, EDID, GPUs, registry keys) on the
   program's message thread, 2.4 seconds in a game. Now only when the displays differ from what

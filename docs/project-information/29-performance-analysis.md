@@ -192,9 +192,22 @@ never written still allocates it. `tests/runtime/scan-memory.c` shows it without
 program with 16 idle threads that reads its own writable memory reached 5 GB.
 
 The fix (fex patch 0005) commits 64 KB around each fault, which is what FEX does on Windows.
-Memory that FEX has not used stays reserved, cannot be read, and costs nothing. The test
-program now ends at 370 MB. Not yet run with the game.
+Memory that FEX has not used stays reserved, cannot be read, and costs nothing.
 
-Still open from this run: the game really does fill these tables in its busy threads (up to
-128 MB of page memory a thread, by FEX's design of 64 KB for each page of game code a thread
-runs). How much that is with the fix in needs another logged run.
+A second logged run with that fix: the footprint no longer ran away. It reached 19.2 GB at
+three minutes and stayed between 19.8 and 20.0 GB until the game was closed at nine minutes
+(the first run was at 40.7 GB after seven and still rising). The lookup tables held 0.1 GB.
+
+That run showed the same reader in a second place: 3.6 GB in Wine's ARM64EC code map, a 4 GB
+table with one bit for each page of the address space, committed in full and read-only.
+Runtime patch 0035 reserves it on macOS and commits a page when it is first read. With both
+fixes the test program, which reads every committed page, ends at 370 MB (9 GB with neither).
+The second fix has not been run with the game; it should take the plateau to about 16 GB.
+
+What the 20 GB was at three minutes: 9.3 GB writable memory in Wine's area (the game's own
+heaps, mostly swapped out), 3.6 GB the code map, 2.4 GB graphics memory, 1.5 GB Mac-side
+allocations (Metal, MoltenVK), 1.1 GB translated code.
+
+Still open: whether the 9 GB of writable memory is all the game's. Candidates for waste in it
+are FEX's call-return stacks (4 MB committed for each thread, about 0.7 GB) and memory handed
+back in pieces smaller than a 16K page (2.5 GB over the run, not all of it live at once).
