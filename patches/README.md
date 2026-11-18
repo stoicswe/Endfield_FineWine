@@ -361,6 +361,12 @@ FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`.
   forever. Garbage collectors stop threads this way; Genshin Impact froze on its warning screen.
   Costs about 5% in a three-instruction loop, less in real ones. Tested by
   `tests/runtime/suspend-spin.c`.
+- `0005-windows-commit-the-lookup-tables-a-piece-at-a-time-under-wine.patch`: each emulated
+  thread reserves 272 MB for its block lookup tables. Under Wine FEX committed all of it at the
+  first use; on Windows it commits 64 KB around each fault, and now does the same under Wine.
+  Committed memory can be read, and on macOS a page that is only read still becomes real memory.
+  Arknights: Endfield reads through its writable memory and grew to 40 GB in seven minutes.
+  Tested by `tests/runtime/scan-memory.c` (16 idle threads: about 5 GB before, 370 MB after).
 
 ## `dxmt/` — Direct3D on Metal
 
