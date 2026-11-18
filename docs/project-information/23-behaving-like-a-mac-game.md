@@ -129,3 +129,15 @@ picture into that bundle as `Contents/Resources/AppIcon.icns` (16 to 1024 pixels
 the icon changes. On a game's first launch with this, Game Mode can switch on before the icon
 is written; from the next launch on it is already there. `FINEWINE_BUNDLE_ICONS=0` turns it off.
 Checked by `scripts/test-finewine-runtime.sh`; not yet seen in Game Mode's own menu.
+
+## Game Mode for games started by a launcher (2026-11-18)
+
+Genshin Impact started from FineWine's "HoYoPlay" entry ran without Game Mode: HoYoPlay's
+`launcher.exe` imports no rendering API, and the "this program rendered" marker is only created
+once the game draws, too late for that launch, since macOS decides whether an app is a game when
+it starts and the game inherits its launcher's loader. The "Genshin Impact" entry for the same
+`launcher.exe` already had a marker, but markers were only looked up per entry.
+
+A program is now started as a game also when another entry for the same executable has a marker,
+and always when it is a HoYoverse game or HoYoPlay (the programs the Steam stand-in recognises),
+so their first launch is in Game Mode too. Tested by `GameModeLaunchTests`.
