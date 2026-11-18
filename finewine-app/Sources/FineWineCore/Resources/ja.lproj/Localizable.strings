@@ -143,6 +143,8 @@
 "detail.remove_shortcut" = "ショートカットアプリを削除";
 "detail.make_shortcut" = "ショートカットアプリを作成 (.app)";
 "detail.more_actions" = "その他の操作";
+"detail.diagnostics" = "診断";
+"detail.play_memory_log" = "メモリログを記録して起動";
 "detail.remove_from_finewine" = "FineWine から削除…";
 "detail.remove_program_title" = "「%@」を FineWine から削除しますか？";
 "detail.remove_program_msg" = "一覧とショートカットアプリが削除されます。プレフィックス内のプログラム本体は保持されるため、アンインストールには「Wine ツール」の「プログラムの追加と削除」をご利用ください。";

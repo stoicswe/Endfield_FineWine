@@ -1,0 +1,319 @@
+ntdll: a memory log for a running program
+
+Arknights: Endfield's memory footprint grew by about 3 GB a minute, to 50 GB on a 24 GB Mac,
+in 128 MB blocks that nothing identified from outside (a debugger cannot be attached to a game
+with anti-cheat, and Wine's own +virtual trace is far too much output for a game).
+
+With FINEWINE_MEMORY_TRACE set to a folder, each process now writes "<program>-<pid>.log"
+there: one line for every reservation, commit, decommit, release, reset and section mapping of
+FINEWINE_MEMORY_TRACE_MIN megabytes or more (default 8), with the thread and the modules that
+the words on the caller's stack point into, nearest first; and every five seconds the count and
+size of all operations so far, the process's footprint, and how much was decommitted in pieces
+that share a 16K host page with memory still in use and so could not be given back. A process
+that never does anything that large leaves no file. Without the variable nothing runs.
+
+FineWine's "Play with Memory Log" starts a program this way. tests/runtime/memtrace.c checks it.
+
+--- a/dlls/ntdll/unix/signal_arm64.c	2026-11-18 11:59:52
++++ b/dlls/ntdll/unix/signal_arm64.c	2026-11-18 11:59:52
+@@ -203,6 +203,14 @@
+ };
+ 
+ C_ASSERT( sizeof( struct syscall_frame ) == 0x330 );
++
++/* FineWine: the stack pointer of the code that made the system call this thread is in, for the
++ * memory trace in virtual.c, which looks there for the callers. */
++void *finewine_syscall_user_sp(void)
++{
++    struct syscall_frame *frame = get_syscall_frame( get_thread_data() );
++    return frame ? (void *)frame->sp : NULL;
++}
+ 
+ 
+ #define ESR_ELx_EC(esr)                 (((DWORD64)(esr) >> 26) & 0x3f)
+--- a/dlls/ntdll/unix/virtual.c	2026-11-18 11:59:52
++++ b/dlls/ntdll/unix/virtual.c	2026-11-18 11:59:52
+@@ -2145,9 +2145,214 @@
+     else size = min( view->size - offset, max_size );
+ 
+     return get_vprot_range_size( base, size, vprot_mask, vprot );
++}
++
++
++/***********************************************************************
++ * FineWine: memory trace.
++ *
++ * With FINEWINE_MEMORY_TRACE set to a folder, each process writes "<program>-<pid>.log" there:
++ * one line for every reservation, commit, decommit, release, reset and section mapping of at
++ * least FINEWINE_MEMORY_TRACE_MIN megabytes (default 8), with the thread, and the modules that
++ * the words on the caller's stack point into (the likely callers, nearest first); and every
++ * five seconds a line of totals for all sizes, with the process's memory footprint. It answers
++ * "what is taking this memory, and is it given back" for a running game without a debugger.
++ * Without the variable none of this runs.
++ */
++#ifdef __APPLE__
++#include <mach/task_info.h>
++#endif
++
++enum memtrace_op { MT_RESERVE, MT_COMMIT, MT_RESERVE_COMMIT, MT_DECOMMIT, MT_RELEASE, MT_RESET, MT_MAP, MT_UNMAP, MT_OPS };
++static const char * const memtrace_names[MT_OPS] =
++    { "reserve", "commit", "reserve+commit", "decommit", "release", "reset", "map", "unmap" };
++
++static int memtrace_fd = -2;           /* -2: not looked at yet, -1: off */
++static SIZE_T memtrace_min = 8 * 1024 * 1024;
++static pthread_mutex_t memtrace_mutex = PTHREAD_MUTEX_INITIALIZER;
++static struct timespec memtrace_start, memtrace_last_totals;
++static struct { ULONG64 count, bytes; } memtrace_totals[MT_OPS];
++static ULONG64 memtrace_kept_bytes;    /* decommitted, but in a host page that could not be given back */
++static struct { char *base; SIZE_T size; char name[40]; } memtrace_modules[768];
++static unsigned int memtrace_module_count;
++static struct timespec memtrace_modules_read;
++
++static double memtrace_seconds( const struct timespec *from, const struct timespec *to )
++{
++    return (to->tv_sec - from->tv_sec) + (to->tv_nsec - from->tv_nsec) / 1e9;
++}
++
++static char memtrace_path[1024];       /* the log; made when there is a first line to write */
++
++static void memtrace_open(void)
++{
++    const char *dir = getenv( "FINEWINE_MEMORY_TRACE" ), *min = getenv( "FINEWINE_MEMORY_TRACE_MIN" );
++    const char *name = getenv( "FINEWINE_PROCESS_NAME" );
++    char clean[64];
++    unsigned int i;
++
++    memtrace_fd = -1;
++    if (!dir || !*dir) return;
++    if (min && atoi( min ) >= 0) memtrace_min = (SIZE_T)atoi( min ) * 1024 * 1024;
++    if (!name || !*name) name = "program";
++    for (i = 0; name[i] && i < sizeof(clean) - 1; i++) clean[i] = (name[i] == '/' || name[i] == ':') ? '_' : name[i];
++    clean[i] = 0;
++    snprintf( memtrace_path, sizeof(memtrace_path), "%s/%s-%u.log", dir, clean, (unsigned int)getpid() );
++    clock_gettime( CLOCK_MONOTONIC, &memtrace_start );
++    memtrace_last_totals = memtrace_start;
++    memtrace_fd = -3;  /* on, file not made yet */
++}
++
++/* memtrace_mutex held */
++static void memtrace_write( const char *line, size_t len )
++{
++    if (memtrace_fd == -3)
++    {
++        int fd = open( memtrace_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644 );
++        if (fd == -1) { memtrace_fd = -1; return; }
++        memtrace_fd = fd;
++        dprintf( fd, "# FineWine memory trace, pid %u. One line for each operation of %lu MB or more, sizes in MB,\n"
++                 "# callers nearest first (modules that words on the caller's stack point into). \"totals\" lines:\n"
++                 "# count/MB of all operations so far, the process's footprint in MB, and decommit-kept, the MB\n"
++                 "# decommitted in pieces that share a 16K Mac page with memory still in use and so were not freed.\n",
++                 (unsigned int)getpid(), (unsigned long)(memtrace_min >> 20) );
++    }
++    if (memtrace_fd >= 0) write( memtrace_fd, line, len );
++}
++
++static inline BOOL memtrace_on(void)
++{
++    if (memtrace_fd == -2)
++    {
++        pthread_mutex_lock( &memtrace_mutex );
++        if (memtrace_fd == -2) memtrace_open();
++        pthread_mutex_unlock( &memtrace_mutex );
++    }
++    return memtrace_fd != -1;
++}
++
++/* the loaded modules, from the loader's list; memtrace_mutex held */
++static void memtrace_read_modules(void)
++{
++    PEB_LDR_DATA *ldr = peb ? peb->LdrData : NULL;
++    LIST_ENTRY *head, *entry;
++    unsigned int n = 0, guard = 0;
++
++    if (!ldr) return;
++    head = &ldr->InLoadOrderModuleList;
++    for (entry = head->Flink; entry && entry != head && n < ARRAY_SIZE(memtrace_modules) && guard < 4096; entry = entry->Flink, guard++)
++    {
++        LDR_DATA_TABLE_ENTRY *mod = CONTAINING_RECORD( entry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks );
++        unsigned int i, len = mod->BaseDllName.Length / sizeof(WCHAR);
++
++        if (!mod->DllBase || !mod->BaseDllName.Buffer) continue;
++        memtrace_modules[n].base = mod->DllBase;
++        memtrace_modules[n].size = mod->SizeOfImage;
++        for (i = 0; i < len && i < sizeof(memtrace_modules[n].name) - 1; i++)
++        {
++            WCHAR c = mod->BaseDllName.Buffer[i];
++            memtrace_modules[n].name[i] = (c > 32 && c < 127) ? (char)c : '_';
++        }
++        memtrace_modules[n].name[i] = 0;
++        n++;
++    }
++    memtrace_module_count = n;
++}
++
++static int memtrace_find_module( const char *addr )
++{
++    unsigned int i;
++    for (i = 0; i < memtrace_module_count; i++)
++        if (addr >= memtrace_modules[i].base && addr < memtrace_modules[i].base + memtrace_modules[i].size) return i;
++    return -1;
+ }
+ 
++/* the modules that the words on the caller's stack point into, nearest first; memtrace_mutex held */
++static void memtrace_callers( char *buffer, size_t size )
++{
++#ifdef __aarch64__
++    extern void *finewine_syscall_user_sp(void);
++    char **sp = finewine_syscall_user_sp(), **end;
++    char *stack_base = NtCurrentTeb()->Tib.StackBase, *stack_limit = NtCurrentTeb()->DeallocationStack;
++    struct timespec now;
++    int found = 0, last = -1;
++    size_t pos = 0;
+ 
++    buffer[0] = 0;
++    if (!sp || (char *)sp < stack_limit || (char *)sp >= stack_base || ((ULONG_PTR)sp & 7)) return;
++    end = sp + 2048;
++    if ((char *)end > stack_base) end = (char **)stack_base;
++    clock_gettime( CLOCK_MONOTONIC, &now );
++    if (!memtrace_module_count || memtrace_seconds( &memtrace_modules_read, &now ) > 2.0)
++    {
++        memtrace_read_modules();
++        memtrace_modules_read = now;
++    }
++    for (; sp < end && found < 8 && pos + 64 < size; sp++)
++    {
++        int i = memtrace_find_module( *sp );
++        if (i < 0) continue;
++        /* runs of words into the system DLLs every call goes through say nothing */
++        if (i == last) continue;
++        last = i;
++        pos += snprintf( buffer + pos, size - pos, "%s%s+%lx", found ? " < " : "", memtrace_modules[i].name,
++                         (unsigned long)(*sp - memtrace_modules[i].base) );
++        found++;
++    }
++#else
++    buffer[0] = 0;
++#endif
++}
++
++static void memtrace_write_totals( const struct timespec *now )
++{
++    char line[1024];
++    size_t pos;
++    unsigned int i;
++    double footprint = 0;
++#ifdef __APPLE__
++    task_vm_info_data_t info;
++    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
++    if (task_info( mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count ) == KERN_SUCCESS)
++        footprint = info.phys_footprint / 1048576.0;
++#endif
++    pos = snprintf( line, sizeof(line), "%9.3f totals footprint=%.0f", memtrace_seconds( &memtrace_start, now ), footprint );
++    for (i = 0; i < MT_OPS; i++)
++        pos += snprintf( line + pos, sizeof(line) - pos, " %s=%llu/%.0f", memtrace_names[i],
++                         (unsigned long long)memtrace_totals[i].count, memtrace_totals[i].bytes / 1048576.0 );
++    pos += snprintf( line + pos, sizeof(line) - pos, " decommit-kept=%.1f\n", memtrace_kept_bytes / 1048576.0 );
++    memtrace_write( line, pos );
++}
++
++static void memtrace_event( enum memtrace_op op, const void *base, SIZE_T size, ULONG protect )
++{
++    struct timespec now;
++    char line[1024], thread[64] = "", callers[640];
++    size_t pos;
++
++    pthread_mutex_lock( &memtrace_mutex );
++    memtrace_totals[op].count++;
++    memtrace_totals[op].bytes += size;
++    clock_gettime( CLOCK_MONOTONIC, &now );
++    if (size >= memtrace_min)
++    {
++        pthread_getname_np( pthread_self(), thread, sizeof(thread) );
++        memtrace_callers( callers, sizeof(callers) );
++        pos = snprintf( line, sizeof(line), "%9.3f %-14s base=%p size=%.2f prot=%x tid=%04x thread=\"%s\" callers: %s\n",
++                        memtrace_seconds( &memtrace_start, &now ), memtrace_names[op], base, size / 1048576.0,
++                        (unsigned int)protect, (unsigned int)GetCurrentThreadId(), thread, callers );
++        memtrace_write( line, pos );
++    }
++    /* totals only once the program has done something worth a line, so idle helpers leave no file */
++    if (memtrace_fd >= 0 && memtrace_seconds( &memtrace_last_totals, &now ) >= 5.0)
++    {
++        memtrace_last_totals = now;
++        memtrace_write_totals( &now );
++    }
++    pthread_mutex_unlock( &memtrace_mutex );
++}
++
++
+ /***********************************************************************
+  *           decommit_pages
+  *
+@@ -2189,6 +2394,13 @@
+             if (!mprotect( tail_start, ROUND_SIZE( tail_start, end - tail_start, host_page_mask ), PROT_READ | PROT_WRITE ))
+                 memset( tail_start, 0, end - tail_start );
+         }
++    }
++    if (memtrace_on())
++    {
++        SIZE_T freed = host_start < host_end ? host_end - host_start : 0;
++        pthread_mutex_lock( &memtrace_mutex );
++        if (size > freed) memtrace_kept_bytes += size - freed;
++        pthread_mutex_unlock( &memtrace_mutex );
+     }
+     set_page_vprot_bits( base, size, 0, VPROT_COMMITTED );
+     /* the pages touched above go back to what the remaining committed pages ask for */
+@@ -4970,6 +5182,9 @@
+     {
+         *ret = base;
+         *size_ptr = size;
++        if (memtrace_on())
++            memtrace_event( (type & MEM_RESET) ? MT_RESET : !(type & MEM_RESERVE) ? MT_COMMIT :
++                            (type & MEM_COMMIT) ? MT_RESERVE_COMMIT : MT_RESERVE, base, size, protect );
+     }
+     else if (status == STATUS_NO_MEMORY)
+         ERR( "out of memory for allocation, base %p size %08lx\n", base, size );
+@@ -5266,6 +5481,8 @@
+         *size_ptr = size;
+     }
+     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
++    if (status == STATUS_SUCCESS && memtrace_on())
++        memtrace_event( type == MEM_DECOMMIT ? MT_DECOMMIT : MT_RELEASE, base, size, 0 );
+     return status;
+ }
+ 
+@@ -6112,8 +6329,10 @@
+         return result.map_view.status;
+     }
+ 
+-    return virtual_map_section( handle, addr_ptr, 0, get_zero_bits_limit( zero_bits ), commit_size,
+-                                offset_ptr, size_ptr, alloc_type, protect, 0 );
++    res = virtual_map_section( handle, addr_ptr, 0, get_zero_bits_limit( zero_bits ), commit_size,
++                               offset_ptr, size_ptr, alloc_type, protect, 0 );
++    if (NT_SUCCESS(res) && memtrace_on()) memtrace_event( MT_MAP, *addr_ptr, *size_ptr, protect );
++    return res;
+ }
+ 
+ /***********************************************************************
+@@ -6190,8 +6409,12 @@
+         return result.map_view_ex.status;
+     }
+ 
+-    return virtual_map_section( handle, addr_ptr, limit_low, limit_high, 0,
+-                                offset_ptr, size_ptr, alloc_type, protect, machine );
++    {
++        unsigned int ret = virtual_map_section( handle, addr_ptr, limit_low, limit_high, 0,
++                                                offset_ptr, size_ptr, alloc_type, protect, machine );
++        if (NT_SUCCESS(ret) && memtrace_on()) memtrace_event( MT_MAP, *addr_ptr, *size_ptr, protect );
++        return ret;
++    }
+ }
+ 
+ 
+@@ -6250,6 +6473,7 @@
+     SERVER_END_REQ;
+     if (!status)
+     {
++        if (memtrace_on()) memtrace_event( MT_UNMAP, view->base, view->size, 0 );
+         if (view->protect & SEC_IMAGE) release_builtin_module( view->base );
+         if (flags & MEM_PRESERVE_PLACEHOLDER) free_pages_preserve_placeholder( view, view->base, view->size );
+         else delete_view( view );

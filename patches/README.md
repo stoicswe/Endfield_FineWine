@@ -203,6 +203,21 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
   private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
   in a command list, to be carried out by MoltenVK as MetalFX.
+- `0034-ntdll-a-memory-log-for-a-running-program.patch`: `FINEWINE_MEMORY_TRACE=<folder>` makes
+  each process write `<program>-<pid>.log` there: every memory operation of 8 MB or more
+  (`FINEWINE_MEMORY_TRACE_MIN`) with its thread and likely callers, and totals with the footprint
+  every five seconds. FineWine's "Play with Memory Log" sets it. Checked by
+  `tests/runtime/memtrace.c`.
+- `0033-winemac-read-the-displays-again-on-activation-only-when-they-changed.patch`: switching
+  to a Wine program made Wine read every display again (modes, EDID, GPUs, registry keys) on the
+  program's message thread, 2.4 seconds in a game. Now only when the displays differ from what
+  Wine was last told. `FINEWINE_DISPLAY_RESYNC=always` brings the old behaviour back. Checked by
+  `tests/runtime/idle-window.c` with `activate.swift` (`FINEWINE_TEST_ACTIVATE=1`).
+- `0032-winemac-a-program-s-bundle-carries-its-icon-for-game-mode.patch`: the program's bundle in
+  the prefix gets the icon as `AppIcon.icns`, which is what Game Mode's menu and notice show.
+- `0031-ntdll-jump-past-macos-mappings-when-looking-for-free-memory.patch`: the search for free
+  address space jumps past macOS's own mappings instead of stepping through them 64K at a time
+  (creating 300 x64 threads: 420 s to 0.2 s). Checked by `tests/runtime/threads.c`.
 - `0030-winemac-the-dock-shows-a-program-s-largest-icon-drawn-as-a-mac-app-icon.patch`: only one
   picture of a program's icon ever reached the Dock (Wine read the icon list off the program's
   stack after reusing it), 16 pixels as often as 256; now every size does. A window's icon

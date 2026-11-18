@@ -143,6 +143,8 @@
 "detail.remove_shortcut" = "바로가기 앱 제거";
 "detail.make_shortcut" = "바로가기 앱 생성 (.app)";
 "detail.more_actions" = "추가 동작";
+"detail.diagnostics" = "진단";
+"detail.play_memory_log" = "메모리 로그와 함께 실행";
 "detail.remove_from_finewine" = "FineWine에서 제거…";
 "detail.remove_program_title" = "“%@” 프로그램을 FineWine에서 제거하시겠습니까?";
 "detail.remove_program_msg" = "목록과 바로가기 앱이 제거됩니다. 프리픽스 내부의 프로그램 파일은 유지되므로, 완전 삭제는 'Wine 도구'의 '프로그램 추가/제거'를 이용하십시오.";

@@ -143,6 +143,8 @@
 "detail.remove_shortcut" = "移除快捷方式应用";
 "detail.make_shortcut" = "生成快捷应用 (.app)";
 "detail.more_actions" = "更多操作";
+"detail.diagnostics" = "诊断";
+"detail.play_memory_log" = "运行并记录内存日志";
 "detail.remove_from_finewine" = "从 FineWine 中移除…";
 "detail.remove_program_title" = "从 FineWine 中移除 “%@”？";
 "detail.remove_program_msg" = "将移除其列表项与快捷应用。容器内的程序文件将保留；若要卸载，请使用“Wine 工具”下的“添加或删除程序”。";

@@ -262,6 +262,21 @@ final class PrefixServiceTests: XCTestCase {
         XCTAssertEqual(f.service.shortcuts.list(), [])
     }
 
+    func testAMemoryTraceLaunchGetsAFolderBesideItsLog() throws {
+        let f = Fixture()
+        let prefix = try f.prefixWithGame()
+        _ = try f.service.launch(programID: prefix.metadata.programs[0].id, in: prefix, memoryTrace: true)
+        let started = try XCTUnwrap(f.runner.started.first)
+        let log = try XCTUnwrap(started.logFile)
+        let folder = f.service.memoryTraceFolder(forLog: log)
+        XCTAssertEqual(started.plan.environment["FINEWINE_MEMORY_TRACE"], folder.path)
+        XCTAssertTrue(folder.lastPathComponent.hasSuffix(" Game memory"))
+        XCTAssertEqual(folder.deletingLastPathComponent(), log.deletingLastPathComponent())
+        var isDir: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDir) && isDir.boolValue,
+                      "the runtime does not make the folder, so it must exist before the program starts")
+    }
+
     func testLaunchStartsTheProgramWithALog() throws {
         let f = Fixture()
         let prefix = try f.prefixWithGame()

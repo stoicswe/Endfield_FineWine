@@ -148,6 +148,15 @@ final class GameModeLaunchTests: XCTestCase {
         XCTAssertNil(env["FINEWINE_LOADER"]); XCTAssertNil(env["FINEWINE_GAME_MARKER"])
     }
 
+    func testAMemoryTraceLaunchNamesTheFolderForTheRuntime() throws {
+        let f = Fixture()
+        XCTAssertNil(try f.planner.plan(for: f.program).environment["FINEWINE_MEMORY_TRACE"], "off unless asked for")
+        let folder = f.sandbox.root.appendingPathComponent("Logs/P/2026-11-18 12.00.00 Game memory")
+        let env = try f.planner.plan(for: f.program, memoryTraceFolder: folder).environment
+        XCTAssertEqual(env["FINEWINE_MEMORY_TRACE"], folder.path)
+        XCTAssertEqual(env["FINEWINE_LOADER"], WineRuntime.gameLoaderName, "everything else about the launch is the same")
+    }
+
     func testOnlyProgramsGetIt() throws {
         let f = Fixture()
         XCTAssertNil(try f.planner.plan(for: WineTool.winecfg).environment["FINEWINE_LOADER"])
