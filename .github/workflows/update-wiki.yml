@@ -1,13 +1,13 @@
 name: Generate Wiki Documentation
 
-# The wiki is regenerated when something is published, not on every push: nightly.yml calls
-# this once a nightly has been released, and release.yml once a full release has been. Pushes
-# to main and beta builds leave the wiki alone. It can still be run by hand.
+# The wiki is regenerated only for full releases: release.yml (pushes to release/* branches)
+# calls this once the release is published. Generating it takes long, so nightlies, pushes to
+# main and beta builds leave the wiki alone. It can still be run by hand.
 on:
   workflow_call:
   workflow_dispatch:
 
-# A nightly and a release finishing close together regenerate it one after the other.
+# Two releases (or a release and a manual run) close together regenerate it one after the other.
 concurrency:
   group: wiki
   cancel-in-progress: false
