@@ -838,6 +838,27 @@ else
   else fail "Vulkan upscaling:$bad"; grep -ah "FineWine\|vulkan-upscale" "$WORK"/up-*.log | tail -n 8; fi
 fi
 
+# Playback follows the Mac's output device (headphones connected while a game runs, patch
+# 0041): a stream is given a new audio unit and must go on playing. The check does not change
+# the Mac's output; it has the driver re-open the stream's device two seconds in, which is the
+# same swap, and looks at how much the device took in each second. Silence is played.
+if [ -x "$MINGW" ] && "$MINGW" -O1 -o "$WORK/audio-follow.exe" "$REPO/tests/runtime/audio-follow.c" -lole32 >"$WORK/audio-build.log" 2>&1; then
+  out="$(FINEWINE_AUDIO_REOPEN_AFTER=2 "$RT/bin/wine" "$WORK/audio-follow.exe" 5 </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+  case "$out" in
+    "audio-follow: no output device") echo "  - audio following the output device not checked: this Mac has no output device" ;;
+    "audio-follow: ok rate "*)
+      rate="$(printf '%s' "$out" | sed -n 's/.* rate \([0-9]*\) .*/\1/p')"
+      slow=""
+      # every second, the one with the swap in it included, the device took most of a second of audio
+      for frames in ${out##*per-second }; do [ "$frames" -ge $(( rate * 3 / 4 )) ] || slow="$slow $frames"; done
+      if [ -n "$rate" ] && [ -z "$slow" ]; then pass "playback carries on when a stream is moved to another audio unit (the Mac's output device changing)"
+      else fail "audio stalled across the swap: $out"; fi ;;
+    *) fail "audio-follow: $out" ;;
+  esac
+else
+  echo "  - audio following the output device not checked: no llvm-mingw, or the test did not build"
+fi
+
 export WINEPREFIX="$WORK/pfx2" WINEMSYNC=1 WINEDEBUG=-all
 if "$RT/bin/wine" wineboot --init </dev/null >"$WORK/msync.log" 2>&1 && [ -f "$WINEPREFIX/.update-timestamp" ] \
    && [ "$("$RT/bin/wine" cmd /c echo msync-ok </dev/null 2>/dev/null | tr -d '\r')" = "msync-ok" ]; then

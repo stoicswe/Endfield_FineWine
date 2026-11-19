@@ -236,6 +236,10 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
   `FINEWINE_RENDER_SCALE=<percent>` makes programs see a smaller screen through Wine's display
   mode emulation, so games draw fewer pixels and MetalFX upscales; sizes are snapped to ones
   Wine's 16-bit scaling fractions can hold.
+- `0041-winecoreaudio-playback-follows-the-mac-s-output-device.patch`: a playback stream opened on
+  the Mac's output device moves to the new one when macOS changes it (headphones connected while
+  a game runs), by getting a new audio unit there; its buffer and position are untouched.
+  `FINEWINE_AUDIO_FOLLOW_OUTPUT=0` turns it off.
 - `0033-winemac-read-the-displays-again-on-activation-only-when-they-changed.patch`: switching
   to a Wine program made Wine read every display again (modes, EDID, GPUs, registry keys) on the
   program's message thread, 2.4 seconds in a game. Now only when the displays differ from what
