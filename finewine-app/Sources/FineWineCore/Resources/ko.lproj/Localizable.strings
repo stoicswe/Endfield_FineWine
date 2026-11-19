@@ -34,6 +34,8 @@
 "menu.settings" = "설정";
 "menu.quit_help" = "FineWine을 종료합니다. 실행 중인 프로그램이 있으면 먼저 확인 후 종료합니다.";
 "menu.shut_down" = "시스템 종료";
+"menu.upscaling_on_help" = "MetalFX 업스케일이 켜져 있습니다. 클릭하면 실행 중인 프로그램에서 끕니다.";
+"menu.upscaling_off_help" = "MetalFX 업스케일이 꺼져 있습니다. 클릭하면 실행 중인 프로그램에서 켭니다.";
 "menu.force_shut_down" = "강제 종료";
 "menu.shut_down_help" = "시스템 종료는 모든 프로그램에 정상 종료를 요청합니다. 강제 종료는 응답 없는 프로그램도 즉시 중단합니다.";
 "menu.configure_prefix" = "이 프리픽스 설정";
@@ -217,8 +219,11 @@
 "config.direct3d_label" = "Direct3D 백엔드";
 "config.retina_title" = "고해상도 모드 (Retina)";
 "config.retina_desc" = "디스플레이의 실제 픽셀 해상도로 선명하게 렌더링합니다. 전체 해상도에서 성능이 저하되면 끄십시오.";
-"config.metalfx_upscale_title" = "MetalFX로 낮은 해상도 선명화";
-"config.metalfx_upscale_desc" = "Direct3D 10/11 게임이 창 크기보다 낮은 해상도로 렌더링할 때 MetalFX 업스케일링을 통해 선명하게 확대합니다. 게임 자체 업스케일러 사용 시 적용되지 않습니다.";
+"config.metalfx_upscale_title" = "낮은 해상도를 MetalFX로 선명하게 (자동)";
+"config.metalfx_upscale_desc" = "게임이 창보다 적은 픽셀로 그릴 때(게임에서 낮은 해상도를 선택했거나 고해상도 모드가 꺼져 있을 때), 화면을 늘리는 대신 MetalFX로 디스플레이 픽셀 수까지 업스케일합니다. Direct3D 10/11, Direct3D 12, Vulkan에 적용됩니다. 자체 업스케일러를 쓰는 게임은 그대로 둡니다. 이것은 시작할 때의 상태이며, 게임 실행 중에도 게임의 View 메뉴(Control-Command-U)나 FineWine 메뉴 막대 아이콘에서 전환할 수 있습니다.";
+"config.render_size_title" = "렌더링 크기 지정";
+"config.render_size_desc" = "프로그램이 실제보다 작은 화면을 보게 하여 게임 설정을 바꾸지 않고도 더 적은 픽셀로 그리게 하고, MetalFX로 화면을 업스케일합니다. 런처를 포함해 이 프리픽스의 모든 것이 이 크기로 그려지므로 글자가 조금 부드러워집니다. 위의 자동 옵션이 꺼져 있을 때 사용할 수 있습니다. 프리픽스를 다음에 시작할 때부터 적용됩니다.";
+"config.render_size_value" = "%d%% · 약 %d × %d";
 "config.auto_dpi_title" = "DPI 자동 조절";
 "config.auto_dpi_desc_retina" = "현재 디스플레이에 맞춰 Windows DPI를 자동 설정(현재 Mac: %@)하여 텍스트 및 UI 크기를 적절하게 유지합니다.";
 "config.auto_dpi_desc_normal" = "고해상도 모드가 꺼져 있을 때 macOS에 맞춰 Windows DPI를 96으로 유지합니다.";

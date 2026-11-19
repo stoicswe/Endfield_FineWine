@@ -34,6 +34,8 @@
 "menu.settings" = "設定";
 "menu.quit_help" = "結束 FineWine。若仍有程式在執行，會先詢問確認並將其關閉。";
 "menu.shut_down" = "關閉";
+"menu.upscaling_on_help" = "MetalFX 放大已開啟。按一下可在執行中的程式裡關閉。";
+"menu.upscaling_off_help" = "MetalFX 放大已關閉。按一下可在執行中的程式裡開啟。";
 "menu.force_shut_down" = "強制關閉";
 "menu.shut_down_help" = "「關閉」會請求所有程式退出。「強制關閉」會直接結束無回應的程式。";
 "menu.configure_prefix" = "設定此容器";
@@ -217,8 +219,11 @@
 "config.direct3d_label" = "Direct3D 後端";
 "config.retina_title" = "高解析度模式 (Retina)";
 "config.retina_desc" = "程式按顯示器的實際實體像素算繪，呈現 Mac 原生等級的清晰度。若全解析度下執行過慢可將其關閉。";
-"config.metalfx_upscale_title" = "使用 MetalFX 超解析度提升較低解析度畫質";
-"config.metalfx_upscale_desc" = "當 Direct3D 10 或 11 遊戲的算繪像素低於視窗時，透過 MetalFX 超解析度技術放大而非單純拉伸。遊戲自行使用升頻器時不生效。";
+"config.metalfx_upscale_title" = "用 MetalFX 銳化較低解析度（自動）";
+"config.metalfx_upscale_desc" = "當遊戲繪製的像素少於視窗的像素時（在遊戲中選擇了較低解析度，或關閉了高解析度模式），畫面會由 MetalFX 放大到顯示器的像素數，而不是被直接拉伸。適用於 Direct3D 10/11、Direct3D 12 和 Vulkan。使用自帶放大技術的遊戲不受影響。這是程式啟動時的狀態；遊戲執行期間可以在遊戲的 View 選單（Control-Command-U）或 FineWine 的選單列圖像中切換。";
+"config.render_size_title" = "設定算繪尺寸";
+"config.render_size_desc" = "讓程式看到一個較小的螢幕，這樣無需更改遊戲內的設定，遊戲就會繪製更少的像素，並由 MetalFX 放大畫面。此前置環境中的所有內容（包括啟動器）都以該尺寸繪製，因此文字會略微變軟。僅在上面的自動選項關閉時可用。下次啟動此前置環境時生效。";
+"config.render_size_value" = "%d%% · 約 %d × %d";
 "config.auto_dpi_title" = "自動調整縮放";
 "config.auto_dpi_desc_retina" = "根據目前顯示器自動匹配 Windows DPI（此 Mac 目前為 %@），確保文字與控制項目大小適中。";
 "config.auto_dpi_desc_normal" = "保持 Windows DPI 為 96，在關閉高解析度模式時與 macOS 保持一致。";

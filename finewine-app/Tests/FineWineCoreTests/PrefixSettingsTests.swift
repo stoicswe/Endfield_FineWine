@@ -1,4 +1,5 @@
 import XCTest
+import notify
 @testable import FineWineCore
 
 final class PrefixSettingsTests: XCTestCase {
@@ -210,6 +211,58 @@ final class PrefixSettingsTests: XCTestCase {
         XCTAssertEqual(env["SL_LOG_PATH"], #"C:\"#)
         XCTAssertEqual(env["SL_LOG_NAME"], "streamline.log")
         XCTAssertTrue(try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(settings)).streamlineLog)
+    }
+
+    func testUpscalingStartsAutomaticOffOrWithARenderSize() throws {
+        func env(_ settings: PrefixSettings) -> [String: String] {
+            Dictionary(uniqueKeysWithValues: settings.environmentVariables().map { ($0.name, $0.value) })
+        }
+        var settings = PrefixSettings()
+        // automatic: nothing is said, upscaling starts on, the screen is the real one
+        XCTAssertNil(env(settings)["FINEWINE_METALFX_AUTO"])
+        XCTAssertNil(env(settings)["FINEWINE_RENDER_SCALE"])
+        XCTAssertTrue(settings.upscalesAtStart)
+        // a render size is only used while automatic is off
+        settings.renderSizeEnabled = true
+        settings.renderScale = 70
+        XCTAssertNil(settings.effectiveRenderScale)
+        XCTAssertNil(env(settings)["FINEWINE_RENDER_SCALE"])
+        settings.metalFXUpscaling = false
+        XCTAssertEqual(env(settings)["FINEWINE_RENDER_SCALE"], "70")
+        XCTAssertNil(env(settings)["FINEWINE_METALFX_AUTO"])
+        XCTAssertTrue(settings.upscalesAtStart)
+        // out of range values are brought in
+        settings.renderScale = 10
+        XCTAssertEqual(env(settings)["FINEWINE_RENDER_SCALE"], "50")
+        settings.renderScale = 400
+        XCTAssertEqual(env(settings)["FINEWINE_RENDER_SCALE"], "95")
+        // neither: upscaling starts off
+        settings.renderSizeEnabled = false
+        XCTAssertEqual(env(settings)["FINEWINE_METALFX_AUTO"], "0")
+        XCTAssertNil(env(settings)["FINEWINE_RENDER_SCALE"])
+        XCTAssertFalse(settings.upscalesAtStart)
+        // stored and read back; settings from before the render size have none
+        settings.renderSizeEnabled = true
+        settings.renderScale = 65
+        let back = try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(back.effectiveRenderScale, 65)
+        XCTAssertFalse(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).renderSizeEnabled)
+    }
+
+    func testLiveUpscalingSwitchIsReadBack() {
+        // a process id nothing uses, so no running program is told anything
+        let pid: Int32 = 99_999_989
+        XCTAssertEqual(LiveUpscaling.notificationName(processID: 123), "finewine.metalfx.123")
+        // The system keeps a state only while something is registered for the name, as a
+        // running program is (DXMT, MoltenVK and the Mac driver each register).
+        var holder: Int32 = 0
+        XCTAssertEqual(notify_register_check(LiveUpscaling.notificationName(processID: pid), &holder), UInt32(NOTIFY_STATUS_OK))
+        defer { notify_cancel(holder) }
+        XCTAssertEqual(LiveUpscaling.set(true, processIDs: [pid]), 1)
+        XCTAssertEqual(LiveUpscaling.current(processID: pid), true)
+        LiveUpscaling.set(false, processIDs: [pid])
+        XCTAssertEqual(LiveUpscaling.current(processID: pid), false)
+        XCTAssertNil(LiveUpscaling.meaning(ofState: 0))
     }
 
     func testEmptyDebugChannelsFallBackToSilent() {

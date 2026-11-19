@@ -34,6 +34,8 @@
 "menu.settings" = "設定";
 "menu.quit_help" = "FineWine を終了します。実行中のアプリがある場合は確認後に終了されます。";
 "menu.shut_down" = "シャットダウン";
+"menu.upscaling_on_help" = "MetalFX アップスケールはオンです。クリックすると実行中のプログラムでオフにします。";
+"menu.upscaling_off_help" = "MetalFX アップスケールはオフです。クリックすると実行中のプログラムでオンにします。";
 "menu.force_shut_down" = "強制シャットダウン";
 "menu.shut_down_help" = "シャットダウンは全アプリに正常終了を求めます。強制シャットダウンは応答しないアプリも終了させます。";
 "menu.configure_prefix" = "このプレフィックスを設定";
@@ -217,8 +219,11 @@
 "config.direct3d_label" = "Direct3D";
 "config.retina_title" = "高解像度モード (Retina)";
 "config.retina_desc" = "Mac アプリと同様に、ディスプレイの実ピクセル解像度で鮮明に描画します。全解像度で動作が重い場合はオフにしてください。";
-"config.metalfx_upscale_title" = "MetalFX で低解像度を鮮明化";
-"config.metalfx_upscale_desc" = "Direct3D 10/11 ゲームの描画解像度がウィンドウより低い場合、単純な引き伸ばしではなく MetalFX で鮮明にアップスケールします。";
+"config.metalfx_upscale_title" = "低い解像度を MetalFX で鮮明にする（自動）";
+"config.metalfx_upscale_desc" = "ゲームがウインドウより少ないピクセル数で描画する場合（ゲーム内で低い解像度を選んだとき、または高解像度モードがオフのとき）、画像を引き伸ばす代わりに MetalFX でディスプレイのピクセル数までアップスケールします。Direct3D 10/11、Direct3D 12、Vulkan に対応します。独自のアップスケーラを使うゲームには手を加えません。これは起動時の状態で、ゲームの実行中でも、ゲームの「View」メニュー（Control-Command-U）または FineWine のメニューバーアイコンから切り替えられます。";
+"config.render_size_title" = "レンダリングサイズを指定";
+"config.render_size_desc" = "プログラムに実際より小さい画面を見せることで、ゲーム内の設定を変えずに描画ピクセル数を減らし、MetalFX で画像をアップスケールします。ランチャーを含め、このプレフィックス内のすべてがこのサイズで描画されるため、文字は少し柔らかくなります。上の自動オプションがオフのときに利用できます。次回プレフィックスを起動したときから有効になります。";
+"config.render_size_value" = "%d%% · 約 %d × %d";
 "config.auto_dpi_title" = "DPI を自動調整";
 "config.auto_dpi_desc_retina" = "現在のディスプレイに合わせて Windows の DPI（この Mac では %@）を自動設定し、文字とUIを適切な大きさに保ちます。";
 "config.auto_dpi_desc_normal" = "高解像度モードがオフの場合、macOS に合わせて Windows の DPI を 96 に保ちます。";

@@ -88,6 +88,24 @@ struct ConfigurationTab: View {
                     Text(l10n.tr("config.metalfx_upscale_desc"))
                 }
                 Divider()
+                Toggle(isOn: $draft.renderSizeEnabled) {
+                    Text(l10n.tr("config.render_size_title"))
+                    Text(l10n.tr("config.render_size_desc"))
+                }
+                .disabled(draft.metalFXUpscaling)
+                if !draft.metalFXUpscaling && draft.renderSizeEnabled {
+                    HStack(spacing: 12) {
+                        Slider(value: Binding(get: { Double(draft.renderScale) },
+                                              set: { draft.renderScale = Int(($0 / 5).rounded()) * 5 }),
+                               in: Double(PrefixSettings.renderScaleRange.lowerBound)...Double(PrefixSettings.renderScaleRange.upperBound),
+                               step: 5)
+                        Text(renderSizeLabel(draft.renderScale))
+                            .font(.callout.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 190, alignment: .trailing)
+                    }
+                }
+                Divider()
                 Toggle(isOn: $draft.automaticDPI) {
                     Text(l10n.tr("config.auto_dpi_title"))
                     Text(draft.retinaMode
@@ -294,4 +312,15 @@ struct ConfigurationTab: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(padding: 14, tint: problems.isEmpty && hasChanges ? Look.wine : nil)
     }
+}
+
+
+/// "75% · about 2268 × 1473": the screen a program sees at a render size, on the main display.
+@MainActor
+private func renderSizeLabel(_ percent: Int) -> String {
+    guard let screen = NSScreen.main else { return "\(percent)%" }
+    let scale = screen.backingScaleFactor
+    let width = Int((screen.frame.width * scale * Double(percent) / 100).rounded())
+    let height = Int((screen.frame.height * scale * Double(percent) / 100).rounded())
+    return LanguageManager.shared.tr("config.render_size_value", percent, width, height)
 }

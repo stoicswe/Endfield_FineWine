@@ -176,6 +176,17 @@ private struct MenuPrefixCard: View {
                     .fixedSize()
                     .help(l10n.tr("menu.shut_down_help"))
                 }
+                if model.busy[prefix.id] == nil, model.isRunning(prefix) {
+                    // MetalFX upscaling, switched while the prefix runs
+                    Button {
+                        model.toggleUpscaling(prefix)
+                    } label: {
+                        Image(systemName: model.isUpscalingOn(prefix) ? "sparkles.rectangle.stack.fill" : "sparkles.rectangle.stack")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(model.isUpscalingOn(prefix) ? Color.accentColor : Color.secondary)
+                    .help(model.isUpscalingOn(prefix) ? l10n.tr("menu.upscaling_on_help") : l10n.tr("menu.upscaling_off_help"))
+                }
                 Button {
                     model.show(prefixID: prefix.id, section: "configuration")
                 } label: {
