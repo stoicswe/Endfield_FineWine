@@ -185,6 +185,16 @@ else
   else
     fail "could not build tests/runtime/code-rewrite.c"; tail -n 3 "$WORK/code-rewrite-build.log"
   fi
+  # The emulator commits its own memory in the fault handler, also while translated code runs.
+  # Registers, vector registers, flags, the x87 stack and MXCSR must come back unchanged from
+  # such a fault: 192 threads each call 2048 fresh functions with all of them loaded.
+  if "$MINGW" -O1 -o "$WORK/reg-fault.exe" "$REPO/tests/runtime/reg-fault.c" >"$WORK/reg-fault-build.log" 2>&1; then
+    out="$("$RT/bin/wine" "$WORK/reg-fault.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$out" in "reg-fault: ok "*) pass "x64: registers, flags and float state survive the emulator's commit faults" ;;
+      *) fail "x64 state across commit faults: $out" ;; esac
+  else
+    fail "could not build tests/runtime/reg-fault.c"; tail -n 3 "$WORK/reg-fault-build.log"
+  fi
   # FINEWINE_MEMORY_TRACE=<folder> makes each program log its large memory operations, with the
   # modules that asked for them, and totals with its footprint every five seconds (patch 0034).
   if "$MINGW" -O1 -o "$WORK/memtrace.exe" "$REPO/tests/runtime/memtrace.c" >"$WORK/memtrace-build.log" 2>&1; then
