@@ -8,6 +8,7 @@ struct MainWindow: View {
     @ObservedObject private var l10n = LanguageManager.shared
     @Environment(\.openSettings) private var openSettings
     @State private var showingNewPrefix = false
+    @State private var showingBottleImport = false
 
     var body: some View {
         NavigationSplitView {
@@ -32,6 +33,9 @@ struct MainWindow: View {
             }
         }
         .frame(minWidth: 860, minHeight: 560)
+        .sheet(isPresented: $showingBottleImport) {
+            ImportBottleSheet().environmentObject(model)
+        }
         .sheet(isPresented: $showingNewPrefix) {
             NewPrefixSheet().environmentObject(model)
         }
@@ -113,6 +117,14 @@ struct MainWindow: View {
                     Label(l10n.tr("main.new_prefix"), systemImage: "plus")
                 }
                 .fwButton()
+                Button {
+                    showingBottleImport = true
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .fwButton()
+                .help(l10n.tr("bottle.import_btn"))
+                .disabled(model.usableRuntimes.isEmpty)
                 Spacer()
                 Button {
                     openSettings()
@@ -151,6 +163,8 @@ struct MainWindow: View {
                 Button(l10n.tr("main.first_prefix_btn")) { showingNewPrefix = true }
                     .fwProminentButton().tint(Look.wine)
                     .controlSize(.large)
+                Button(l10n.tr("bottle.import_btn")) { showingBottleImport = true }
+                    .fwButton()
             }
         }
     }

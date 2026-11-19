@@ -599,3 +599,22 @@
 "update.err_not_an_app" = "この FineWine はアプリとして実行されていないため、自身を置き換えられません。";
 "update.err_translocated" = "ダウンロードした場所から直接開かれたため、macOS は FineWine を一時的な場所から実行しています。FineWine を「アプリケーション」に移動し、そこから開いてもう一度アップデートしてください。";
 "update.err_programs_running" = "プレフィックスでプログラムがまだ実行中です。";
+
+/* Importing a CrossOver bottle */
+"bottle.import_btn" = "CrossOver ボトルを読み込む…";
+"bottle.sheet_title" = "CrossOver ボトルを読み込む";
+"bottle.sheet_desc" = "FineWine はボトルのコピーから、プログラム、ファイル、レジストリを含むプレフィックスを作成します。CrossOver 側のボトルは変更されません。先にボトルのプログラムを終了してください。32 ビットのプログラムは FineWine では動作しません。";
+"bottle.card_title" = "ボトル";
+"bottle.none_found" = "CrossOver のフォルダにボトルが見つかりませんでした。";
+"bottle.choose_other" = "ほかのフォルダを選択…";
+"bottle.choose_msg" = "ボトル、またはボトルの入ったフォルダを選択";
+"bottle.not_a_bottle" = "“%@”はボトルではありません。drive_c フォルダとレジストリがありません。";
+"bottle.note_32bit" = "32 ビットのボトル: 読み込めません";
+"bottle.import" = "読み込む";
+"bottle.err_title" = "ボトルを読み込めませんでした";
+"bottle.err_32bit" = "“%@”は 32 ビットのボトルです。FineWine が開けるのは 64 ビットのボトルだけです。";
+"bottle.err_running" = "“%@”でプログラムが実行中です。CrossOver で終了してから、もう一度読み込んでください。";
+"bottle.err_space" = "“%@”は %@ を使用しますが、ドライブの空きは %@ しかありません。";
+"bottle.stage_measuring" = "ボトルのサイズを確認中";
+"bottle.stage_copying" = "ボトルをコピー中";
+"bottle.stage_updating" = "Windows のファイルをアップデート中";

@@ -599,3 +599,22 @@
 "update.err_not_an_app" = "This copy of FineWine is not running from an app, so it cannot replace itself.";
 "update.err_translocated" = "macOS is running FineWine from a temporary place because it was opened straight from where it was downloaded. Move FineWine to Applications, open it from there, and update again.";
 "update.err_programs_running" = "Programs are still running in a prefix.";
+
+/* Importing a CrossOver bottle */
+"bottle.import_btn" = "Import CrossOver Bottle…";
+"bottle.sheet_title" = "Import a CrossOver Bottle";
+"bottle.sheet_desc" = "FineWine makes a prefix from a copy of the bottle, with its programs, files and registry. The bottle in CrossOver is not changed. Quit the bottle's programs first. 32-bit programs in it won't run in FineWine.";
+"bottle.card_title" = "Bottle";
+"bottle.none_found" = "No bottles were found in CrossOver's folder.";
+"bottle.choose_other" = "Choose Another Folder…";
+"bottle.choose_msg" = "Choose a bottle, or a folder of bottles";
+"bottle.not_a_bottle" = "“%@” is not a bottle: it has no drive_c folder and registry.";
+"bottle.note_32bit" = "32-bit bottle: can't be imported";
+"bottle.import" = "Import";
+"bottle.err_title" = "The bottle couldn't be imported";
+"bottle.err_32bit" = "“%@” is a 32-bit bottle. FineWine can only open 64-bit ones.";
+"bottle.err_running" = "Programs are running in “%@”. Quit them in CrossOver, then import again.";
+"bottle.err_space" = "“%@” takes %@ and only %@ is free on the drive.";
+"bottle.stage_measuring" = "Measuring the bottle";
+"bottle.stage_copying" = "Copying the bottle";
+"bottle.stage_updating" = "Updating Windows files";
