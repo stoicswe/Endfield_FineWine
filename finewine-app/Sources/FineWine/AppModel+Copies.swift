@@ -92,6 +92,22 @@ extension AppModel {
     /// Stops a copy under way. What was copied so far is removed; the original is untouched.
     func cancelCopy(_ key: UUID) { copies[key]?.cancel() }
 
+    // MARK: CrossOver bottles
+
+    /// Makes a prefix from a copy of a CrossOver bottle. `key` is what the copy runs under:
+    /// its progress is `busy[key]`, and `cancelCopy(key)` stops it.
+    func importBottle(_ bottle: CrossOverBottle, name: String, runtime: WineRuntime, place: PrefixPlace, key: UUID) async -> Bool {
+        let appearance = currentAppearance
+        let made = await copyWork(on: key, title: name, tr("bottle.stage_copying"),
+                                  failure: tr("bottle.err_title"), { service, progress, stage in
+            try service.importBottle(bottle, name: name, runtime: runtime, place: place, appearance: appearance,
+                                     progress: progress, stage: stage)
+        })
+        reload()
+        if let made { selection = made.id }
+        return made != nil
+    }
+
     // MARK: Moving
 
     /// Moves a prefix to this Mac or a drive (see `PlaceChoice`).

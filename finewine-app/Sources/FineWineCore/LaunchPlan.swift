@@ -121,7 +121,13 @@ public struct LaunchPlanner {
         env["WINEPREFIX"] = prefix.directory.path
         if let server = runtime.wineserverBinary { env["WINESERVER"] = server.path }
         // The runtime's own dylibs (MoltenVK, GStreamer, …) first, then the system default.
-        env["DYLD_FALLBACK_LIBRARY_PATH"] = runtime.root.appendingPathComponent("lib").path + ":/usr/local/lib:/usr/lib"
+        env["DYLD_FALLBACK_LIBRARY_PATH"] = (runtime.libraryDirectories.map(\.path) + ["/usr/local/lib", "/usr/lib"])
+            .joined(separator: ":")
+        // What the runtime's description asks for; the prefix's own variables come after.
+        for (name, value) in runtime.manifest.environment ?? [:]
+        where EnvironmentVariable.isValidName(name) && !RuntimeManifest.reservedVariables.contains(name) {
+            env[name] = runtime.expand(value, prefix: prefix.directory)
+        }
 
         // FineWine makes its own shortcut apps, so Wine's menu builder is switched off.
         var overrides = ["winemenubuilder.exe=d"]
@@ -135,7 +141,8 @@ public struct LaunchPlanner {
         if prefix.metadata.settings.nonUnicodeLanguage.unixLocale != nil { env.removeValue(forKey: "LC_ALL") }
 
         var userOverrides: String?
-        for (name, value) in prefix.metadata.settings.environmentVariables() + extra.map({ ($0.name, $0.value) }) {
+        for (name, value) in prefix.metadata.settings.environmentVariables(supporting: runtime.capabilities)
+            + extra.map({ ($0.name, $0.value) }) {
             guard EnvironmentVariable.isValidName(name) else { continue }
             if name == "WINEDLLOVERRIDES" { userOverrides = value } else { env[name] = value }
         }
@@ -186,7 +193,7 @@ public struct LaunchPlanner {
     /// executable whether an app is a game, so a game is run with the loader that says it is;
     /// every program is given the marker to create if it turns out to render after all.
     public func gameModeEnvironment(for program: Program) -> [String: String] {
-        guard prefix.metadata.settings.gameMode, runtime.hasGameLoader else { return [:] }
+        guard prefix.metadata.settings.gameMode, runtime.supports(.gameMode), runtime.hasGameLoader else { return [:] }
         var env = [Self.gameMarkerVariable: gameMarker(for: program).path]
         if isGame(program) { env[Self.loaderVariable] = WineRuntime.gameLoaderName }
         return env
@@ -197,7 +204,8 @@ public struct LaunchPlanner {
     /// The Steam id to start the program with, if it is one that is started through the
     /// runtime's stand-in for Steam, the prefix allows it and the runtime has the stand-in.
     public func steamAppID(for program: Program) -> String? {
-        guard prefix.metadata.settings.steamForHoYoverse, runtime.steamStandIn != nil else { return nil }
+        guard prefix.metadata.settings.steamForHoYoverse, runtime.supports(.steamStandIn),
+              runtime.steamStandIn != nil else { return nil }
         return SteamStandIn.appID(forWindowsPath: program.windowsPath)
     }
 
@@ -259,7 +267,11 @@ public struct LaunchPlanner {
             // the two DLLs off for this one run skips the offer; nothing is installed or removed.
             env["WINEDLLOVERRIDES"] = (env["WINEDLLOVERRIDES"].map { $0 + ";" } ?? "") + "mscoree=d;mshtml=d"
         }
-        return LaunchPlan(executable: try wine(), arguments: ["wineboot", action.rawValue],
+        var arguments = ["wineboot", action.rawValue]
+        if action == .initialize, let setup = runtime.manifest.prefixSetup, !setup.isEmpty {
+            arguments = setup.map { runtime.expand($0, prefix: prefix.directory) }
+        }
+        return LaunchPlan(executable: try wine(), arguments: arguments,
                           environment: env, workingDirectory: prefix.directory)
     }
 

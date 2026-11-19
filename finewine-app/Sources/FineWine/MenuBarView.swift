@@ -177,7 +177,8 @@ private struct MenuPrefixCard: View {
                     .fixedSize()
                     .help(l10n.tr("menu.shut_down_help"))
                 }
-                if model.busy[prefix.id] == nil, model.isRunning(prefix) {
+                if model.busy[prefix.id] == nil, model.isRunning(prefix),
+                   model.runtime(for: prefix)?.supports(.upscaling) ?? true {
                     // MetalFX upscaling, switched while the prefix runs
                     Button {
                         model.toggleUpscaling(prefix)

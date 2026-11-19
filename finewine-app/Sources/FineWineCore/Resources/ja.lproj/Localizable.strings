@@ -51,7 +51,7 @@
 "main.program_count_single" = "1 個のアプリ";
 "main.program_count_multiple" = "%lld 個のアプリ";
 "main.add_runtime_title" = "Wine ランタイムを追加";
-"main.add_runtime_desc" = "FineWine は Wine ランタイムを使用して Windows プログラムを実行します。FineWine ランタイムフォルダまたは bin/wine を含む Wine ビルドフォルダを追加してください。";
+"main.add_runtime_desc" = "FineWine は Wine ランタイムを使用して Windows プログラムを実行しますが、このアプリにはランタイムが入っていません。FineWine をもう一度ダウンロードするか、FineWine ランタイムフォルダを追加してください。CrossOver の Wine は使用できません。";
 "main.add_runtime_btn" = "ランタイムを追加…";
 "main.first_prefix_title" = "最初のプレフィックスを作成";
 "main.first_prefix_desc" = "プレフィックスは独立した Windows 環境です。各ゲームやアプリに独自の環境と設定を持たせることができます。";
@@ -423,6 +423,13 @@
 "runtime_problem.wine_missing" = "bin/wine が見つからないか、実行可能ではありません。";
 "runtime_problem.wineserver_missing" = "bin/wineserver が見つからないか、実行可能ではありません。";
 "runtime_problem.lib_missing" = "lib/wine ディレクトリがありません。";
+"runtime_problem.crossover" = "このフォルダは CrossOver のものです。FineWine は CrossOver の Wine ではプログラムを実行できません。FineWine に内蔵のランタイムを使用してください。";
+"runtime_problem.newer_format" = "この説明ファイルは、このバージョンの FineWine が対応していない形式です。使用するには FineWine をアップデートしてください。";
+"runtime_problem.root_missing" = "記述されている Wine ビルドが %@ にありません。";
+"runtime_problem.bad_path" = "説明ファイルに使用できないパスがあります: %@。";
+"runtime_problem.bad_variable" = "説明ファイルが設定できない変数を設定しています: %@。";
+"runtime_problem.named_missing" = "%@ が見つからないか、実行可能ではありません。";
+"config.runtime_limited" = "“%@”には FineWine の一部の機能がありません。対応していない設定はグレー表示になります。";
 
 /* Prefix Setup Progress */
 "setup.creating_windows_env" = "Windows フォルダとレジストリを作成しています。約1分かかります。";
@@ -592,3 +599,22 @@
 "update.err_not_an_app" = "この FineWine はアプリとして実行されていないため、自身を置き換えられません。";
 "update.err_translocated" = "ダウンロードした場所から直接開かれたため、macOS は FineWine を一時的な場所から実行しています。FineWine を「アプリケーション」に移動し、そこから開いてもう一度アップデートしてください。";
 "update.err_programs_running" = "プレフィックスでプログラムがまだ実行中です。";
+
+/* Importing a CrossOver bottle */
+"bottle.import_btn" = "CrossOver ボトルを読み込む…";
+"bottle.sheet_title" = "CrossOver ボトルを読み込む";
+"bottle.sheet_desc" = "FineWine はボトルのコピーから、プログラム、ファイル、レジストリを含むプレフィックスを作成します。CrossOver 側のボトルは変更されません。先にボトルのプログラムを終了してください。32 ビットのプログラムは FineWine では動作しません。";
+"bottle.card_title" = "ボトル";
+"bottle.none_found" = "CrossOver のフォルダにボトルが見つかりませんでした。";
+"bottle.choose_other" = "ほかのフォルダを選択…";
+"bottle.choose_msg" = "ボトル、またはボトルの入ったフォルダを選択";
+"bottle.not_a_bottle" = "“%@”はボトルではありません。drive_c フォルダとレジストリがありません。";
+"bottle.note_32bit" = "32 ビットのボトル: 読み込めません";
+"bottle.import" = "読み込む";
+"bottle.err_title" = "ボトルを読み込めませんでした";
+"bottle.err_32bit" = "“%@”は 32 ビットのボトルです。FineWine が開けるのは 64 ビットのボトルだけです。";
+"bottle.err_running" = "“%@”でプログラムが実行中です。CrossOver で終了してから、もう一度読み込んでください。";
+"bottle.err_space" = "“%@”は %@ を使用しますが、ドライブの空きは %@ しかありません。";
+"bottle.stage_measuring" = "ボトルのサイズを確認中";
+"bottle.stage_copying" = "ボトルをコピー中";
+"bottle.stage_updating" = "Windows のファイルをアップデート中";

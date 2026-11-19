@@ -51,7 +51,7 @@
 "main.program_count_single" = "1 个程序";
 "main.program_count_multiple" = "%lld 个程序";
 "main.add_runtime_title" = "添加 Wine 运行时";
-"main.add_runtime_desc" = "FineWine 使用 Wine 运行时启动 Windows 程序。添加 FineWine 运行时文件夹或包含 bin/wine 的 Wine 构建文件夹即可开始。";
+"main.add_runtime_desc" = "FineWine 使用 Wine 运行时启动 Windows 程序，而此应用中没有内置运行时。请重新下载 FineWine，或添加 FineWine 运行时文件夹。无法使用 CrossOver 的 Wine。";
 "main.add_runtime_btn" = "添加运行时…";
 "main.first_prefix_title" = "创建首个容器";
 "main.first_prefix_desc" = "容器是一个独立的 Windows 环境。每个游戏或程序都可以拥有自己的容器和专属配置。";
@@ -423,6 +423,13 @@
 "runtime_problem.wine_missing" = "bin/wine 缺失或不可执行。";
 "runtime_problem.wineserver_missing" = "bin/wineserver 缺失或不可执行。";
 "runtime_problem.lib_missing" = "lib/wine 目录缺失。";
+"runtime_problem.crossover" = "此文件夹属于 CrossOver。FineWine 无法使用 CrossOver 的 Wine 运行程序，请改用 FineWine 内置的运行时。";
+"runtime_problem.newer_format" = "其描述文件使用了此版本 FineWine 无法识别的格式。请更新 FineWine 后再使用。";
+"runtime_problem.root_missing" = "它所描述的 Wine 构建不在 %@。";
+"runtime_problem.bad_path" = "其描述文件中有无法使用的路径：%@。";
+"runtime_problem.bad_variable" = "其描述文件设置了不允许设置的变量：%@。";
+"runtime_problem.named_missing" = "%@ 缺失或不可执行。";
+"config.runtime_limited" = "“%@”不具备 FineWine 的全部功能。它无法执行的设置显示为灰色。";
 
 /* Prefix Setup Progress */
 "setup.creating_windows_env" = "正在创建 Windows 文件夹和注册表，大约需要一分钟。";
@@ -592,3 +599,22 @@
 "update.err_not_an_app" = "这份 FineWine 不是作为应用运行的，因此无法替换自身。";
 "update.err_translocated" = "由于是直接从下载位置打开的，macOS 正在从临时位置运行 FineWine。请将 FineWine 移到“应用程序”，从那里打开后再更新。";
 "update.err_programs_running" = "仍有程序在某个前缀中运行。";
+
+/* Importing a CrossOver bottle */
+"bottle.import_btn" = "导入 CrossOver 容器…";
+"bottle.sheet_title" = "导入 CrossOver 容器";
+"bottle.sheet_desc" = "FineWine 会用 CrossOver 容器的副本创建一个 FineWine 容器，包含其中的程序、文件和注册表。CrossOver 中的原容器不会被更改。请先退出容器中的程序。其中的 32 位程序无法在 FineWine 中运行。";
+"bottle.card_title" = "CrossOver 容器";
+"bottle.none_found" = "在 CrossOver 的文件夹中未找到容器。";
+"bottle.choose_other" = "选择其他文件夹…";
+"bottle.choose_msg" = "选择一个容器，或包含容器的文件夹";
+"bottle.not_a_bottle" = "“%@”不是容器：其中没有 drive_c 文件夹和注册表。";
+"bottle.note_32bit" = "32 位容器：无法导入";
+"bottle.import" = "导入";
+"bottle.err_title" = "无法导入容器";
+"bottle.err_32bit" = "“%@”是 32 位容器。FineWine 只能打开 64 位容器。";
+"bottle.err_running" = "“%@”中有程序正在运行。请在 CrossOver 中退出它们，然后重新导入。";
+"bottle.err_space" = "“%@”占用 %@，而驱动器上只剩 %@ 可用。";
+"bottle.stage_measuring" = "正在计算容器大小";
+"bottle.stage_copying" = "正在拷贝容器";
+"bottle.stage_updating" = "正在更新 Windows 文件";

@@ -51,7 +51,7 @@
 "main.program_count_single" = "برنامج واحد";
 "main.program_count_multiple" = "%lld برامج";
 "main.add_runtime_title" = "إضافة بيئة تشغيل Wine";
-"main.add_runtime_desc" = "يشغل FineWine برامج Windows باستخدام بيئة تشغيل Wine. أضف مجلد بيئة تشغيل FineWine، أو أي مجلد يحتوي على نسخة Wine (مع وجود bin/wine بداخله)، للبدء.";
+"main.add_runtime_desc" = "يشغل FineWine برامج Windows باستخدام بيئة تشغيل Wine، وهذه النسخة من التطبيق لا تحتوي على واحدة. نزّل FineWine من جديد، أو أضف مجلد بيئة تشغيل FineWine. لا يمكن استخدام Wine الخاص بـ CrossOver.";
 "main.add_runtime_btn" = "إضافة بيئة تشغيل…";
 "main.first_prefix_title" = "أنشئ حاويتك الأولى";
 "main.first_prefix_desc" = "الحاوية هي بيئة Windows قائمة بذاتها. يمكن أن يكون لكل لعبة أو برنامج حاويته الخاصة مع إعداداته المستقلة.";
@@ -423,6 +423,13 @@
 "runtime_problem.wine_missing" = "bin/wine مفقود أو غير قابل للتنفيذ.";
 "runtime_problem.wineserver_missing" = "bin/wineserver مفقود أو غير قابل للتنفيذ.";
 "runtime_problem.lib_missing" = "lib/wine مفقود.";
+"runtime_problem.crossover" = "هذا المجلد تابع لـ CrossOver. لا يستطيع FineWine تشغيل البرامج باستخدام Wine الخاص بـ CrossOver؛ استخدم بيئة التشغيل المضمّنة في FineWine بدلاً من ذلك.";
+"runtime_problem.newer_format" = "وصفها مكتوب بتنسيق لا يعرفه هذا الإصدار من FineWine. حدّث FineWine لاستخدامها.";
+"runtime_problem.root_missing" = "نسخة Wine التي تصفها غير موجودة في %@.";
+"runtime_problem.bad_path" = "وصفها يحتوي على مسار لا يمكن استخدامه: %@.";
+"runtime_problem.bad_variable" = "وصفها يعيّن متغيراً لا يجوز له تعيينه: %@.";
+"runtime_problem.named_missing" = "%@ مفقود أو غير قابل للتنفيذ.";
+"config.runtime_limited" = "«%@» لا تتضمن كل ميزات FineWine. الإعدادات التي لا تستطيع تنفيذها تظهر باهتة.";
 
 /* Prefix Setup Progress */
 "setup.creating_windows_env" = "جارٍ إنشاء مجلدات وسجل Windows. يستغرق هذا حوالي دقيقة.";
@@ -592,3 +599,22 @@
 "update.err_not_an_app" = "هذه النسخة من FineWine لا تعمل من تطبيق، لذلك لا تستطيع استبدال نفسها.";
 "update.err_translocated" = "يشغّل macOS تطبيق FineWine من مكان مؤقت لأنه فُتح مباشرة من حيث نُزّل. انقل FineWine إلى Applications وافتحه من هناك ثم حدّث مجدداً.";
 "update.err_programs_running" = "ما زالت هناك برامج تعمل في إحدى الحاويات.";
+
+/* Importing a CrossOver bottle */
+"bottle.import_btn" = "استيراد قارورة CrossOver…";
+"bottle.sheet_title" = "استيراد قارورة CrossOver";
+"bottle.sheet_desc" = "ينشئ FineWine حاوية من نسخة من القارورة، مع برامجها وملفاتها وسجلها. لا تتغير القارورة في CrossOver. أغلق برامج القارورة أولاً. البرامج ذات 32 بت فيها لن تعمل في FineWine.";
+"bottle.card_title" = "القارورة";
+"bottle.none_found" = "لم يُعثر على قوارير في مجلد CrossOver.";
+"bottle.choose_other" = "اختيار مجلد آخر…";
+"bottle.choose_msg" = "اختر قارورة أو مجلداً يحتوي على قوارير";
+"bottle.not_a_bottle" = "«%@» ليس قارورة: لا يحتوي على مجلد drive_c وسجل.";
+"bottle.note_32bit" = "قارورة 32 بت: لا يمكن استيرادها";
+"bottle.import" = "استيراد";
+"bottle.err_title" = "تعذّر استيراد القارورة";
+"bottle.err_32bit" = "«%@» قارورة 32 بت. لا يستطيع FineWine فتح سوى قوارير 64 بت.";
+"bottle.err_running" = "هناك برامج تعمل في «%@». أغلقها في CrossOver ثم أعد الاستيراد.";
+"bottle.err_space" = "«%@» تشغل %@ والمتاح على القرص %@ فقط.";
+"bottle.stage_measuring" = "جارٍ قياس القارورة";
+"bottle.stage_copying" = "جارٍ نسخ القارورة";
+"bottle.stage_updating" = "جارٍ تحديث ملفات Windows";

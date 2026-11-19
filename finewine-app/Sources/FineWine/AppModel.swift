@@ -855,7 +855,7 @@ final class AppModel: ObservableObject {
         do {
             switch runtime.kind {
             case .managed: try service.runtimes.removeManaged(id: runtime.id)
-            case .external: try service.runtimes.removeExternal(runtime.root)
+            case .external: try service.runtimes.removeExternal(runtime.folder)
             case .bundled: break   // part of the app; the list offers no way to remove it
             }
             reload()

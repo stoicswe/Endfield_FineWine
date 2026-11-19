@@ -35,10 +35,28 @@ struct ConfigurationTab: View {
 
     private var selectedRuntime: WineRuntime? { model.runtimes.first { $0.id == runtimeID } }
 
+    /// Whether the chosen runtime is without a FineWine feature: its settings are greyed out,
+    /// as nothing in that runtime would act on them.
+    private func lacks(_ capability: RuntimeCapability) -> Bool {
+        selectedRuntime.map { !$0.supports(capability) } ?? false
+    }
+
+    private var limitedRuntimeNote: String? {
+        guard let runtime = selectedRuntime, runtime.capabilities.count < RuntimeCapability.allCases.count else { return nil }
+        return l10n.tr("config.runtime_limited", runtime.name)
+    }
+
     var body: some View {
         let problems = edited.validationProblems()
         VStack(alignment: .leading, spacing: 16) {
             applyBar(problems: problems)
+
+            if let note = limitedRuntimeNote {
+                Label(note, systemImage: "info.circle")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .glassCard(padding: 14)
+            }
 
             Card(title: l10n.tr("config.windows_card"), symbol: "macwindow") {
                 Row(label: l10n.tr("config.win_version_label")) {
@@ -87,12 +105,13 @@ struct ConfigurationTab: View {
                     Text(l10n.tr("config.metalfx_upscale_title"))
                     Text(l10n.tr("config.metalfx_upscale_desc"))
                 }
+                .disabled(lacks(.upscaling))
                 Divider()
                 Toggle(isOn: $draft.renderSizeEnabled) {
                     Text(l10n.tr("config.render_size_title"))
                     Text(l10n.tr("config.render_size_desc"))
                 }
-                .disabled(draft.metalFXUpscaling)
+                .disabled(draft.metalFXUpscaling || lacks(.upscaling))
                 if !draft.metalFXUpscaling && draft.renderSizeEnabled {
                     HStack(spacing: 12) {
                         Slider(value: Binding(get: { Double(draft.renderScale) },
@@ -140,33 +159,40 @@ struct ConfigurationTab: View {
                          ? l10n.tr("config.dlss_metalfx_dxmt_desc")
                          : l10n.tr("config.dlss_metalfx_general_desc"))
                 }
+                .disabled(lacks(.dlss))
                 Toggle(isOn: $draft.reportNvidiaGPU) {
                     Text(l10n.tr("config.report_nvidia_title"))
                     Text(l10n.tr("config.report_nvidia_desc", PrefixSettings.reportedGPUName))
                 }
+                .disabled(lacks(.gpuIdentity))
                 Row(label: l10n.tr("config.fullscreen_label"), detail: l10n.tr("config.fullscreen_detail")) {
                     Picker(l10n.tr("config.fullscreen_label"), selection: $draft.fullScreenMode) {
                         ForEach(FullScreenMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }
                     .labelsHidden().fixedSize()
                 }
+                .disabled(lacks(.fullScreenModes))
                 Toggle(isOn: $draft.roundedWindows) {
                     Text(l10n.tr("config.rounded_windows_title"))
                     Text(l10n.tr("config.rounded_windows_desc"))
                 }
+                .disabled(lacks(.roundedWindows))
                 Toggle(isOn: $draft.gameMode) {
                     Text(l10n.tr("config.game_mode_title"))
                     Text(l10n.tr("config.game_mode_desc"))
                 }
+                .disabled(lacks(.gameMode))
                 Toggle(isOn: $draft.steamForHoYoverse) {
                     Text(l10n.tr("config.hoyoverse_steam_title"))
                     Text(l10n.tr("config.hoyoverse_steam_desc"))
                 }
+                .disabled(lacks(.steamStandIn))
                 Divider()
                 Toggle(isOn: $draft.metalHUD) {
                     Text(l10n.tr("config.metal_hud_title"))
                     Text(l10n.tr("config.metal_hud_desc"))
                 }
+                .disabled(lacks(.metalHUD))
             }
 
             Card(title: l10n.tr("config.perf_card"), symbol: "speedometer", footnote: syncNote) {
@@ -176,21 +202,25 @@ struct ConfigurationTab: View {
                     }
                     .labelsHidden().fixedSize()
                 }
+                .disabled(lacks(.msync))
                 Divider()
                 Toggle(isOn: $draft.hideHypervisor) {
                     Text(l10n.tr("config.hide_hypervisor_title"))
                     Text(l10n.tr("config.hide_hypervisor_desc"))
                 }
+                .disabled(lacks(.emulator))
                 Divider()
                 Toggle(isOn: $draft.zeroPages) {
                     Text(l10n.tr("config.zero_pages_title"))
                     Text(l10n.tr("config.zero_pages_desc"))
                 }
+                .disabled(lacks(.zeroPages))
                 Divider()
                 Toggle(isOn: $draft.compactBlockRecords) {
                     Text(l10n.tr("config.compact_records_title"))
                     Text(l10n.tr("config.compact_records_desc"))
                 }
+                .disabled(lacks(.emulator))
             }
 
             Card(title: l10n.tr("config.appearance_card"), symbol: "paintbrush",
@@ -204,6 +234,7 @@ struct ConfigurationTab: View {
                     Text(l10n.tr("config.mac_icons_title"))
                     Text(l10n.tr("config.mac_icons_desc"))
                 }
+                .disabled(lacks(.macIcons))
             }
 
             Card(title: l10n.tr("config.keyboard_card"), symbol: "keyboard") {

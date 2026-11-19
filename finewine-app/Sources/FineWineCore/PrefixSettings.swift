@@ -467,27 +467,33 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
 
     /// The environment variables these settings add to every Wine process in the prefix. The
     /// user's own variables come last so they can override anything above them.
-    public func environmentVariables() -> [(name: String, value: String)] {
+    /// `capabilities` are the FineWine features the runtime has (`WineRuntime.capabilities`):
+    /// a setting for one it lacks is left out, as nothing in that runtime would read it.
+    public func environmentVariables(supporting capabilities: Set<RuntimeCapability> = Set(RuntimeCapability.allCases))
+        -> [(name: String, value: String)] {
+        func has(_ capability: RuntimeCapability) -> Bool { capabilities.contains(capability) }
         var out: [(String, String)] = [("WINEDEBUG", debugChannels.isEmpty ? "-all" : debugChannels)]
         switch syncMode {
         case .standard: break
-        case .msync: out.append(("WINEMSYNC", "1"))
+        case .msync: if has(.msync) { out.append(("WINEMSYNC", "1")) }
         }
         // Metal only has its performance overlay in a process started with this set, so it is
         // always set: the overlay can then be shown and hidden while a game runs (View > Metal
         // HUD, or Option-F12). The setting decides whether it starts out shown.
         out.append(("MTL_HUD_ENABLED", "1"))
-        out.append(("FINEWINE_METAL_HUD", metalHUD ? "1" : "0"))
-        out.append(("FINEWINE_FULLSCREEN", fullScreenMode.rawValue))
-        if !roundedWindows { out.append(("FINEWINE_ROUNDED_WINDOWS", "0")) }
+        if has(.metalHUD) { out.append(("FINEWINE_METAL_HUD", metalHUD ? "1" : "0")) }
+        if has(.fullScreenModes) { out.append(("FINEWINE_FULLSCREEN", fullScreenMode.rawValue)) }
+        if has(.roundedWindows), !roundedWindows { out.append(("FINEWINE_ROUNDED_WINDOWS", "0")) }
         // Upscaling starts on with "automatic" or with a render size; a render size also makes
         // the program see a smaller screen (runtime patch 0040).
-        if let scale = effectiveRenderScale { out.append(("FINEWINE_RENDER_SCALE", String(scale))) }
-        else if !metalFXUpscaling { out.append(("FINEWINE_METALFX_AUTO", "0")) }
-        if !macStyleIcons { out.append(("FINEWINE_MAC_ICONS", "0")) }
-        if hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
-        if zeroPages { out.append(("FINEWINE_ZERO_PAGES", "1")) }
-        if compactBlockRecords { out.append(("FEX_COMPACTBLOCKRECORDS", "1")) }
+        if has(.upscaling) {
+            if let scale = effectiveRenderScale { out.append(("FINEWINE_RENDER_SCALE", String(scale))) }
+            else if !metalFXUpscaling { out.append(("FINEWINE_METALFX_AUTO", "0")) }
+        }
+        if has(.macIcons), !macStyleIcons { out.append(("FINEWINE_MAC_ICONS", "0")) }
+        if has(.emulator), hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
+        if has(.zeroPages), zeroPages { out.append(("FINEWINE_ZERO_PAGES", "1")) }
+        if has(.emulator), compactBlockRecords { out.append(("FEX_COMPACTBLOCKRECORDS", "1")) }
         if streamlineLog {
             out.append(("SL_LOG_LEVEL", "2"))       // 2: verbose
             out.append(("SL_LOG_PATH", "C:\\"))
@@ -497,6 +503,8 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         // LC_MESSAGES or LANG (or, with neither, the Mac's language), which stay as they are.
         // LC_ALL would override LC_CTYPE, so the environment drops it (LaunchPlanner).
         if let locale = nonUnicodeLanguage.unixLocale { out.append(("LC_CTYPE", locale)) }
+        let dlssThroughMetalFX = dlssThroughMetalFX && has(.dlss)
+        let reportNvidiaGPU = reportNvidiaGPU && has(.gpuIdentity)
         if dlssThroughMetalFX {
             // Lets nvngx.dll load for Direct3D 12 and Vulkan programs, whose DLSS calls it
             // turns into MetalFX work in MoltenVK.

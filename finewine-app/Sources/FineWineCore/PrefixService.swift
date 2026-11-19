@@ -48,7 +48,7 @@ public struct PrefixService {
                       profile: profiles.profile(id: prefix.metadata.profileID))
     }
 
-    private func runChecked(_ plan: LaunchPlan, what: String) throws {
+    func runChecked(_ plan: LaunchPlan, what: String) throws {
         let result = try runner.run(plan)
         guard result.status == 0 else {
             let tail = result.output.split(separator: "\n").suffix(6).joined(separator: "\n")

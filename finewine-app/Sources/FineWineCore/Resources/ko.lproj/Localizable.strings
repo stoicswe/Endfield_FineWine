@@ -51,7 +51,7 @@
 "main.program_count_single" = "프로그램 1개";
 "main.program_count_multiple" = "프로그램 %lld개";
 "main.add_runtime_title" = "Wine 런타임 추가";
-"main.add_runtime_desc" = "FineWine은 Wine 런타임을 사용하여 Windows 프로그램을 구동합니다. 시작하려면 FineWine 런타임 폴더나 bin/wine이 포함된 Wine 빌드 폴더를 추가하십시오.";
+"main.add_runtime_desc" = "FineWine은 Wine 런타임으로 Windows 프로그램을 구동하는데, 이 앱에는 런타임이 들어 있지 않습니다. FineWine을 다시 다운로드하거나 FineWine 런타임 폴더를 추가하십시오. CrossOver의 Wine은 사용할 수 없습니다.";
 "main.add_runtime_btn" = "런타임 추가…";
 "main.first_prefix_title" = "첫 번째 프리픽스 생성";
 "main.first_prefix_desc" = "프리픽스는 독립된 가상 Windows 환경입니다. 각 게임이나 프로그램마다 고유한 환경과 설정을 지정할 수 있습니다.";
@@ -423,6 +423,13 @@
 "runtime_problem.wine_missing" = "bin/wine 파일이 없거나 실행할 수 없습니다.";
 "runtime_problem.wineserver_missing" = "bin/wineserver 파일이 없거나 실행할 수 없습니다.";
 "runtime_problem.lib_missing" = "lib/wine 디렉토리가 없습니다.";
+"runtime_problem.crossover" = "이 폴더는 CrossOver에 속합니다. FineWine은 CrossOver의 Wine으로 프로그램을 실행할 수 없습니다. FineWine에 내장된 런타임을 사용하십시오.";
+"runtime_problem.newer_format" = "설명 파일이 이 버전의 FineWine이 알지 못하는 형식입니다. 사용하려면 FineWine을 업데이트하십시오.";
+"runtime_problem.root_missing" = "설명된 Wine 빌드가 %@에 없습니다.";
+"runtime_problem.bad_path" = "설명 파일에 사용할 수 없는 경로가 있습니다: %@.";
+"runtime_problem.bad_variable" = "설명 파일이 설정할 수 없는 변수를 설정합니다: %@.";
+"runtime_problem.named_missing" = "%@ 파일이 없거나 실행할 수 없습니다.";
+"config.runtime_limited" = "“%@”에는 FineWine의 일부 기능이 없습니다. 지원하지 않는 설정은 흐리게 표시됩니다.";
 
 /* Prefix Setup Progress */
 "setup.creating_windows_env" = "Windows 폴더와 레지스트리를 생성 중입니다. 약 1분 정도 소요됩니다.";
@@ -592,3 +599,22 @@
 "update.err_not_an_app" = "이 FineWine은 앱으로 실행되고 있지 않아 스스로를 교체할 수 없습니다.";
 "update.err_translocated" = "다운로드한 위치에서 바로 열었기 때문에 macOS가 FineWine을 임시 위치에서 실행하고 있습니다. FineWine을 응용 프로그램으로 옮기고 거기서 연 다음 다시 업데이트하세요.";
 "update.err_programs_running" = "프리픽스에서 프로그램이 아직 실행 중입니다.";
+
+/* Importing a CrossOver bottle */
+"bottle.import_btn" = "CrossOver 보틀 가져오기…";
+"bottle.sheet_title" = "CrossOver 보틀 가져오기";
+"bottle.sheet_desc" = "FineWine은 보틀의 복사본으로 프로그램, 파일, 레지스트리를 포함한 프리픽스를 만듭니다. CrossOver의 보틀은 변경되지 않습니다. 먼저 보틀의 프로그램을 종료하십시오. 32비트 프로그램은 FineWine에서 실행되지 않습니다.";
+"bottle.card_title" = "보틀";
+"bottle.none_found" = "CrossOver 폴더에서 보틀을 찾지 못했습니다.";
+"bottle.choose_other" = "다른 폴더 선택…";
+"bottle.choose_msg" = "보틀 또는 보틀이 들어 있는 폴더를 선택하십시오";
+"bottle.not_a_bottle" = "“%@”은(는) 보틀이 아닙니다. drive_c 폴더와 레지스트리가 없습니다.";
+"bottle.note_32bit" = "32비트 보틀: 가져올 수 없습니다";
+"bottle.import" = "가져오기";
+"bottle.err_title" = "보틀을 가져올 수 없습니다";
+"bottle.err_32bit" = "“%@”은(는) 32비트 보틀입니다. FineWine은 64비트 보틀만 열 수 있습니다.";
+"bottle.err_running" = "“%@”에서 프로그램이 실행 중입니다. CrossOver에서 종료한 다음 다시 가져오십시오.";
+"bottle.err_space" = "“%@”은(는) %@를 차지하는데 드라이브의 여유 공간은 %@뿐입니다.";
+"bottle.stage_measuring" = "보틀 크기 확인 중";
+"bottle.stage_copying" = "보틀 복사 중";
+"bottle.stage_updating" = "Windows 파일 업데이트 중";
