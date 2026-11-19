@@ -3,13 +3,18 @@
 # Pipeline (runs on the default branch only — GitHub runs `schedule` there):
 #   1. `changes` — compare `main` HEAD against the commit the newest nightly snapshot tag points at.
 #      Build only if there are NEW commits touching build-affecting paths
-#      (patches/**, scripts/**, patcher-app/**, .github/workflows/**). Manual dispatches
-#      always build. Days without changes produce no build and no release.
+#      (patches/**, scripts/**, patcher-app/**, finewine-app/**, runtime-extras/**,
+#      finewine-sources.lock, .github/workflows/**). Manual dispatches always build. Days
+#      without changes produce no build and no release.
 #   2. `build`   — call the build-wine reusable workflow (fresh build at HEAD). This is the
 #      "only if the default build is green" guarantee by construction: if the build fails,
 #      the release job is skipped and nothing is published. The next nightly automatically
 #      retries, because a snapshot tag is only created after a successful release.
-#   3. `release` — download the `patcher-app` + `wine-modules` artifacts and publish them as a
+#      `finewine` — in parallel, build-finewine-full.yml: FineWine.app with its Wine runtime
+#      inside, built from source (hours). The app's update check on the Nightly channel
+#      looks for its zip in the snapshot. If this build fails the snapshot is still
+#      published, without the app: the patcher's nightly does not wait on it.
+#   3. `release` — download the `patcher-app` + `wine-modules` (+ `finewine-app`) artifacts and publish them as a
 #      NEW GitHub PRE-release on every run, tagged `nightly_<CrossOver version>.<UTC date>_<sha>`
 #      (e.g. `nightly_26.3.0.20260925_55ae553e…`). Each snapshot keeps its own assets and
 #      notes — nothing is replaced, moved, or deleted — and the newest prerelease sorts to
@@ -95,7 +100,7 @@ jobs:
             echo "manual dispatch -> forced build"
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           else
-            CHANGED="$(git diff --name-only "$BASE"..HEAD -- patches scripts patcher-app .github/workflows || true)"
+            CHANGED="$(git diff --name-only "$BASE"..HEAD -- patches scripts patcher-app finewine-app runtime-extras finewine-sources.lock .github/workflows || true)"
             if [ -n "$CHANGED" ]; then
               echo "build-affecting changes:"
               echo "$CHANGED"
@@ -136,9 +141,26 @@ jobs:
       # nightly users reports a stale version that never existed for that build.
       app_version: nightly-${{ needs.changes.outputs.short_sha }}
 
+  finewine:
+    name: Nightly FineWine.app
+    needs: changes
+    if: needs.changes.outputs.should_build == 'true'
+    uses: ./.github/workflows/build-finewine-full.yml
+    with:
+      runner: "xcode-27" # keep in step with the Wine build above
+      # Blank on purpose: FineWine.app keeps the version its own build script gives it; the
+      # commit it was built from is in its zip's name and in its Info.plist.
+      app_version: ""
+      # The app's update check starts on the Nightly channel in a nightly build.
+      channel: "nightly"
+
   release:
     name: Snapshot pre-release
-    needs: [changes, build]
+    needs: [changes, build, finewine]
+    # The patcher's snapshot does not wait on FineWine.app: when that build failed (or was
+    # skipped) the snapshot is published without it. `always()` is what lets this job run
+    # after a failed need; the Wine build still has to have succeeded.
+    if: ${{ always() && !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -164,7 +186,11 @@ jobs:
         run: |
           set -euo pipefail
           ls -l assets
+          # The failed-build logs of FineWine.app are an artifact too; only zips are assets.
+          find assets -mindepth 1 ! -name '*.zip' -delete 2>/dev/null || true
           ( cd assets && sha256sum ./*.zip > SHA256SUMS.txt )
+          if ls assets/FineWine-*.zip >/dev/null 2>&1; then echo "HAS_FINEWINE_APP=true" >> "$GITHUB_ENV"
+          else echo "HAS_FINEWINE_APP=false" >> "$GITHUB_ENV"; echo "::warning::FineWine.app is not in this snapshot (its build did not succeed)"; fi
 
       - name: Write release notes
         shell: bash
@@ -189,15 +215,16 @@ jobs:
           > [run #@@RUN_NUMBER@@](@@RUN_URL@@).
           > Gameplay is only verified on the maintainer's Mac — treat this as a test build.
 
-          **Requires:** CrossOver **@@CX_VER@@** (the Wine ABI must match) · Apple Silicon · macOS 15+ · Rosetta 2.
-
           ### What's inside
 
           | Asset | What it is |
           |---|---|
+          @@APP_ROW@@
           | `finewine-patcher-…zip` | **FineWine Patcher.app** — patches a copy of your CrossOver @@CX_VER@@ with the anti-cheat Wine modules and a patched MoltenVK (open it and follow the UI) |
           | `finewine-wine-modules-…zip` | The three patched Wine modules alone — for `scripts/swap-into-crossover.sh` users |
           | `SHA256SUMS.txt` | SHA-256 checksums of the assets |
+
+          The patcher and the Wine modules require CrossOver **@@CX_VER@@** (the Wine ABI must match), Apple silicon, macOS 15+ and Rosetta 2.
 
           ### Commits since the previous nightly
 
@@ -208,7 +235,8 @@ jobs:
           ### Provenance & license
 
           - Built on the `xcode-27` GitHub runner image (macOS 27.0 / Xcode 27.0; x86_64 Wine output under Rosetta).
-          - CrossOver Wine source: [crossover-sources-@@CX_VER@@.tar.gz](https://media.codeweavers.com/pub/crossover/source/crossover-sources-@@CX_VER@@.tar.gz) + this repo's `patches/` at `@@SHA@@`.
+          - FineWine.app's runtime, when the app is in this snapshot, is built from source by `scripts/build-finewine.sh` (upstream Wine, FEX, DXMT and MoltenVK with this repo's patches, each at the revision its build script pins) at `@@SHA@@`. The runtime's own checks are not run in CI.
+          - CrossOver Wine source (for the patcher): [crossover-sources-@@CX_VER@@.tar.gz](https://media.codeweavers.com/pub/crossover/source/crossover-sources-@@CX_VER@@.tar.gz) + this repo's `patches/` at `@@SHA@@`.
           - The patched Wine modules are **LGPL-2.1-or-later**; the bundled MoltenVK is **Apache-2.0**. The complete corresponding source is the CrossOver tarball above, the pinned MoltenVK revision, and this repo's `patches/` (see `patcher-app/README.md`).
           """
           # The template lives inside the workflow's literal block scalar, so strip the
@@ -216,6 +244,17 @@ jobs:
           lines = template.splitlines()
           indent = min((len(l) - len(l.lstrip()) for l in lines if l.strip()), default=0)
           template = "\n".join(l[indent:] if l.strip() else "" for l in lines) + "\n"
+
+          app_row = (
+              "| `FineWine-…zip` | **FineWine.app** — the menu bar app with its own Wine runtime inside. "
+              "Unzip it, move it to Applications and open it (right-click → Open the first time: it is ad-hoc signed). "
+              "Needs an Apple silicon Mac on macOS 26 or later; it does not need CrossOver or Rosetta. "
+              "An installed FineWine on the Nightly update channel offers this build by itself. |"
+          )
+          if os.environ.get("HAS_FINEWINE_APP") == "true":
+              template = template.replace("@@APP_ROW@@", app_row)
+          else:
+              template = template.replace("@@APP_ROW@@\n", "")
 
           out = template
           for key in ("TODAY", "SHA", "RUN_NUMBER", "RUN_URL", "CX_VER", "COMMITS"):
@@ -298,10 +337,13 @@ jobs:
           | Title | %TITLE% |
           | Tag | %TAG% (pre-release) |
           | Commit | `%SHA%` |
-          | Assets | Patcher.app zip · modules zip · SHA256SUMS.txt |
+          | Assets | %ASSETS% |
           | URL | %RELEASE_URL% |
           EOT
+          if [ "${HAS_FINEWINE_APP:-false}" = true ]; then LIST="FineWine.app zip · Patcher.app zip · modules zip · SHA256SUMS.txt"
+          else LIST="Patcher.app zip · modules zip · SHA256SUMS.txt (FineWine.app did not build)"; fi
           sed -i \
+            -e "s|%ASSETS%|$LIST|g" \
             -e "s|%TITLE%|$RELEASE_TITLE|g" \
             -e "s|%TAG%|$RELEASE_TAG|g" \
             -e "s|%SHA%|${{ github.sha }}|g" \

@@ -323,6 +323,7 @@ struct SettingsView: View {
                     .fwButton()
                 }
 
+                UpdatesCard()
                 DrivesCard()
                 SnapshotsSettingsCard()
 

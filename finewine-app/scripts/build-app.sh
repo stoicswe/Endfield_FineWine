@@ -5,6 +5,10 @@
 # Usage:  finewine-app/scripts/build-app.sh
 # Env:
 #   VERSION       CFBundleShortVersionString (default 0.1.0)
+#   FINEWINE_CHANNEL     which kind of build this is, for the app's update check: release,
+#                        beta or nightly (default dev: a build made on your own Mac)
+#   FINEWINE_COMMIT      the commit it is built from (default: this checkout's HEAD)
+#   FINEWINE_BUILD_DATE  when it was built, ISO 8601 in UTC (default: now)
 #   ICON_VARIANT  which appearance of the icon to use (default Dark)
 #   CODESIGN_ID   signing identity (default "-" = ad-hoc, for your own machine)
 #   SKIP_TESTS=1  don't run the unit tests first
@@ -18,6 +22,11 @@ APP_NAME="FineWine"
 EXE="FineWine"
 BUNDLE_ID="io.github.stoicswe.FineWine"
 VERSION="${VERSION:-0.1.0}"
+# What the app's update check compares releases with (UpdateChecker in FineWineCore): a
+# release is newer when it was published after this build was made and is not this commit.
+FINEWINE_CHANNEL="${FINEWINE_CHANNEL:-dev}"
+FINEWINE_COMMIT="${FINEWINE_COMMIT:-$(git -C "$HERE" rev-parse HEAD 2>/dev/null || true)}"
+FINEWINE_BUILD_DATE="${FINEWINE_BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 CODESIGN_ID="${CODESIGN_ID:--}"
 OUT="$HERE/build"
 APP="$OUT/$APP_NAME.app"
@@ -97,6 +106,12 @@ $ICON_PLIST
 	<string>$VERSION</string>
 	<key>CFBundleVersion</key>
 	<string>$VERSION</string>
+	<key>FineWineChannel</key>
+	<string>$FINEWINE_CHANNEL</string>
+	<key>FineWineCommit</key>
+	<string>$FINEWINE_COMMIT</string>
+	<key>FineWineBuildDate</key>
+	<string>$FINEWINE_BUILD_DATE</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleDevelopmentRegion</key>

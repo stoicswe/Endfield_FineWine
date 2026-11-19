@@ -166,6 +166,17 @@ def compose(
         "",
         "| Asset | What it is |",
         "|---|---|",
+    ]
+    # FineWine.app is in a release when the workflow built it (release.yml, NOTES_FINEWINE_ZIP).
+    finewine_zip = os.environ.get("NOTES_FINEWINE_ZIP", "").strip()
+    if finewine_zip:
+        out += [
+            f"| `{finewine_zip}` | **FineWine.app** — the menu bar app with its own Wine runtime "
+            f"inside. Unzip it, move it to Applications and open it (right-click → Open the first "
+            f"time: it is ad-hoc signed). Needs an Apple silicon Mac on macOS 26 or later; it does "
+            f"not need CrossOver or Rosetta. An installed FineWine offers this release by itself. |",
+        ]
+    out += [
         f"| `FineWine.Patcher.app.zip` | **FineWine Patcher.app** — patches a copy of your "
         f"CrossOver {cx_ver} with the anti-cheat Wine modules and a patched MoltenVK "
         f"(open it and follow the UI). |",
@@ -173,7 +184,7 @@ def compose(
         f"`scripts/apply-modules.sh` / `scripts/swap-into-crossover.sh` users. |",
         "| `SHA256SUMS.txt` | SHA-256 checksums of the assets. |",
         "",
-        f"**Requires:** a licensed CrossOver **{cx_ver}** (the Wine ABI must match) · "
+        f"**The patcher and the modules require:** a licensed CrossOver **{cx_ver}** (the Wine ABI must match) · "
         f"Apple Silicon · macOS 15+ · Rosetta 2.",
         "",
     ]
