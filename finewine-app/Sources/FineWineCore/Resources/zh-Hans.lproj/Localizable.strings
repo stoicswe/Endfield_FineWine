@@ -51,7 +51,7 @@
 "main.program_count_single" = "1 个程序";
 "main.program_count_multiple" = "%lld 个程序";
 "main.add_runtime_title" = "添加 Wine 运行时";
-"main.add_runtime_desc" = "FineWine 使用 Wine 运行时启动 Windows 程序。添加 FineWine 运行时文件夹或包含 bin/wine 的 Wine 构建文件夹即可开始。";
+"main.add_runtime_desc" = "FineWine 使用 Wine 运行时启动 Windows 程序，而此应用中没有内置运行时。请重新下载 FineWine，或添加 FineWine 运行时文件夹。无法使用 CrossOver 的 Wine。";
 "main.add_runtime_btn" = "添加运行时…";
 "main.first_prefix_title" = "创建首个容器";
 "main.first_prefix_desc" = "容器是一个独立的 Windows 环境。每个游戏或程序都可以拥有自己的容器和专属配置。";
@@ -423,6 +423,13 @@
 "runtime_problem.wine_missing" = "bin/wine 缺失或不可执行。";
 "runtime_problem.wineserver_missing" = "bin/wineserver 缺失或不可执行。";
 "runtime_problem.lib_missing" = "lib/wine 目录缺失。";
+"runtime_problem.crossover" = "此文件夹属于 CrossOver。FineWine 无法使用 CrossOver 的 Wine 运行程序，请改用 FineWine 内置的运行时。";
+"runtime_problem.newer_format" = "其描述文件使用了此版本 FineWine 无法识别的格式。请更新 FineWine 后再使用。";
+"runtime_problem.root_missing" = "它所描述的 Wine 构建不在 %@。";
+"runtime_problem.bad_path" = "其描述文件中有无法使用的路径：%@。";
+"runtime_problem.bad_variable" = "其描述文件设置了不允许设置的变量：%@。";
+"runtime_problem.named_missing" = "%@ 缺失或不可执行。";
+"config.runtime_limited" = "“%@”不具备 FineWine 的全部功能。它无法执行的设置显示为灰色。";
 
 /* Prefix Setup Progress */
 "setup.creating_windows_env" = "正在创建 Windows 文件夹和注册表，大约需要一分钟。";

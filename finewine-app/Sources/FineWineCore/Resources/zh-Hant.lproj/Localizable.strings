@@ -51,7 +51,7 @@
 "main.program_count_single" = "1 個程式";
 "main.program_count_multiple" = "%lld 個程式";
 "main.add_runtime_title" = "加入 Wine 執行階段";
-"main.add_runtime_desc" = "FineWine 使用 Wine 執行階段啟動 Windows 程式。加入 FineWine 執行階段資料夾或包含 bin/wine 的 Wine 組建資料夾即可開始。";
+"main.add_runtime_desc" = "FineWine 使用 Wine 執行階段啟動 Windows 程式，而此 App 中沒有內建執行階段。請重新下載 FineWine，或加入 FineWine 執行階段資料夾。無法使用 CrossOver 的 Wine。";
 "main.add_runtime_btn" = "加入執行階段…";
 "main.first_prefix_title" = "建立首個容器";
 "main.first_prefix_desc" = "容器是獨立的 Windows 環境。每個遊戲或程式都可以擁有自己的容器與專屬設定。";
@@ -423,6 +423,13 @@
 "runtime_problem.wine_missing" = "bin/wine 遺失或無法執行。";
 "runtime_problem.wineserver_missing" = "bin/wineserver 遺失或無法執行。";
 "runtime_problem.lib_missing" = "lib/wine 目錄遺失。";
+"runtime_problem.crossover" = "此資料夾屬於 CrossOver。FineWine 無法使用 CrossOver 的 Wine 執行程式，請改用 FineWine 內建的執行階段。";
+"runtime_problem.newer_format" = "其描述檔使用了此版本 FineWine 無法辨識的格式。請更新 FineWine 後再使用。";
+"runtime_problem.root_missing" = "它所描述的 Wine 組建不在 %@。";
+"runtime_problem.bad_path" = "其描述檔中有無法使用的路徑：%@。";
+"runtime_problem.bad_variable" = "其描述檔設定了不允許設定的變數：%@。";
+"runtime_problem.named_missing" = "%@ 遺失或無法執行。";
+"config.runtime_limited" = "「%@」不具備 FineWine 的全部功能。它無法執行的設定會顯示為灰色。";
 
 /* Prefix Setup Progress */
 "setup.creating_windows_env" = "正在建立 Windows 資料夾與登錄檔，大約需要一分鐘。";

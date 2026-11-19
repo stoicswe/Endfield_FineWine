@@ -14,8 +14,41 @@ public struct GraphicsBackendSpec: Codable, Equatable, Sendable {
     }
 }
 
-/// `runtime.json` at the root of a FineWine runtime.
+/// A FineWine feature that needs support inside the runtime. A runtime that lists its
+/// capabilities gets only those; the prefix settings for the rest are greyed out and nothing is
+/// passed to the runtime for them. See docs/finewine-runtime-format.md.
+public enum RuntimeCapability: String, CaseIterable, Codable, Sendable {
+    /// MetalFX upscaling of a small picture, the render size, and the menu switch for it.
+    case upscaling
+    /// DLSS calls carried out by MetalFX.
+    case dlss
+    /// Reporting the GPU under other ids (`FINEWINE_GPU_*`).
+    case gpuIdentity
+    /// The choice of how a program goes full screen.
+    case fullScreenModes
+    case roundedWindows
+    /// A second loader inside an app bundle that macOS takes for a game.
+    case gameMode
+    /// The stand-in for the Steam client.
+    case steamStandIn
+    /// Showing and hiding Metal's overlay while a program runs.
+    case metalHUD
+    /// MSync, the Mach-semaphore synchronisation.
+    case msync
+    /// FineWine's FEX and the settings it reads (`FEX_*`).
+    case emulator
+    case zeroPages
+    /// Windows icons redrawn in the Mac's shape for the Dock.
+    case macIcons
+}
+
+/// `runtime.json`: the description of a Wine build FineWine can run programs with. In a
+/// FineWine runtime it is at the root of the build; for any other Wine build it can be alone in
+/// a folder and say where the build is (`root`) and how it is started.
 public struct RuntimeManifest: Codable, Equatable, Sendable {
+    /// The newest `formatVersion` this app understands.
+    public static let currentFormat = 2
+
     public var id: String
     public var name: String
     /// FineWine's own version of this runtime build.
@@ -27,14 +60,47 @@ public struct RuntimeManifest: Codable, Equatable, Sendable {
     /// Graphics backends the runtime ships, keyed by `GraphicsBackend` raw value.
     public var graphics: [String: GraphicsBackendSpec]
 
+    // What follows is format 2. Every field can be left out, and a description without them
+    // means what it always did.
+
+    /// The format the description is written in; a description for a newer app is refused.
+    public var formatVersion: Int?
+    /// Where the Wine build is, when it is not the folder of this file: an absolute path, or
+    /// one starting with `~/`.
+    public var root: String?
+    /// The program that starts Wine, relative to the build (default `bin/wine`).
+    public var loader: String?
+    /// The Wine server, relative to the build (default `bin/wineserver`).
+    public var server: String?
+    /// Folders of Mac libraries, relative to the build (default `lib`).
+    public var libraryPath: [String]?
+    /// Variables every process gets. `${root}`, `${prefix}`, `${folder}` and `${home}` in a
+    /// value are replaced. A prefix's own variables are set after these.
+    public var environment: [String: String]?
+    /// The FineWine features the runtime has (`RuntimeCapability`). Left out: all of them.
+    public var capabilities: [String]?
+    /// The arguments the loader sets a new prefix up with (default `wineboot --init`).
+    public var prefixSetup: [String]?
+
     public init(id: String, name: String, version: String, wineVersion: String,
-                architecture: String = "arm64", graphics: [String: GraphicsBackendSpec] = [:]) {
+                architecture: String = "arm64", graphics: [String: GraphicsBackendSpec] = [:],
+                formatVersion: Int? = nil, root: String? = nil, loader: String? = nil, server: String? = nil,
+                libraryPath: [String]? = nil, environment: [String: String]? = nil,
+                capabilities: [String]? = nil, prefixSetup: [String]? = nil) {
         self.id = id
         self.name = name
         self.version = version
         self.wineVersion = wineVersion
         self.architecture = architecture
         self.graphics = graphics
+        self.formatVersion = formatVersion
+        self.root = root
+        self.loader = loader
+        self.server = server
+        self.libraryPath = libraryPath
+        self.environment = environment
+        self.capabilities = capabilities
+        self.prefixSetup = prefixSetup
     }
 
     public init(from decoder: Decoder) throws {
@@ -45,6 +111,22 @@ public struct RuntimeManifest: Codable, Equatable, Sendable {
         wineVersion = try c.decodeIfPresent(String.self, forKey: .wineVersion) ?? ""
         architecture = try c.decodeIfPresent(String.self, forKey: .architecture) ?? "arm64"
         graphics = try c.decodeIfPresent([String: GraphicsBackendSpec].self, forKey: .graphics) ?? [:]
+        formatVersion = try c.decodeIfPresent(Int.self, forKey: .formatVersion)
+        root = try c.decodeIfPresent(String.self, forKey: .root)
+        loader = try c.decodeIfPresent(String.self, forKey: .loader)
+        server = try c.decodeIfPresent(String.self, forKey: .server)
+        libraryPath = try c.decodeIfPresent([String].self, forKey: .libraryPath)
+        environment = try c.decodeIfPresent([String: String].self, forKey: .environment)
+        capabilities = try c.decodeIfPresent([String].self, forKey: .capabilities)
+        prefixSetup = try c.decodeIfPresent([String].self, forKey: .prefixSetup)
+    }
+
+    /// Variables a description may not set: FineWine finds a prefix's processes by them.
+    public static let reservedVariables = ["WINEPREFIX"]
+
+    /// A path inside the build: relative, and not leading out of it.
+    static func isInsidePath(_ path: String) -> Bool {
+        !path.isEmpty && !path.hasPrefix("/") && !path.hasPrefix("~") && !path.split(separator: "/").contains("..")
     }
 }
 
@@ -60,27 +142,73 @@ public struct WineRuntime: Equatable, Identifiable, Sendable {
     }
 
     public var manifest: RuntimeManifest
-    public var root: URL
+    /// The folder the description is in (or, without one, the folder that was added). It is
+    /// the Wine build too unless the description names another place.
+    public var folder: URL
     public var kind: Kind
 
     public var id: String { manifest.id }
     public var name: String { manifest.name }
 
+    /// `root` is the runtime's folder; the Wine build is there unless its description says
+    /// otherwise.
     public init(manifest: RuntimeManifest, root: URL, kind: Kind) {
         self.manifest = manifest
-        self.root = root
+        self.folder = root
         self.kind = kind
+    }
+
+    /// The Wine build: what the description names, or the runtime's own folder.
+    public var root: URL {
+        guard let named = manifest.root, !named.isEmpty else { return folder }
+        return URL(fileURLWithPath: (named as NSString).expandingTildeInPath, isDirectory: true)
     }
 
     public static let wineBinaryNames = ["wine", "wine64"]
     public static let serverBinaryNames = ["wineserver", "wineserver-arm64"]
 
-    public var binDirectory: URL { root.appendingPathComponent("bin", isDirectory: true) }
+    /// The folder of the loader, where Wine's other tools are.
+    public var binDirectory: URL {
+        if let loader = manifest.loader, RuntimeManifest.isInsidePath(loader) {
+            return root.appendingPathComponent(loader).deletingLastPathComponent()
+        }
+        return root.appendingPathComponent("bin", isDirectory: true)
+    }
+
+    private func executable(named: String?, defaults: [String]) -> URL? {
+        if let named {
+            guard RuntimeManifest.isInsidePath(named) else { return nil }
+            let url = root.appendingPathComponent(named)
+            return FileManager.default.isExecutableFile(atPath: url.path) ? url : nil
+        }
+        return defaults.map { root.appendingPathComponent("bin/\($0)") }
+            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    }
 
     /// The `wine` loader, if the runtime has one.
-    public var wineBinary: URL? {
-        Self.wineBinaryNames.map { binDirectory.appendingPathComponent($0) }
-            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    public var wineBinary: URL? { executable(named: manifest.loader, defaults: Self.wineBinaryNames) }
+
+    /// The folders of Mac libraries the runtime's programs look in.
+    public var libraryDirectories: [URL] {
+        (manifest.libraryPath ?? ["lib"]).filter(RuntimeManifest.isInsidePath)
+            .map { root.appendingPathComponent($0, isDirectory: true) }
+    }
+
+    /// Whether the runtime has a FineWine feature. One that does not list its capabilities is
+    /// taken to have them all, as every runtime before the list existed did; a plain Wine
+    /// folder with no description has none.
+    public func supports(_ capability: RuntimeCapability) -> Bool {
+        manifest.capabilities.map { $0.contains(capability.rawValue) } ?? true
+    }
+
+    public var capabilities: Set<RuntimeCapability> { Set(RuntimeCapability.allCases.filter(supports)) }
+
+    /// A value from the description with its placeholders filled in.
+    public func expand(_ value: String, prefix: URL) -> String {
+        value.replacingOccurrences(of: "${root}", with: root.path)
+            .replacingOccurrences(of: "${folder}", with: folder.path)
+            .replacingOccurrences(of: "${prefix}", with: prefix.path)
+            .replacingOccurrences(of: "${home}", with: NSHomeDirectory())
     }
 
     /// The copy of Wine's loader that macOS treats as a game: it is inside an app bundle whose
@@ -99,16 +227,52 @@ public struct WineRuntime: Equatable, Identifiable, Sendable {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    public var wineserverBinary: URL? {
-        Self.serverBinaryNames.map { binDirectory.appendingPathComponent($0) }
-            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    public var wineserverBinary: URL? { executable(named: manifest.server, defaults: Self.serverBinaryNames) }
+
+    /// Whether this folder is CrossOver's (or a part of it) and not a Wine build of its own.
+    /// CrossOver's `bin/wine` is a script that only works with CrossOver's bottles: started for
+    /// a FineWine prefix it ignores the prefix and fails with "Unable to find the 'default'
+    /// bottle". Its Wine also depends on the rest of CrossOver, so FineWine cannot use it.
+    public var isCrossOver: Bool {
+        let fm = FileManager.default
+        if ["bin/cxbottle", "lib/perl/CXBottle.pm", "etc/CrossOver.conf"].contains(where: {
+            fm.fileExists(atPath: root.appendingPathComponent($0).path)
+        }) { return true }
+        return root.resolvingSymlinksInPath().pathComponents.contains {
+            $0.hasSuffix(".app") && $0.lowercased().hasPrefix("crossover")
+        }
     }
 
     /// Reasons this runtime can't be used; empty when it looks complete.
     public func problems() -> [String] {
+        if let format = manifest.formatVersion, format > RuntimeManifest.currentFormat {
+            return [tr("runtime_problem.newer_format")]
+        }
+        if let named = manifest.root, !named.isEmpty {
+            guard named.hasPrefix("/") || named.hasPrefix("~/") else { return [tr("runtime_problem.bad_path", named)] }
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDir), isDir.boolValue else {
+                return [tr("runtime_problem.root_missing", root.path)]
+            }
+        }
+        // CrossOver's own way in (bin/wine) cannot be used; a description that names another
+        // loader in it has said how it is to be started instead.
+        if isCrossOver, manifest.loader == nil { return [tr("runtime_problem.crossover")] }
         var problems: [String] = []
-        if wineBinary == nil { problems.append(tr("runtime_problem.wine_missing")) }
-        if wineserverBinary == nil { problems.append(tr("runtime_problem.wineserver_missing")) }
+        for path in [manifest.loader, manifest.server].compactMap({ $0 }) + (manifest.libraryPath ?? [])
+        where !RuntimeManifest.isInsidePath(path) {
+            problems.append(tr("runtime_problem.bad_path", path))
+        }
+        for name in (manifest.environment ?? [:]).keys.sorted()
+        where RuntimeManifest.reservedVariables.contains(name) || !EnvironmentVariable.isValidName(name) {
+            problems.append(tr("runtime_problem.bad_variable", name))
+        }
+        if wineBinary == nil {
+            problems.append(manifest.loader.map { tr("runtime_problem.named_missing", $0) } ?? tr("runtime_problem.wine_missing"))
+        }
+        if wineserverBinary == nil {
+            problems.append(manifest.server.map { tr("runtime_problem.named_missing", $0) } ?? tr("runtime_problem.wineserver_missing"))
+        }
         var isDir: ObjCBool = false
         let lib = root.appendingPathComponent("lib/wine").path
         if !FileManager.default.fileExists(atPath: lib, isDirectory: &isDir) || !isDir.boolValue {
@@ -187,7 +351,7 @@ public struct RuntimeStore {
     /// A manifest for a plain Wine folder that has no `runtime.json`.
     static func inferredManifest(for root: URL) -> RuntimeManifest {
         RuntimeManifest(id: "external:" + root.standardizedFileURL.path,
-                        name: root.lastPathComponent, version: "", wineVersion: "")
+                        name: root.lastPathComponent, version: "", wineVersion: "", capabilities: [])
     }
 
     // MARK: External runtimes
@@ -234,6 +398,10 @@ public struct RuntimeStore {
         }
         guard Self.isSafeIdentifier(manifest.id) else {
             throw FineWineError("The runtime's id “\(manifest.id)” can't be used as a folder name.")
+        }
+        let problems = WineRuntime(manifest: manifest, root: source, kind: .managed).problems()
+        guard problems.isEmpty else {
+            throw FineWineError("“\(manifest.name)” is not a usable Wine runtime: " + problems.joined(separator: " "))
         }
         try paths.ensureDirectories()
         let destination = paths.runtimes.appendingPathComponent(manifest.id, isDirectory: true)

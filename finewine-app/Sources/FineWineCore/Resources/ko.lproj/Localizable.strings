@@ -51,7 +51,7 @@
 "main.program_count_single" = "프로그램 1개";
 "main.program_count_multiple" = "프로그램 %lld개";
 "main.add_runtime_title" = "Wine 런타임 추가";
-"main.add_runtime_desc" = "FineWine은 Wine 런타임을 사용하여 Windows 프로그램을 구동합니다. 시작하려면 FineWine 런타임 폴더나 bin/wine이 포함된 Wine 빌드 폴더를 추가하십시오.";
+"main.add_runtime_desc" = "FineWine은 Wine 런타임으로 Windows 프로그램을 구동하는데, 이 앱에는 런타임이 들어 있지 않습니다. FineWine을 다시 다운로드하거나 FineWine 런타임 폴더를 추가하십시오. CrossOver의 Wine은 사용할 수 없습니다.";
 "main.add_runtime_btn" = "런타임 추가…";
 "main.first_prefix_title" = "첫 번째 프리픽스 생성";
 "main.first_prefix_desc" = "프리픽스는 독립된 가상 Windows 환경입니다. 각 게임이나 프로그램마다 고유한 환경과 설정을 지정할 수 있습니다.";
@@ -423,6 +423,13 @@
 "runtime_problem.wine_missing" = "bin/wine 파일이 없거나 실행할 수 없습니다.";
 "runtime_problem.wineserver_missing" = "bin/wineserver 파일이 없거나 실행할 수 없습니다.";
 "runtime_problem.lib_missing" = "lib/wine 디렉토리가 없습니다.";
+"runtime_problem.crossover" = "이 폴더는 CrossOver에 속합니다. FineWine은 CrossOver의 Wine으로 프로그램을 실행할 수 없습니다. FineWine에 내장된 런타임을 사용하십시오.";
+"runtime_problem.newer_format" = "설명 파일이 이 버전의 FineWine이 알지 못하는 형식입니다. 사용하려면 FineWine을 업데이트하십시오.";
+"runtime_problem.root_missing" = "설명된 Wine 빌드가 %@에 없습니다.";
+"runtime_problem.bad_path" = "설명 파일에 사용할 수 없는 경로가 있습니다: %@.";
+"runtime_problem.bad_variable" = "설명 파일이 설정할 수 없는 변수를 설정합니다: %@.";
+"runtime_problem.named_missing" = "%@ 파일이 없거나 실행할 수 없습니다.";
+"config.runtime_limited" = "“%@”에는 FineWine의 일부 기능이 없습니다. 지원하지 않는 설정은 흐리게 표시됩니다.";
 
 /* Prefix Setup Progress */
 "setup.creating_windows_env" = "Windows 폴더와 레지스트리를 생성 중입니다. 약 1분 정도 소요됩니다.";

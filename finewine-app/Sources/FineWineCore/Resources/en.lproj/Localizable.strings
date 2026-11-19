@@ -51,7 +51,7 @@
 "main.program_count_single" = "1 program";
 "main.program_count_multiple" = "%lld programs";
 "main.add_runtime_title" = "Add a Wine runtime";
-"main.add_runtime_desc" = "FineWine runs Windows programs with a Wine runtime. Add a FineWine runtime folder, or any folder that holds a Wine build (with bin/wine inside), to get started.";
+"main.add_runtime_desc" = "FineWine runs Windows programs with a Wine runtime, and this copy of the app has none inside. Download FineWine again, or add a FineWine runtime folder. CrossOver's Wine can't be used.";
 "main.add_runtime_btn" = "Add Runtime…";
 "main.first_prefix_title" = "Create your first prefix";
 "main.first_prefix_desc" = "A prefix is a self-contained Windows environment. Each game or program can have its own, with its own settings.";
@@ -423,6 +423,13 @@
 "runtime_problem.wine_missing" = "bin/wine is missing or not executable.";
 "runtime_problem.wineserver_missing" = "bin/wineserver is missing or not executable.";
 "runtime_problem.lib_missing" = "lib/wine is missing.";
+"runtime_problem.crossover" = "This folder belongs to CrossOver. FineWine can't run programs with CrossOver's Wine; use the runtime built into FineWine instead.";
+"runtime_problem.newer_format" = "Its description is in a format this version of FineWine doesn't know. Update FineWine to use it.";
+"runtime_problem.root_missing" = "The Wine build it describes is not at %@.";
+"runtime_problem.bad_path" = "Its description has a path that can't be used: %@.";
+"runtime_problem.bad_variable" = "Its description sets a variable it may not set: %@.";
+"runtime_problem.named_missing" = "%@ is missing or not executable.";
+"config.runtime_limited" = "“%@” doesn't have every FineWine feature. The settings it can't act on are greyed out.";
 
 /* Prefix Setup Progress */
 "setup.creating_windows_env" = "Creating the Windows folders and registry. This takes about a minute.";

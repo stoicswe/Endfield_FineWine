@@ -51,7 +51,7 @@
 "main.program_count_single" = "1 個のアプリ";
 "main.program_count_multiple" = "%lld 個のアプリ";
 "main.add_runtime_title" = "Wine ランタイムを追加";
-"main.add_runtime_desc" = "FineWine は Wine ランタイムを使用して Windows プログラムを実行します。FineWine ランタイムフォルダまたは bin/wine を含む Wine ビルドフォルダを追加してください。";
+"main.add_runtime_desc" = "FineWine は Wine ランタイムを使用して Windows プログラムを実行しますが、このアプリにはランタイムが入っていません。FineWine をもう一度ダウンロードするか、FineWine ランタイムフォルダを追加してください。CrossOver の Wine は使用できません。";
 "main.add_runtime_btn" = "ランタイムを追加…";
 "main.first_prefix_title" = "最初のプレフィックスを作成";
 "main.first_prefix_desc" = "プレフィックスは独立した Windows 環境です。各ゲームやアプリに独自の環境と設定を持たせることができます。";
@@ -423,6 +423,13 @@
 "runtime_problem.wine_missing" = "bin/wine が見つからないか、実行可能ではありません。";
 "runtime_problem.wineserver_missing" = "bin/wineserver が見つからないか、実行可能ではありません。";
 "runtime_problem.lib_missing" = "lib/wine ディレクトリがありません。";
+"runtime_problem.crossover" = "このフォルダは CrossOver のものです。FineWine は CrossOver の Wine ではプログラムを実行できません。FineWine に内蔵のランタイムを使用してください。";
+"runtime_problem.newer_format" = "この説明ファイルは、このバージョンの FineWine が対応していない形式です。使用するには FineWine をアップデートしてください。";
+"runtime_problem.root_missing" = "記述されている Wine ビルドが %@ にありません。";
+"runtime_problem.bad_path" = "説明ファイルに使用できないパスがあります: %@。";
+"runtime_problem.bad_variable" = "説明ファイルが設定できない変数を設定しています: %@。";
+"runtime_problem.named_missing" = "%@ が見つからないか、実行可能ではありません。";
+"config.runtime_limited" = "“%@”には FineWine の一部の機能がありません。対応していない設定はグレー表示になります。";
 
 /* Prefix Setup Progress */
 "setup.creating_windows_env" = "Windows フォルダとレジストリを作成しています。約1分かかります。";
