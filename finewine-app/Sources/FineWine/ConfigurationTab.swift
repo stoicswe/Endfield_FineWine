@@ -232,6 +232,11 @@ struct ConfigurationTab: View {
                 TextField("-all", text: $draft.debugChannels)
                     .textFieldStyle(.roundedBorder)
                     .font(.body.monospaced())
+                Divider()
+                Toggle(isOn: $draft.streamlineLog) {
+                    Text(l10n.tr("config.streamline_log_title"))
+                    Text(l10n.tr("config.streamline_log_desc", PrefixSettings.streamlineLogName))
+                }
             }
         }
         .onChange(of: prefix.metadata.settings) { _, new in

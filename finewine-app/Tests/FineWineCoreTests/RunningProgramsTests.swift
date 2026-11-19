@@ -22,6 +22,24 @@ final class RunningProgramsTests: XCTestCase {
         XCTAssertEqual(RunningPrograms.names(commands: ["/Users/me/Downloads/Game Setup.exe /S", "/bin/zsh -c x"], programs: []), ["Game Setup"])
     }
 
+    func testAGameListedThroughItsLauncherIsNamedByItsFolder() {
+        // both entries start the launcher; the game's own file is not listed anywhere
+        let programs = [Program(name: "GRYPHLINK", windowsPath: #"C:\Program Files\GRYPHLINK\Launcher.exe"#),
+                        Program(name: "Arknights Endfield", windowsPath: #"C:\Program Files\GRYPHLINK\Launcher.exe"#)]
+        let commands = [
+            #"C:\Program Files\GRYPHLINK\1.6.0\Games.exe --reason=0"#,
+            #"C:\Program Files\GRYPHLINK\1.6.0\QtWebEngineProcess.exe --type=renderer --no-sandbox"#,
+            #"C:\Program Files\GRYPHLINK\games\Arknights Endfield\Endfield.exe -launcher_lang=en-us"#,
+            #"C:\Program Files\GRYPHLINK\games\Arknights Endfield\UnityCrashHandler64.exe --attach 1440"#,
+            #"C:\Program Files\GRYPHLINK\games\Arknights Endfield\PlatformProcess.exe -gamehandle=1"#,
+        ]
+        let names = RunningPrograms.names(commands: commands, programs: programs)
+        XCTAssertEqual(names, ["GRYPHLINK", "Arknights Endfield"])
+        XCTAssertEqual(DiscordPresence.game(started: "GRYPHLINK", running: names, listed: programs.map(\.name)), "Arknights Endfield")
+        // only the launcher is up
+        XCTAssertEqual(RunningPrograms.names(commands: Array(commands.prefix(2)), programs: programs), ["GRYPHLINK"])
+    }
+
     private func service(alive: @escaping @Sendable () -> [Int32]) throws -> (PrefixService, Prefix, URL) {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("fw-quit-\(UUID().uuidString)")
         let paths = FineWinePaths(root: home, shortcuts: home.appendingPathComponent("Shortcuts"))
