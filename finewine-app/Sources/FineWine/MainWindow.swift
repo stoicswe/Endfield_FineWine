@@ -154,6 +154,7 @@ struct NewPrefixSheet: View {
     @State private var profileID = GameProfile.generic.id
     /// The drive chosen: "" for this Mac, else a volume UUID.
     @State private var driveChoice = ""
+    @State private var customFolderURL: URL? = nil
     @State private var volumes: [(volume: VolumeInfo, problem: String?)] = []
 
     private var profile: GameProfile? { model.profiles.first { $0.id == profileID } }
@@ -164,6 +165,12 @@ struct NewPrefixSheet: View {
     }
 
     private var driveDetail: String {
+        if driveChoice == "__custom__" {
+            guard let url = customFolderURL else { return l10n.tr("drive.custom_folder_detail") }
+            let free = (try? url.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?.volumeAvailableCapacity
+            let space = freeSpace(free.map(Int64.init))
+            return [l10n.tr("drive.in_folder", url.lastPathComponent), space].filter { !$0.isEmpty }.joined(separator: " · ")
+        }
         if driveChoice.isEmpty { return l10n.tr("drive.this_mac_detail") }
         guard let volume = usableVolumes.first(where: { $0.uuid == driveChoice }) else { return "" }
         return [l10n.tr("drive.folder_on_drive", volume.name), freeSpace(volume.availableBytes)]
@@ -200,9 +207,40 @@ struct NewPrefixSheet: View {
                         ForEach(usableVolumes, id: \.root) { volume in
                             Label(volume.name, systemImage: "externaldrive").tag(volume.uuid ?? "")
                         }
+                        Divider()
+                        Label(customFolderURL != nil ? customFolderURL!.lastPathComponent : l10n.tr("drive.custom_folder"),
+                              systemImage: "folder").tag("__custom__")
                     }
                     .labelsHidden()
                     .fixedSize()
+                    .onChange(of: driveChoice) { _, newChoice in
+                        if newChoice == "__custom__" && customFolderURL == nil {
+                            if let folder = Panels.chooseFolder(message: l10n.tr("dialog.choose_prefix_folder")) {
+                                customFolderURL = folder
+                            } else {
+                                driveChoice = ""
+                            }
+                        }
+                    }
+                }
+                if driveChoice == "__custom__" {
+                    HStack(spacing: 8) {
+                        Image(systemName: "folder")
+                            .foregroundStyle(.secondary)
+                        Text(customFolderURL?.path ?? "")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button(l10n.tr("app.change")) {
+                            if let folder = Panels.chooseFolder(message: l10n.tr("dialog.choose_prefix_folder")) {
+                                customFolderURL = folder
+                            }
+                        }
+                        .fwButton()
+                        .controlSize(.small)
+                    }
                 }
                 ForEach(volumes.filter { $0.problem != nil }, id: \.volume.root) { entry in
                     Label(entry.problem ?? "", systemImage: "exclamationmark.triangle")
@@ -237,7 +275,10 @@ struct NewPrefixSheet: View {
                 Button(l10n.tr("app.create")) {
                     guard let runtime else { return }
                     var place = PrefixPlace.thisMac
-                    if !driveChoice.isEmpty {
+                    if driveChoice == "__custom__" {
+                        guard let folder = customFolderURL else { return }
+                        place = .customFolder(folder)
+                    } else if !driveChoice.isEmpty {
                         // Makes FineWine/Prefixes on the drive and remembers the drive.
                         guard let volume = usableVolumes.first(where: { $0.uuid == driveChoice }),
                               let chosen = model.useDrive(volume) else { return }
@@ -249,7 +290,7 @@ struct NewPrefixSheet: View {
                 }
                 .fwProminentButton().tint(Look.wine)
                 .keyboardShortcut(.defaultAction)
-                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || runtime == nil || model.isCreatingPrefix)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || runtime == nil || model.isCreatingPrefix || (driveChoice == "__custom__" && customFolderURL == nil))
             }
         }
         .padding(22)

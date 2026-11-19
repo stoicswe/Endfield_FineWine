@@ -116,11 +116,13 @@ final class AppModel: ObservableObject {
         switch place {
         case .thisMac: return tr("drive.this_mac")
         case .drive(let uuid): return drives.first { $0.uuid == uuid }?.name ?? tr("drive.unknown")
+        case .customFolder(let url): return url.lastPathComponent
         }
     }
 
     func placeSymbol(_ place: PrefixPlace) -> String {
         if case .drive = place { return "externaldrive" }
+        if case .customFolder = place { return "folder" }
         return "desktopcomputer"
     }
 

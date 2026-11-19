@@ -21,6 +21,7 @@
 "app.default" = "기본값";
 "app.on" = "켜짐";
 "app.off" = "꺼짐";
+"app.change" = "변경…";
 
 /* Menu Bar */
 "menu.setting_up_prefix" = "프리픽스 “%@” 구성 중…";
@@ -344,6 +345,7 @@
 "dialog.choose_executable" = "“%@”에서 실행할 Windows 설치 프로그램이나 파일을 선택하십시오";
 "dialog.choose_program_in_prefix" = "이 프리픽스 내부의 프로그램을 선택하십시오";
 "dialog.choose_runtime_folder" = "Wine 런타임 폴더 선택";
+"dialog.choose_prefix_folder" = "이 프리픽스를 저장할 폴더 선택";
 "dialog.run_with_finewine_title" = "FineWine으로 “%@”을(를) 실행하시겠습니까?";
 "dialog.run_with_finewine_msg" = "실행할 대상 프리픽스를 선택하십시오. 신뢰할 수 있는 프로그램만 실행하십시오(FineWine과 동일한 파일 접근 권한을 갖습니다).";
 "dialog.run_btn" = "실행";
@@ -462,6 +464,9 @@
 "drive.prefix_count" = "프리픽스 %lld개";
 "drive.forget" = "목록에서 제거";
 "drive.forget_help" = "“%@”을(를) 더 이상 표시하지 않습니다. 프리픽스는 드라이브에 남아 있으며 다시 연결하면 돌아옵니다.";
+"drive.custom_folder" = "사용자 지정 폴더…";
+"drive.custom_folder_detail" = "선택한 사용자 지정 폴더 내.";
+"drive.in_folder" = "“%@” 내부";
 "location.err_low_space" = "“%@”에 새 프리픽스를 만들 공간이 부족합니다: 사용 가능 %@, 최소 %@ 필요(아무것도 설치하지 않은 상태로 약 750MB).";
 "copy.progress" = "%@ %lld%% (%@ / %@)";
 "move.menu" = "다음으로 이동";

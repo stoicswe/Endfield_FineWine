@@ -21,6 +21,7 @@
 "app.default" = "預設";
 "app.on" = "開啟";
 "app.off" = "關閉";
+"app.change" = "變更…";
 
 /* Menu Bar */
 "menu.setting_up_prefix" = "正在設定容器「%@」…";
@@ -344,6 +345,7 @@
 "dialog.choose_executable" = "選擇要在「%@」中執行的 Windows 安裝程式或檔案";
 "dialog.choose_program_in_prefix" = "選擇此容器內的程式";
 "dialog.choose_runtime_folder" = "選擇 Wine 執行階段資料夾";
+"dialog.choose_prefix_folder" = "選取此容器的存放資料夾";
 "dialog.run_with_finewine_title" = "使用 FineWine 執行「%@」？";
 "dialog.run_with_finewine_msg" = "請選擇要在其中執行的容器。請僅執行受信任的程式：它們將獲得與 FineWine 相同的檔案存取權限。";
 "dialog.run_btn" = "執行";
@@ -462,6 +464,9 @@
 "drive.prefix_count" = "%lld 個前綴";
 "drive.forget" = "移除";
 "drive.forget_help" = "不再列出「%@」。其中的前綴仍保留在磁碟上，再次接上即可恢復。";
+"drive.custom_folder" = "自訂資料夾…";
+"drive.custom_folder_detail" = "在您選取的自訂資料夾中。";
+"drive.in_folder" = "在「%@」中";
 "location.err_low_space" = "「%@」上的空間不足以建立新前綴：可用 %@，前綴至少需要 %@（未安裝任何內容時約 750 MB）。";
 "copy.progress" = "%@ %lld%%（%@ / %@）";
 "move.menu" = "移動到";

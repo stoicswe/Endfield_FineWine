@@ -21,6 +21,7 @@
 "app.default" = "Default";
 "app.on" = "On";
 "app.off" = "Off";
+"app.change" = "Change…";
 
 /* Menu Bar */
 "menu.setting_up_prefix" = "Setting up the prefix “%@”…";
@@ -344,6 +345,7 @@
 "dialog.choose_executable" = "Choose a Windows installer or program to run in “%@”";
 "dialog.choose_program_in_prefix" = "Choose a program inside this prefix";
 "dialog.choose_runtime_folder" = "Choose a Wine runtime folder";
+"dialog.choose_prefix_folder" = "Choose a folder for this prefix";
 "dialog.run_with_finewine_title" = "Run “%@” with FineWine?";
 "dialog.run_with_finewine_msg" = "Choose the prefix to run it in. Only run programs you trust: they get the same access to your files as FineWine has.";
 "dialog.run_btn" = "Run";
@@ -462,6 +464,9 @@
 "drive.prefix_count" = "%lld prefixes";
 "drive.forget" = "Forget";
 "drive.forget_help" = "Stop listing “%@”. Its prefixes stay on it, and come back if you plug it in again.";
+"drive.custom_folder" = "Custom Folder…";
+"drive.custom_folder_detail" = "In an arbitrary folder you choose.";
+"drive.in_folder" = "In “%@”";
 "location.err_low_space" = "There isn’t enough space on “%@” for a new prefix: %@ free, and a prefix needs at least %@ (it is about 750 MB before anything is installed).";
 "copy.progress" = "%@ %lld%% (%@ of %@)";
 "move.menu" = "Move To";

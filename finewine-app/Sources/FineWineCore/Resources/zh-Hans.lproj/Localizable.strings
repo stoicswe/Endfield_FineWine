@@ -21,6 +21,7 @@
 "app.default" = "默认";
 "app.on" = "开启";
 "app.off" = "关闭";
+"app.change" = "更改…";
 
 /* Menu Bar */
 "menu.setting_up_prefix" = "正在配置容器 “%@”…";
@@ -344,6 +345,7 @@
 "dialog.choose_executable" = "选择要在 “%@” 中运行的 Windows 安装程序或文件";
 "dialog.choose_program_in_prefix" = "选择此容器内的程序";
 "dialog.choose_runtime_folder" = "选择 Wine 运行时文件夹";
+"dialog.choose_prefix_folder" = "选择此容器的存放文件夹";
 "dialog.run_with_finewine_title" = "使用 FineWine 运行 “%@”？";
 "dialog.run_with_finewine_msg" = "请选择运行的目标容器。请仅运行可信软件：程序将拥有与 FineWine 相同的文件访问权限。";
 "dialog.run_btn" = "运行";
@@ -462,6 +464,9 @@
 "drive.prefix_count" = "%lld 个前缀";
 "drive.forget" = "移除";
 "drive.forget_help" = "不再列出“%@”。其中的前缀仍保留在驱动器上，再次接上即可恢复。";
+"drive.custom_folder" = "自定文件夹…";
+"drive.custom_folder_detail" = "在您选择的自定文件夹中。";
+"drive.in_folder" = "在“%@”中";
 "location.err_low_space" = "“%@”上的空间不足以创建新前缀：可用 %@，前缀至少需要 %@（未安装任何内容时约 750 MB）。";
 "copy.progress" = "%@ %lld%%（%@ / %@）";
 "move.menu" = "移动到";

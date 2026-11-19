@@ -21,6 +21,7 @@
 "app.default" = "デフォルト";
 "app.on" = "オン";
 "app.off" = "オフ";
+"app.change" = "変更…";
 
 /* Menu Bar */
 "menu.setting_up_prefix" = "プレフィックス「%@」をセットアップ中…";
@@ -344,6 +345,7 @@
 "dialog.choose_executable" = "「%@」で実行する Windows インストーラーまたはプログラムを選択";
 "dialog.choose_program_in_prefix" = "このプレフィックス内のプログラムを選択";
 "dialog.choose_runtime_folder" = "Wine ランタイムフォルダを選択";
+"dialog.choose_prefix_folder" = "このプレフィックスのフォルダを選択";
 "dialog.run_with_finewine_title" = "FineWine で「%@」を実行しますか？";
 "dialog.run_with_finewine_msg" = "実行するプレフィックスを選択してください。信頼できるプログラムのみ実行してください（FineWine と同一のアクセス権限が付与されます）。";
 "dialog.run_btn" = "実行";
@@ -462,6 +464,9 @@
 "drive.prefix_count" = "プレフィックス %lld 個";
 "drive.forget" = "リストから削除";
 "drive.forget_help" = "「%@」をリストに表示しないようにします。プレフィックスはドライブに残り、再び接続すると戻ります。";
+"drive.custom_folder" = "カスタムフォルダ…";
+"drive.custom_folder_detail" = "選択した任意のフォルダ内。";
+"drive.in_folder" = "“%@” 内";
 "location.err_low_space" = "「%@」に新しいプレフィックスを作る空き容量がありません: 空き %@、必要なのは %@ 以上です (何もインストールしていない状態で約 750 MB)。";
 "copy.progress" = "%@ %lld%% (%@ / %@)";
 "move.menu" = "移動先";
