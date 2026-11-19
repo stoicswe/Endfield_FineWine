@@ -222,6 +222,9 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
   until it has been run with games.
 - `0037-ntdll-a-switch-to-commit-the-arm64ec-code-map-whole.patch`: `FINEWINE_EAGER_CODE_MAP=1`
   commits the map whole again, as before `0035`. Costs up to 4 GB; for finding a fault only.
+- `0038-win32u-report-hardware-gpu-scheduling.patch`: `D3DKMTQueryAdapterInfo` answers
+  `KMTQAITYPE_WDDM_2_7_CAPS` with hardware GPU scheduling on, which Streamline reads before
+  frame generation is offered.
 - `0033-winemac-read-the-displays-again-on-activation-only-when-they-changed.patch`: switching
   to a Wine program made Wine read every display again (modes, EDID, GPUs, registry keys) on the
   program's message thread, 2.4 seconds in a game. Now only when the displays differ from what
@@ -351,6 +354,9 @@ builds for the CrossOver payloads do not get these. Apache-2.0, like MoltenVK.
 - `0004-metalfx-as-a-command-and-reported-gpu-ids.patch` adds a command that records a MetalFX
   upscale or frame interpolation in a command buffer, which is what DLSS is mapped to for
   Direct3D 12 and Vulkan programs, and lets a prefix choose the GPU ids Vulkan reports.
+- `0005-pipeline-cache-header-carries-the-reported-gpu-ids.patch`: with another GPU reported,
+  the pipeline cache header still carried Apple's ids, so Unity (Endfield) dropped its cache and
+  stopped saving it. The header now carries the reported ids.
 
 The patches apply as a series on `0001`. Details and limits are in
 [`docs/project-information/21-metal4-and-ray-tracing.md`](../docs/project-information/21-metal4-and-ray-tracing.md).
@@ -423,5 +429,9 @@ FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`.
   buffers are smaller than its window is in display pixels (by 5% to 4x) is upscaled to the
   window's pixels with MetalFX's spatial scaler, instead of being stretched by the window
   server. `FINEWINE_METALFX_AUTO=0` turns it off.
+- `0005-nvapi-dxgi-what-streamline-asks-about-the-gpu-at-startup.patch`: adds
+  `NvAPI_GetLogicalGPUFromPhysicalGPU`, where NVIDIA's Streamline stopped at startup in Endfield
+  with the GPU reported as NVIDIA, and makes DXGI and NVAPI report Wine's adapter LUID so it
+  agrees with `D3DKMTEnumAdapters2` and Vulkan. Whether the game then offers DLSS is untested.
 - `build-arm64ec-finewine.txt` is the meson cross file `scripts/build-dxmt.sh` builds DXMT with.
   It is DXMT's own ARM64EC cross file plus one linker flag (see the comment in the file).
