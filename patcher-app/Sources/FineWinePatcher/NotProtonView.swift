@@ -146,7 +146,7 @@ struct NotProtonView: View {
                 Label("After Registering", systemImage: "info.circle")
                     .font(.caption.weight(.medium))
 
-                Text("1. Restart Steam (`⌘Q` and reopen).\n2. Right-click Arknights: Endfield → Properties… → Compatibility.\n3. Check “Force the use of a specific Steam Play compatibility tool” and choose “CrossOver 26.3 - Endfield FineWine - Rosetta”.\n4. Under Properties… → General → Launch Options, add `-force-d3d11`.")
+                Text("1. Restart Steam (`⌘Q` and reopen).\n2. Right-click Arknights: Endfield → Properties… → Compatibility.\n3. Check “Force the use of a specific Steam Play compatibility tool” and choose “CrossOver 26.3 - Endfield FineWine - Rosetta”.\n4. Under Properties… → General → Launch Options, enter ONLY `-force-d3d11` (do not add `%command%` or env vars).\n\nNote: If NotProton's app displays “Build finewine-26.3, not supported”, this is normal for custom runners. Do not click Remove.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

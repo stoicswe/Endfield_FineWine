@@ -1,0 +1,80 @@
+cpuid: name an unknown ARM CPU as the host does
+
+FEX names the CPU in CPUID's brand string from a table keyed by the CPU's ID (MIDR), which
+Wine's processor registry key carries as "CP 4000". macOS does not tell programs the CPU's ID,
+so on a Mac that value is missing, every core matches the table's "invalid" entry, and x64
+programs were told their CPU is an "Unknown ARM CPU". Wine already puts the Mac's own name for
+the CPU ("Apple M3") in the key's ProcessorNameString; FEX now reads it and uses it for any
+core the table does not know. CrossOver's ARM build gets the same through FineWine Patcher
+(ArmEmulatorIdentity), which edits FEX's binary.
+
+FEX's own RegGetValueA takes no flags and returns a string's stored bytes, which are UTF-16.
+
+diff --git a/FEXCore/include/FEXCore/Core/HostFeatures.h b/FEXCore/include/FEXCore/Core/HostFeatures.h
+--- a/FEXCore/include/FEXCore/Core/HostFeatures.h
++++ b/FEXCore/include/FEXCore/Core/HostFeatures.h
+@@ -134,5 +134,10 @@
+   // The Linux PID of this process. Useful for punching through perf-top information.
+   uint32_t ProcessPID {};
+   uint32_t pad2 {};
++
++  // FineWine: the host's own name for its CPU ("Apple M3"), used for a CPU whose ID is not in
++  // the product table, which on a Mac is every one (macOS does not tell programs the ID).
++  // Points at storage the frontend keeps for the life of the process; may be null.
++  const char* HostProductName {};
+ };
+ } // namespace FEXCore
+diff --git a/FEXCore/Source/Interface/Core/CPUID.cpp b/FEXCore/Source/Interface/Core/CPUID.cpp
+--- a/FEXCore/Source/Interface/Core/CPUID.cpp
++++ b/FEXCore/Source/Interface/Core/CPUID.cpp
+@@ -427,6 +427,18 @@
+         PerCPUData[i].ProductName = MIDROption->ProductName ?: ProductNames::ARM_UNKNOWN;
+       } else {
+         PerCPUData[i].ProductName = ProductNames::ARM_UNKNOWN;
++      }
++    }
++  }
++
++  // FineWine: a CPU the table does not know is called what the host calls it ("Apple M3")
++  // rather than "Unknown ARM CPU". On a Mac that is every CPU: macOS does not tell programs
++  // the CPU's ID, so the table cannot be consulted.
++  const char* HostName = CTX->HostFeatures.HostProductName;
++  if (HostName && HostName[0]) {
++    for (size_t i = 0; i < Cores; ++i) {
++      if (PerCPUData[i].ProductName == ProductNames::ARM_UNKNOWN) {
++        PerCPUData[i].ProductName = HostName;
+       }
+     }
+   }
+diff --git a/Source/Windows/Common/CPUFeatures.cpp b/Source/Windows/Common/CPUFeatures.cpp
+--- a/Source/Windows/Common/CPUFeatures.cpp
++++ b/Source/Windows/Common/CPUFeatures.cpp
+@@ -65,10 +65,28 @@
+ 
+   CPUFeaturesFromRegistry Features(Key);
+ 
++  // FineWine: Wine fills ProcessorNameString with the host's name for its CPU ("Apple M3").
++  // CPUID reports it when the CPU's ID is unknown (see HostFeatures::HostProductName).
++  // FEX's own RegGetValueA takes no flags and hands back the stored bytes, which for a string
++  // are UTF-16; CPUID's brand string is 48 ASCII characters.
++  static char HostProductName[49] {};
++  {
++    uint16_t Wide[64] {};
++    DWORD Type = 0, Size = sizeof(Wide) - sizeof(Wide[0]);
++    if (!RegGetValueA(Key, nullptr, "ProcessorNameString", 0, &Type, Wide, &Size) && Type == REG_SZ) {
++      size_t Out = 0;
++      for (size_t i = 0; i < Size / sizeof(Wide[0]) && Wide[i] && Out < sizeof(HostProductName) - 1; ++i) {
++        HostProductName[Out++] = Wide[i] < 0x80 ? static_cast<char>(Wide[i]) : '?';
++      }
++      HostProductName[Out] = 0;
++    }
++  }
++
+   uint64_t CTR = ReadRegU64(Key, "CP 5801");
+   uint64_t MIDR = ReadRegU64(Key, "CP 4000");
+ 
+   FEXCore::HostFeatures HostFeatures = {};
++  HostFeatures.HostProductName = HostProductName;
+ 
+   for (uint32_t Idx = 0; Key; Key = OpenProcessorKey(++Idx)) {
+     // Truncate to 32-bits, top 32-bits are all reserved in MIDR

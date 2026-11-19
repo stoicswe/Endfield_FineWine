@@ -46,9 +46,22 @@ and will later become one function of this app.
   window in the middle of the display says what FineWine is doing and for how long, so a slow
   start does not look like a stall. It takes no focus, goes away when the program's own window
   appears (or the program ends), and a click hides it. It can be turned off in Settings.
+- **External drives.** A prefix can live on any APFS or Mac OS Extended drive, in
+  `FineWine/Prefixes` on it; a default drive is set in Settings. Each prefix says which drive it is
+  on. A drive's prefixes leave the list when it is unplugged (or show greyed out, saying which
+  drive to connect) and come back, ready to run, when it is plugged in again. See
+  [docs/project-information/27-prefixes-on-external-drives.md](../docs/project-information/27-prefixes-on-external-drives.md).
+- **Moving and snapshots.** A prefix moves between this Mac and a drive from its right-click
+  menu or Details tab, with progress and Cancel, and shortcuts keep working. A snapshot saves the
+  whole prefix next to it (an instant APFS clone) or on another drive (a backup). A prefix can be
+  restored from a snapshot, or a snapshot made into a new prefix, even after the prefix was
+  deleted. See
+  [docs/project-information/28-moving-prefixes-and-snapshots.md](../docs/project-information/28-moving-prefixes-and-snapshots.md).
 - **Configuration.** Windows version and build number, Direct3D backend, Retina mode, DPI,
   virtual desktop, Metal overlay, full-screen behaviour (a Mac full-screen Space by default), Game Mode (programs that use Direct3D, Vulkan or OpenGL run as games), starting HoYoverse games through a Steam stand-in, DLSS through MetalFX, reporting an NVIDIA GPU (the ids of an RTX 5080, for games that only offer DLSS on NVIDIA), MSync, the hypervisor flag, macOS styling for Windows controls,
-  Option-as-Alt, DLL overrides,
+  Mac-style app icons (running programs and shortcut apps get the program's largest icon on a
+  Mac app icon's rounded square), Option-as-Alt, the language for non-Unicode programs (the code page older programs use for
+  Chinese, Japanese and Korean text), DLL overrides,
   environment variables and Wine debug channels. Changes are written to the prefix's registry
   when applied.
 - **Wine tools.** Wine Configuration (winecfg), Registry Editor, Control Panel, Add or Remove
@@ -65,8 +78,11 @@ and will later become one function of this app.
 ```
 
 This runs the unit tests, builds a release binary, assembles `finewine-app/build/FineWine.app`
-and signs it ad hoc. It needs the macOS 26 SDK or later (Xcode 26+), because the interface uses
-Liquid Glass. Environment variables: `VERSION`, `CODESIGN_ID`, `ICON_VARIANT`, `SKIP_TESTS=1`.
+and signs it ad hoc. It needs the macOS 26 SDK or later (Xcode 26+) to build, because the interface
+uses Liquid Glass; the app runs on macOS 26 and later. The build stamps the real SDK version
+into the binary (`scripts/lib/stamp-sdk-version.sh`): SwiftPM records the deployment target
+there instead, and macOS draws an app whose binary names an SDK older than 26 without Liquid
+Glass. The Wine runtime inside is built for macOS 15 and later and runs on any of them. Environment variables: `VERSION`, `CODESIGN_ID`, `ICON_VARIANT`, `SKIP_TESTS=1`.
 
 **The Wine runtime is built into the app.** If `build/finewine-runtime` exists, it is copied to
 `FineWine.app/Contents/Resources/Runtime` (about 860 MB). The app lists it first as "Built in",

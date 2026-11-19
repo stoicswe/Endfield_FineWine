@@ -66,6 +66,8 @@ public struct PrefixMetadata: Codable, Equatable, Sendable {
 public struct Prefix: Equatable, Identifiable, Sendable {
     public var metadata: PrefixMetadata
     public var directory: URL
+    /// Where it is kept: this Mac, or a drive (see `PrefixDriveStore`).
+    public var place: PrefixPlace
 
     public var id: UUID { metadata.id }
     public var name: String { metadata.name }
@@ -79,9 +81,10 @@ public struct Prefix: Equatable, Identifiable, Sendable {
         }
     }
 
-    public init(metadata: PrefixMetadata, directory: URL) {
+    public init(metadata: PrefixMetadata, directory: URL, place: PrefixPlace = .thisMac) {
         self.metadata = metadata
         self.directory = directory
+        self.place = place
     }
 
     public func program(id: UUID) -> Program? { metadata.programs.first { $0.id == id } }
@@ -90,11 +93,28 @@ public struct Prefix: Equatable, Identifiable, Sendable {
 /// Creates, lists, saves and deletes prefixes.
 public struct PrefixStore {
     public static let metadataName = "finewine.json"
+    /// The free space a new prefix needs: about 750 MB for the prefix, and room to install.
+    public static let minimumFreeBytes: Int64 = 1_500_000_000
 
     public let paths: FineWinePaths
+    /// The drives prefixes can also be kept on.
+    public let drives: PrefixDriveStore
     private let fm = FileManager.default
 
-    public init(paths: FineWinePaths) { self.paths = paths }
+    public init(paths: FineWinePaths, volumes: VolumeProviding = SystemVolumes()) {
+        self.paths = paths
+        self.drives = PrefixDriveStore(paths: paths, volumes: volumes)
+    }
+
+    /// Every place with a prefixes folder there right now: this Mac, and each known drive
+    /// that is plugged in.
+    func availableFolders() -> [(place: PrefixPlace, folder: URL)] {
+        var out: [(PrefixPlace, URL)] = [(.thisMac, paths.prefixes)]
+        for drive in drives.drives {
+            if let folder = drives.prefixesFolder(for: .drive(drive.uuid)) { out.append((.drive(drive.uuid), folder)) }
+        }
+        return out
+    }
 
     private static var encoder: JSONEncoder {
         let encoder = JSONEncoder()
@@ -109,11 +129,40 @@ public struct PrefixStore {
         return decoder
     }
 
-    /// Every prefix, sorted by name. Folders without readable metadata are skipped.
+    /// Every prefix on this Mac and on the drives plugged in, sorted by name. Folders without
+    /// readable metadata are skipped.
     public func list() -> [Prefix] {
-        let dirs = (try? fm.contentsOfDirectory(at: paths.prefixes, includingPropertiesForKeys: nil)) ?? []
-        return dirs.compactMap(load(directory:))
-            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        availableFolders().flatMap { place, folder in
+            // Hidden folders are a move, snapshot restore or copy under way (see `recoverInterruptedWork`).
+            ((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
+                .filter { !$0.lastPathComponent.hasPrefix(".") }.compactMap {
+                load(directory: $0).map { var prefix = $0; prefix.place = place; return prefix }
+            }
+        }
+        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// Names taken: by the prefixes here, and by those on drives that are unplugged (a name
+    /// used twice would be confusing once the drive is back).
+    func takenNames(except id: UUID? = nil) -> [String] {
+        let here = list().filter { $0.id != id }
+        let hereIDs = Set(here.map(\.id))
+        let away = drives.drives.flatMap(\.prefixes).filter { $0.id != id && !hereIDs.contains($0.id) }
+        return here.map(\.name) + away.map(\.name)
+    }
+
+    /// Looks for drives with FineWine prefixes that aren't known yet, and records what is on
+    /// each one plugged in. Call it when drives come and go.
+    @discardableResult
+    public func refreshDrives() -> [PrefixDrive] {
+        let added = drives.discover()
+        recoverInterruptedWork()
+        var byDrive: [String: [Prefix]] = [:]
+        for prefix in list() {
+            if case .drive(let uuid) = prefix.place { byDrive[uuid, default: []].append(prefix) }
+        }
+        drives.record(byDrive)
+        return added
     }
 
     public func prefix(id: UUID) -> Prefix? { list().first { $0.id == id } }
@@ -126,18 +175,33 @@ public struct PrefixStore {
 
     /// Creates the prefix folder and its metadata. Wine itself fills the folder in when
     /// `wineboot` first runs against it.
-    public func create(name: String, runtimeID: String?, profile: GameProfile? = nil) throws -> Prefix {
+    /// `place` is this Mac or a drive FineWine knows (`PrefixDriveStore.use`); a drive must be
+    /// plugged in.
+    public func create(name: String, runtimeID: String?, profile: GameProfile? = nil,
+                       place: PrefixPlace = .thisMac) throws -> Prefix {
         let name = try Self.validatedName(name)
-        guard !list().contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+        guard !takenNames().contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) else {
             throw FineWineError("A prefix named “\(name)” already exists.")
         }
         try paths.ensureDirectories()
+        guard let folder = drives.prefixesFolder(for: place) else {
+            let driveName = { if case .drive(let uuid) = place { return drives.drive(uuid)?.name ?? "" }; return "" }()
+            throw FineWineError(tr("location.err_not_connected", driveName))
+        }
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        // A new prefix is about 750 MB before anything is installed in it. On a full drive Wine
+        // fails part way with errors that never mention space, so say so first.
+        if let volume = drives.volumes.volume(containing: folder), let free = volume.availableBytes,
+           free < Self.minimumFreeBytes {
+            let format = { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+            let where_ = place == .thisMac ? tr("drive.this_mac") : volume.name
+            throw FineWineError(tr("location.err_low_space", where_, format(free), format(Self.minimumFreeBytes)))
+        }
         let metadata = PrefixMetadata(name: name, runtimeID: runtimeID, profileID: profile?.id,
                                       createdAt: Self.now(), settings: profile?.settings ?? PrefixSettings())
-        let directory = paths.prefixes.appendingPathComponent(
-            Self.folderName(for: name, id: metadata.id), isDirectory: true)
+        let directory = folder.appendingPathComponent(Self.folderName(for: name, id: metadata.id), isDirectory: true)
         try fm.createDirectory(at: directory, withIntermediateDirectories: false)
-        let prefix = Prefix(metadata: metadata, directory: directory)
+        let prefix = Prefix(metadata: metadata, directory: directory, place: place)
         try save(prefix)
         return prefix
     }
@@ -150,7 +214,7 @@ public struct PrefixStore {
     /// Renames the prefix. The folder keeps its name, so paths baked into shortcuts stay valid.
     public func rename(_ prefix: Prefix, to newName: String) throws -> Prefix {
         let name = try Self.validatedName(newName)
-        guard !list().contains(where: { $0.id != prefix.id && $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+        guard !takenNames(except: prefix.id).contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) else {
             throw FineWineError("A prefix named “\(name)” already exists.")
         }
         var renamed = prefix
@@ -159,11 +223,11 @@ public struct PrefixStore {
         return renamed
     }
 
-    /// Copies a prefix, Windows files included, under a new name and id. Programs come along
-    /// without their shortcuts, which still point at the original.
+    /// Copies a prefix, Windows files included, under a new name and id, on the same drive.
+    /// Programs come along without their shortcuts, which still point at the original.
     public func duplicate(_ prefix: Prefix, as newName: String) throws -> Prefix {
         let name = try Self.validatedName(newName)
-        guard !list().contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+        guard !takenNames().contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) else {
             throw FineWineError("A prefix named “\(name)” already exists.")
         }
         var metadata = prefix.metadata
@@ -176,18 +240,19 @@ public struct PrefixStore {
             program.shortcutPath = nil
             return program
         }
-        let directory = paths.prefixes.appendingPathComponent(
+        let directory = prefix.directory.deletingLastPathComponent().appendingPathComponent(
             Self.folderName(for: name, id: metadata.id), isDirectory: true)
         try fm.copyItem(at: prefix.directory, to: directory)
-        let copy = Prefix(metadata: metadata, directory: directory)
+        let copy = Prefix(metadata: metadata, directory: directory, place: prefix.place)
         try save(copy)
         return copy
     }
 
-    /// Deletes the prefix folder for good. Refuses anything outside the Prefixes folder.
+    /// Deletes the prefix folder for good. Refuses anything outside a Prefixes folder of
+    /// FineWine's (this Mac's, or `FineWine/Prefixes` on a drive plugged in).
     public func delete(_ prefix: Prefix) throws {
-        let base = paths.prefixes.standardizedFileURL.path + "/"
-        guard prefix.directory.standardizedFileURL.path.hasPrefix(base) else {
+        let path = prefix.directory.standardizedFileURL.path
+        guard availableFolders().contains(where: { path.hasPrefix($0.folder.standardizedFileURL.path + "/") }) else {
             throw FineWineError("“\(prefix.name)” is not inside FineWine's Prefixes folder, so it was left alone.")
         }
         try fm.removeItem(at: prefix.directory)

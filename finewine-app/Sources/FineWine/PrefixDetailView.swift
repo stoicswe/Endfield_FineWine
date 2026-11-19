@@ -72,6 +72,9 @@ struct PrefixDetailView: View {
                             Pill(text: l10n.tr("detail.no_runtime"), symbol: "exclamationmark.triangle", tint: .orange)
                         }
                         if let profile = model.profile(for: prefix) { Pill(text: profile.name, symbol: "gamecontroller") }
+                        if let size = model.sizeText(for: prefix) {
+                            Pill(text: size, symbol: "internaldrive").help(l10n.tr("prefix.size_help"))
+                        }
                         if model.isRunning(prefix) { Pill(text: l10n.tr("app.running"), symbol: "play.fill", tint: .green) }
                         if prefix.metadata.settings != prefix.metadata.appliedSettings {
                             Pill(text: l10n.tr("detail.settings_not_applied"), symbol: "clock.arrow.circlepath", tint: .orange)
@@ -80,8 +83,15 @@ struct PrefixDetailView: View {
                 }
                 Spacer()
                 if let status = model.busy[prefix.id] {
-                    ProgressView().controlSize(.small)
-                    Text(status).foregroundStyle(.secondary)
+                    if let copy = model.copies[prefix.id] {
+                        ProgressView(value: copy.fraction).frame(width: 90)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text(status).foregroundStyle(.secondary).monospacedDigit()
+                    if model.copies[prefix.id] != nil {
+                        Button(l10n.tr("app.cancel")) { model.cancelCopy(prefix.id) }.fwButton()
+                    }
                 } else if model.isRunning(prefix) {
                     Menu {
                         Button(l10n.tr("menu.shut_down")) { Task { await model.shutDown(prefix) } }
@@ -92,7 +102,7 @@ struct PrefixDetailView: View {
                         Task { await model.shutDown(prefix) }
                     }
                     .menuStyle(.button)
-                    .buttonStyle(.glass)
+                    .fwButton()
                     .fixedSize()
                     .help(l10n.tr("menu.shut_down_help"))
                     .help(l10n.tr("detail.stop_prefix_help"))
@@ -130,19 +140,19 @@ private struct ProgramsTab: View {
                 } label: {
                     Label(l10n.tr("detail.run_installer"), systemImage: "arrow.down.circle")
                 }
-                .buttonStyle(.glassProminent).tint(Look.wine)
+                .fwProminentButton().tint(Look.wine)
                 Button {
                     addProgram()
                 } label: {
                     Label(l10n.tr("detail.add_program"), systemImage: "plus")
                 }
-                .buttonStyle(.glass)
+                .fwButton()
                 Button {
                     model.findInstalledPrograms(in: prefix)
                 } label: {
                     Label(l10n.tr("detail.find_installed"), systemImage: "magnifyingglass")
                 }
-                .buttonStyle(.glass)
+                .fwButton()
                 .help(l10n.tr("detail.find_installed_help"))
                 Spacer()
             }
@@ -152,7 +162,7 @@ private struct ProgramsTab: View {
                            message: l10n.tr("detail.no_programs_desc")) { EmptyView() }
                     .frame(minHeight: 260)
             } else {
-                GlassEffectContainer(spacing: 12) {
+                FWGlassContainer(spacing: 12) {
                     VStack(spacing: 12) {
                         ForEach(prefix.metadata.programs) { program in
                             ProgramCard(prefix: prefix, program: program) { editing = program }
@@ -204,6 +214,14 @@ private struct ProgramCard: View {
                     Button(l10n.tr("detail.make_shortcut")) { model.createShortcut(for: program.id, in: prefix) }
                 }
                 Button(l10n.tr("app.edit"), action: edit)
+                Menu(l10n.tr("detail.diagnostics")) {
+                    Button(l10n.tr("detail.play_memory_log")) { model.launch(program, in: prefix, memoryTrace: true) }
+                    Button(l10n.tr("context.show_logs")) {
+                        let logs = model.service.paths.logs.appendingPathComponent(prefix.directory.lastPathComponent)
+                        try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+                        NSWorkspace.shared.open(logs)
+                    }
+                }
                 Divider()
                 Button(l10n.tr("detail.remove_from_finewine"), role: .destructive) { confirmingRemoval = true }
             } label: {
@@ -211,7 +229,7 @@ private struct ProgramCard: View {
             }
             .menuStyle(.button)
             .menuIndicator(.hidden)
-            .buttonStyle(.glass)
+            .fwButton()
             .help(l10n.tr("detail.more_actions"))
             .fixedSize()
             Button {
@@ -219,7 +237,7 @@ private struct ProgramCard: View {
             } label: {
                 Label(l10n.tr("app.play"), systemImage: "play.fill")
             }
-            .buttonStyle(.glassProminent).tint(Look.wine)
+            .fwProminentButton().tint(Look.wine)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(padding: 14)
@@ -260,14 +278,14 @@ private struct ProgramEditor: View {
             }
             HStack {
                 Spacer()
-                Button(l10n.tr("app.cancel")) { dismiss() }.buttonStyle(.glass).keyboardShortcut(.cancelAction)
+                Button(l10n.tr("app.cancel")) { dismiss() }.fwButton().keyboardShortcut(.cancelAction)
                 Button(l10n.tr("app.save")) {
                     program.arguments = ProgramScanner.splitArguments(arguments)
                     program.name = program.name.trimmingCharacters(in: .whitespaces)
                     model.update(program, in: prefix)
                     dismiss()
                 }
-                .buttonStyle(.glassProminent).tint(Look.wine)
+                .fwProminentButton().tint(Look.wine)
                 .keyboardShortcut(.defaultAction)
                 .disabled(program.name.trimmingCharacters(in: .whitespaces).isEmpty || program.windowsPath.isEmpty)
             }
@@ -330,7 +348,7 @@ struct EnvironmentEditor: View {
             } label: {
                 Label(l10n.tr("editor.add_variable"), systemImage: "plus")
             }
-            .buttonStyle(.glass)
+            .fwButton()
             .controlSize(.small)
         }
     }
@@ -347,7 +365,7 @@ private struct ToolsTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            GlassEffectContainer(spacing: 12) {
+            FWGlassContainer(spacing: 12) {
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(WineTool.allCases) { tool in
                         Button {
@@ -372,26 +390,26 @@ private struct ToolsTab: View {
             Card(title: l10n.tr("tools.maintenance_card"), symbol: "wrench.and.screwdriver") {
                 Row(label: l10n.tr("tools.restart_win_label"), detail: l10n.tr("tools.restart_win_detail")) {
                     Button(l10n.tr("tools.restart_win_btn")) { Task { await model.wineboot(.restart, in: prefix, status: l10n.tr("splash.restarting_windows")) } }
-                        .buttonStyle(.glass)
+                        .fwButton()
                 }
                 Divider()
                 Row(label: l10n.tr("tools.update_prefix_label"), detail: l10n.tr("tools.update_prefix_detail")) {
                     Button(l10n.tr("tools.update_prefix_btn")) { Task { await model.wineboot(.update, in: prefix, status: l10n.tr("splash.updating")) } }
-                        .buttonStyle(.glass)
+                        .fwButton()
                 }
                 Divider()
                 Row(label: l10n.tr("tools.shut_down_label"), detail: l10n.tr("tools.shut_down_detail")) {
-                    Button(l10n.tr("menu.shut_down")) { Task { await model.shutDown(prefix) } }.buttonStyle(.glass)
+                    Button(l10n.tr("menu.shut_down")) { Task { await model.shutDown(prefix) } }.fwButton()
                 }
                 Divider()
                 Row(label: l10n.tr("tools.force_shut_down_label"), detail: l10n.tr("tools.force_shut_down_detail")) {
-                    Button(l10n.tr("menu.force_shut_down"), role: .destructive) { Task { await model.forceShutDown(prefix) } }.buttonStyle(.glass)
+                    Button(l10n.tr("menu.force_shut_down"), role: .destructive) { Task { await model.forceShutDown(prefix) } }.fwButton()
                 }
             }
 
             Card(title: l10n.tr("tools.files_card"), symbol: "folder") {
                 Row(label: l10n.tr("tools.c_drive_label")) {
-                    Button(l10n.tr("app.show_in_finder")) { NSWorkspace.shared.open(prefix.driveC) }.buttonStyle(.glass)
+                    Button(l10n.tr("app.show_in_finder")) { NSWorkspace.shared.open(prefix.driveC) }.fwButton()
                 }
                 Divider()
                 Row(label: l10n.tr("tools.logs_label"), detail: l10n.tr("tools.logs_detail")) {
@@ -400,7 +418,7 @@ private struct ToolsTab: View {
                         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
                         NSWorkspace.shared.open(logs)
                     }
-                    .buttonStyle(.glass)
+                    .fwButton()
                 }
             }
         }
@@ -428,7 +446,7 @@ private struct DetailsTab: View {
                 HStack {
                     TextField(l10n.tr("details.name_card"), text: $name).textFieldStyle(.roundedBorder)
                     Button(l10n.tr("app.rename")) { model.rename(prefix, to: name) }
-                        .buttonStyle(.glass)
+                        .fwButton()
                         .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || name == prefix.name)
                 }
             }
@@ -446,18 +464,24 @@ private struct DetailsTab: View {
 
             Card(title: l10n.tr("details.about_card"), symbol: "info.circle") {
                 info(l10n.tr("details.created"), prefix.metadata.createdAt.formatted(date: .abbreviated, time: .shortened))
+                info(l10n.tr("drive.stored_on_label"), model.placeName(prefix.place))
                 info(l10n.tr("details.location"), prefix.directory.path)
-                Button(l10n.tr("app.show_in_finder")) { NSWorkspace.shared.activateFileViewerSelecting([prefix.directory]) }
-                    .buttonStyle(.glass)
+                HStack {
+                    Button(l10n.tr("app.show_in_finder")) { NSWorkspace.shared.activateFileViewerSelecting([prefix.directory]) }
+                        .fwButton()
+                    MoveMenu(prefix: prefix)
+                }
             }
+
+            SnapshotsCard(prefix: prefix)
 
             Card(title: l10n.tr("details.duplicate_delete_card"), symbol: "square.on.square") {
                 Row(label: l10n.tr("details.duplicate_label"), detail: l10n.tr("details.duplicate_detail")) {
-                    Button(l10n.tr("app.duplicate")) { Task { await model.duplicate(prefix) } }.buttonStyle(.glass)
+                    Button(l10n.tr("app.duplicate")) { Task { await model.duplicate(prefix) } }.fwButton()
                 }
                 Divider()
                 Row(label: l10n.tr("details.delete_label"), detail: l10n.tr("details.delete_detail")) {
-                    Button(l10n.tr("app.delete"), role: .destructive) { confirmingDelete = true }.buttonStyle(.glass)
+                    Button(l10n.tr("app.delete"), role: .destructive) { confirmingDelete = true }.fwButton()
                 }
             }
         }

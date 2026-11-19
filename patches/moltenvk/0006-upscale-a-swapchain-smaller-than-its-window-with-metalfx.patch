@@ -1,0 +1,320 @@
+Upscale a swapchain smaller than its window with MetalFX
+
+A program that draws smaller than its window (a lower resolution chosen in a game, a prefix
+with a render size, or Wine's Retina mode off) had its picture stretched to the window by the
+window server, which blurs it. Wine creates such a swapchain at the smaller size and asks for
+it to be stretched. Its images are now textures of their own instead of the layer's drawables.
+At present a drawable is taken at the layer's size in display pixels and MetalFX's spatial
+scaler puts the picture into it; with upscaling switched off the drawable has the picture's
+size, the picture is copied, and the window server stretches it as before. This is the Vulkan
+and Direct3D 12 counterpart of what DXMT does for Direct3D 11 (patches/dxmt/0004).
+
+Only a swapchain between 5% and 4x smaller than its layer, in both directions, is handled; any
+other is untouched and costs nothing. The switch can be thrown while the program runs:
+FINEWINE_METALFX_AUTO=0 starts with it off, and the state of the notification
+"finewine.metalfx.<process id>" overrides that (1 on, 2 off), looked at every 30 presents
+along with the layer's size. FINEWINE_METALFX_SWAPCHAIN=0 turns the whole thing off. A format
+or size MetalFX refuses falls back to the stretch.
+
+Checked with tests/runtime/vulkan-upscale.c: 480x300 to 960x600 with Retina mode off, 2268x1424
+to 3023x1898 full screen at a 75% render size, and switched off and on while running.
+
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.h b/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.h
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.h
+@@ -118,6 +118,14 @@
+ 	void initSurfaceImages(const VkSwapchainCreateInfoKHR* pCreateInfo, uint32_t imgCnt);
+ 	bool getIsSurfaceLost();
+ 	bool hasOptimalSurface();
++
++	// FineWine: a swapchain smaller than its layer is in display pixels is drawn off screen
++	// and brought to the layer's size at present, with MetalFX's spatial scaler while
++	// upscaling is switched on and by the window server otherwise. See MVKSwapchain.mm.
++	bool isUpscaled() { return _fwUpscaled; }
++	void initUpscaling(const VkSwapchainCreateInfoKHR* pCreateInfo);
++	void prepareUpscaledPresent();
++	void encodeUpscaledPresent(id<MTLCommandBuffer> mtlCmdBuff, id<MTLTexture> source, id<MTLTexture> drawable);
+ 	uint64_t getNextAcquisitionID();
+     void renderWatermark(id<MTLTexture> mtlTexture, id<MTLCommandBuffer> mtlCmdBuff);
+     void markFrameInterval();
+@@ -146,4 +154,10 @@
+ 	uint32_t _presentHistoryIndex = 0;
+ 	uint32_t _presentHistoryHeadIndex = 0;
+ 	bool _isDeliberatelyScaled = false;
++	bool _fwUpscaled = false;
++	bool _fwScalerFailed = false;
++	bool _fwWanted = false;
++	uint32_t _fwPresentCount = 0;
++	id _fwScaler = nil;
++	NSUInteger _fwScalerOutWidth = 0, _fwScalerOutHeight = 0;
+ };
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.mm b/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.mm
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.mm
+@@ -29,6 +29,9 @@
+ #include <libkern/OSByteOrder.h>
+ 
+ #import "CAMetalLayer+MoltenVK.h"
++#import <MetalFX/MetalFX.h>
++#include <dlfcn.h>
++#include <notify.h>
+ #import "MVKBlockObserver.h"
+ 
+ 
+@@ -124,13 +127,161 @@
+ 	if (getIsSurfaceLost()) { return VK_ERROR_SURFACE_LOST_KHR; }
+ 	if ( !hasOptimalSurface() ) { return VK_SUBOPTIMAL_KHR; }
+ 	return VK_SUCCESS;
++}
++
++#pragma mark FineWine: upscaling a swapchain smaller than its window
++
++// A program that draws smaller than its window (a lower resolution chosen in a game, a prefix
++// with a smaller render size, or Wine's Retina mode off) had its picture stretched to the
++// window by the window server, which blurs it. Such a swapchain is drawn into textures of its
++// own instead of the layer's drawables. At present the picture is brought to the layer's size
++// in display pixels by MetalFX's spatial scaler; with upscaling switched off it is copied to
++// a drawable of its own size and stretched by the window server as before.
++//
++// The switch can be thrown while the program runs. FINEWINE_METALFX_AUTO=0 starts with it
++// off; the state of the notification "finewine.metalfx.<process id>" overrides that (1 on,
++// 2 off, 0 not said), which is what the Mac driver's View menu and the FineWine app set. It
++// is looked at every 30 presents, as is the size of the layer. FINEWINE_METALFX_SWAPCHAIN=0
++// leaves every swapchain as MoltenVK has it.
++
++static bool mvkFineWineUpscalingWanted() {
++	static int token = NOTIFY_TOKEN_INVALID;
++	static bool byDefault = true;
++	static dispatch_once_t once;
++	dispatch_once(&once, ^{
++		const char* e = getenv("FINEWINE_METALFX_AUTO");
++		byDefault = !(e && e[0] == '0');
++		char name[64];
++		snprintf(name, sizeof(name), "finewine.metalfx.%d", getpid());
++		if (notify_register_check(name, &token) != NOTIFY_STATUS_OK) { token = NOTIFY_TOKEN_INVALID; }
++	});
++	uint64_t state = 0;
++	if (token != NOTIFY_TOKEN_INVALID && notify_get_state(token, &state) == NOTIFY_STATUS_OK && state) { return state == 1; }
++	return byDefault;
++}
++
++static Class mvkFineWineSpatialScalerDescriptorClass() {
++	static dispatch_once_t once;
++	dispatch_once(&once, ^{ dlopen("/System/Library/Frameworks/MetalFX.framework/MetalFX", RTLD_LAZY | RTLD_GLOBAL); });
++	return NSClassFromString(@"MTLFXSpatialScalerDescriptor");
++}
++
++// The size of the layer in display pixels. The Mac driver gives its layers a scale of 1 while
++// Wine's Retina mode is off, on a display that has two pixels to the point; the display's own
++// scale is taken then.
++static CGSize mvkFineWineLayerPixelSize(CAMetalLayer* mtlLayer) {
++	CGSize size = mtlLayer.bounds.size;
++	CGFloat scale = mtlLayer.contentsScale;
++#if MVK_MACOS
++	if (scale < 2) {
++		for (NSScreen* screen in [NSScreen screens]) { scale = MAX(scale, screen.backingScaleFactor); }
++	}
++#endif
++	return CGSizeMake(round(size.width * scale), round(size.height * scale));
++}
++
++// Whether a picture of the swapchain's size is small enough against the layer to be worth
++// upscaling, and not so small that MetalFX would refuse: between 5% and 4x, in both directions.
++static bool mvkFineWineIsSmaller(VkExtent2D extent, CGSize target) {
++	if (!extent.width || !extent.height) { return false; }
++	double fx = target.width / extent.width, fy = target.height / extent.height;
++	return fx >= 1.05 && fy >= 1.05 && fx <= 4.0 && fy <= 4.0;
++}
++
++void MVKSwapchain::initUpscaling(const VkSwapchainCreateInfoKHR* pCreateInfo) {
++#if MVK_MACOS
++	auto* mtlLayer = getCAMetalLayer();
++	const char* off = getenv("FINEWINE_METALFX_SWAPCHAIN");
++	if ( !mtlLayer || isHeadless() || getIsSurfaceLost() || (off && off[0] == '0') ) { return; }
++	if (pCreateInfo->imageArrayLayers > 1) { return; }
++	if (@available(macOS 13.0, *)) {
++		Class cls = mvkFineWineSpatialScalerDescriptorClass();
++		if ( !cls || ![cls supportsDevice: getMTLDevice()] ) { return; }
++		_fwUpscaled = mvkFineWineIsSmaller(_imageExtent, mvkFineWineLayerPixelSize(mtlLayer));
++		_fwWanted = _fwUpscaled && mvkFineWineUpscalingWanted();
++	}
++#endif
++}
++
++// Gives the layer the size its next drawable should have: the layer's own size in display
++// pixels while upscaling is wanted and possible, the picture's size otherwise.
++void MVKSwapchain::prepareUpscaledPresent() {
++	auto* mtlLayer = getCAMetalLayer();
++	if ( !mtlLayer ) { return; }
++	if (_fwPresentCount++ % 30 == 0) {
++		bool wanted = mvkFineWineUpscalingWanted();
++		if (wanted != _fwWanted) { MVKLogInfo("FineWine: MetalFX upscaling of the swapchain switched %s.", wanted ? "on" : "off"); }
++		_fwWanted = wanted;
++	}
++
++	CGSize want = mvkCGSizeFromVkExtent2D(_imageExtent);
++	if (_fwWanted && !_fwScalerFailed) {
++		CGSize target = mvkFineWineLayerPixelSize(mtlLayer);
++		if (mvkFineWineIsSmaller(_imageExtent, target)) { want = target; }
++	}
++	if ( !CGSizeEqualToSize(mtlLayer.drawableSize, want) ) { mtlLayer.drawableSize = want; }
++}
++
++void MVKSwapchain::encodeUpscaledPresent(id<MTLCommandBuffer> mtlCmdBuff, id<MTLTexture> source, id<MTLTexture> drawable) {
++	if ( !mtlCmdBuff || !source || !drawable ) { return; }
++
++	if (drawable.width != source.width || drawable.height != source.height) {
++		if (@available(macOS 13.0, *)) {
++			if ( !_fwScaler || _fwScalerOutWidth != drawable.width || _fwScalerOutHeight != drawable.height ) {
++				[_fwScaler release];
++				MTLFXSpatialScalerDescriptor* desc = [[mvkFineWineSpatialScalerDescriptorClass() new] autorelease];
++				desc.inputWidth = source.width;
++				desc.inputHeight = source.height;
++				desc.outputWidth = drawable.width;
++				desc.outputHeight = drawable.height;
++				desc.colorTextureFormat = source.pixelFormat;
++				desc.outputTextureFormat = drawable.pixelFormat;
++				switch (source.pixelFormat) {
++					case MTLPixelFormatRGBA16Float:
++					case MTLPixelFormatRGBA32Float:
++					case MTLPixelFormatRG11B10Float:
++						desc.colorProcessingMode = MTLFXSpatialScalerColorProcessingModeLinear;
++						break;
++					default:
++						desc.colorProcessingMode = MTLFXSpatialScalerColorProcessingModePerceptual;
++						break;
++				}
++				_fwScaler = [desc newSpatialScalerWithDevice: getMTLDevice()];		// retained
++				_fwScalerOutWidth = drawable.width;
++				_fwScalerOutHeight = drawable.height;
++				if ( !_fwScaler ) {
++					// MetalFX does not take this format or these sizes. From the next present on
++					// the picture goes to a drawable of its own size.
++					_fwScalerFailed = true;
++					MVKLogInfo("FineWine: MetalFX cannot upscale a %lu x %lu picture of format %lu to %lu x %lu; the window server stretches it.",
++							   (unsigned long)source.width, (unsigned long)source.height, (unsigned long)source.pixelFormat,
++							   (unsigned long)drawable.width, (unsigned long)drawable.height);
++				} else {
++					MVKLogInfo("FineWine: MetalFX upscales the swapchain's %lu x %lu picture to %lu x %lu.",
++							   (unsigned long)source.width, (unsigned long)source.height,
++							   (unsigned long)drawable.width, (unsigned long)drawable.height);
++				}
++			}
++			if (_fwScaler) {
++				id<MTLFXSpatialScaler> scaler = _fwScaler;
++				scaler.colorTexture = source;
++				scaler.outputTexture = drawable;
++				[scaler encodeToCommandBuffer: mtlCmdBuff];
++			}
++		}
++		return;
++	}
++
++	id<MTLBlitCommandEncoder> blit = [mtlCmdBuff blitCommandEncoder];
++	[blit copyFromTexture: source toTexture: drawable];
++	[blit endEncoding];
+ }
+ 
+ // This swapchain is optimally sized for the surface if the app has specified deliberate
+ // swapchain scaling, or if the surface is headless, or if the surface extent has not changed 
+ // since the swapchain was created, and the surface will not need to be scaled when composited.
+ bool MVKSwapchain::hasOptimalSurface() {
+-	if (_isDeliberatelyScaled || isHeadless()) { return true; }
++	if (_isDeliberatelyScaled || isHeadless() || _fwUpscaled) { return true; }
+ 
+ 	VkExtent2D surfExtent = _surface->getExtent();
+ 	return (mvkVkExtent2DsAreEqual(surfExtent, _imageExtent) &&
+@@ -506,6 +657,7 @@
+ 	uint32_t imgCnt = mvkClamp(pCreateInfo->minImageCount,
+ 							   mtlFeats.minSwapchainImageCount,
+ 							   mtlFeats.maxSwapchainImageCount);
++	initUpscaling(pCreateInfo);							// FineWine: before the layer and the images are set up
+ 	initCAMetalLayer(pCreateInfo, pScalingInfo, imgCnt);
+     initSurfaceImages(pCreateInfo, imgCnt);		// After initCAMetalLayer()
+ }
+@@ -581,6 +733,8 @@
+ 																			  VK_IMAGE_USAGE_SAMPLED_BIT |
+ 																			  VK_IMAGE_USAGE_STORAGE_BIT)) &&
+ 								!mvkAreAllFlagsEnabled(pCreateInfo->flags, VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR);
++	// FineWine: MetalFX and the copy write the drawable from a command buffer of their own.
++	if (_fwUpscaled) { mtlLayer.framebufferOnly = NO; }
+ 
+ 	if (pCreateInfo->compositeAlpha != VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR) {
+ 		mtlLayer.opaque = pCreateInfo->compositeAlpha == VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+@@ -727,5 +881,7 @@
+ 
+ MVKSwapchain::~MVKSwapchain() {
+     if (_licenseWatermark) { _licenseWatermark->destroy(); }
++	[_fwScaler release];
++	_fwScaler = nil;
+ }
+ 
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKImage.h b/MoltenVK/MoltenVK/GPUObjects/MVKImage.h
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKImage.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKImage.h
+@@ -508,6 +508,7 @@
+ 
+ 	id<CAMetalDrawable> _mtlDrawable = nil;
+ 	id<MTLTexture> _mtlTextureHeadless = nil;
++	id<MTLTexture> _mtlTextureUpscaled = nil;	// FineWine: what is drawn into when the swapchain is upscaled at present
+ 	MVKSwapchainImageAvailability _availability;
+ 	MVKSmallVector<MVKSwapchainSignaler, 1> _availabilitySignalers;
+ 	MVKSwapchainSignaler _preSignaler = {};
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm b/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm
+@@ -1632,7 +1632,9 @@
+ 
+ // If not headless, retrieve the MTLTexture directly from the CAMetalDrawable.
+ id<MTLTexture> MVKPresentableSwapchainImage::getMTLTexture(uint8_t planeIndex) {
+-	return _mtlTextureHeadless ? _mtlTextureHeadless : getCAMetalDrawable().texture;
++	if (_mtlTextureHeadless) { return _mtlTextureHeadless; }
++	if (_mtlTextureUpscaled) { return _mtlTextureUpscaled; }		// FineWine
++	return getCAMetalDrawable().texture;
+ }
+ 
+ // Present the drawable and make myself available only once the command buffer has completed.
+@@ -1641,6 +1643,13 @@
+ 															  MVKImagePresentInfo presentInfo) {
+ 	_swapchain->renderWatermark(getMTLTexture(0), mtlCmdBuff);
+ 
++	// FineWine: an upscaled swapchain's picture was drawn off screen. The drawable is taken
++	// only now, at the size the picture is to be shown at, and the picture is put into it.
++	if (_mtlTextureUpscaled) {
++		_swapchain->prepareUpscaledPresent();
++		_swapchain->encodeUpscaledPresent(mtlCmdBuff, _mtlTextureUpscaled, getCAMetalDrawable().texture);
++	}
++
+ 	// According to Apple, it is more performant to call MTLDrawable present from within a
+ 	// MTLCommandBuffer scheduled-handler than it is to call MTLCommandBuffer presentDrawable:.
+ 	// But get current drawable now, intead of in handler, because a new drawable might be acquired by then.
+@@ -1802,6 +1811,20 @@
+ 
+ 			_mtlTextureHeadless = [[getMTLDevice() newTextureWithDescriptor: mtlTexDesc] retain];	// retained
+ 		}
++	} else if (swapchain->isUpscaled()) {
++		// FineWine: see MVKSwapchain::initUpscaling().
++		@autoreleasepool {
++			MTLTextureDescriptor* mtlTexDesc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat: getMTLPixelFormat()
++																								  width: pCreateInfo->extent.width
++																								 height: pCreateInfo->extent.height
++																							  mipmapped: NO];
++			mtlTexDesc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
++			if (mvkIsAnyFlagEnabled(pCreateInfo->usage, VK_IMAGE_USAGE_STORAGE_BIT)) { mtlTexDesc.usage |= MTLTextureUsageShaderWrite; }
++			if (mvkAreAllFlagsEnabled(pCreateInfo->flags, VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT)) { mtlTexDesc.usage |= MTLTextureUsagePixelFormatView; }
++			mtlTexDesc.storageMode = MTLStorageModePrivate;
++
++			_mtlTextureUpscaled = [getMTLDevice() newTextureWithDescriptor: mtlTexDesc];	// retained
++		}
+ 	}
+ }
+ 
+@@ -1810,6 +1833,8 @@
+ 	releaseMetalDrawable();
+ 	[_mtlTextureHeadless release];
+ 	_mtlTextureHeadless = nil;
++	[_mtlTextureUpscaled release];
++	_mtlTextureUpscaled = nil;
+ 	MVKSwapchainImage::destroy();
+ }
+ 

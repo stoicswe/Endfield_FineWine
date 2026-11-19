@@ -76,10 +76,12 @@ If you have custom paths or want a custom display name in Steam:
    - From the dropdown, select **CrossOver 26.3 - Endfield FineWine - Rosetta**.
 3. **Set Launch Options**:
    - In the game's **Properties…** → **General** tab.
-   - Under **Launch Options**, enter:
+   - Under **Launch Options**, enter **ONLY**:
      ```
      -force-d3d11
      ```
+   - > [!IMPORTANT]
+     > **Do NOT add `%command%` or environment variables** (such as `CX_GRAPHICS_BACKEND=...`, `WINEMSYNC=1`, etc.) into Steam's Launch Options. In Steam, placing text after `%command%` passes those strings as invalid command-line flags to `Endfield.exe`, which breaks startup. FineWine automatically sets the optimal graphics and sync environment variables via NotProton's defaults file.
    - *Why*: The game defaults to DirectX 12, which does not currently initialize under the macOS D3DMetal/Wine translation layer. `-force-d3d11` selects the DirectX 11 backend, which translates cleanly via D3DMetal with Apple Silicon GPU acceleration.
 4. **Launch**: Click **Play** in Steam.
 
@@ -171,6 +173,20 @@ Restart Steam, and the entry will no longer appear in your compatibility dropdow
 1. Completely quit Steam (`⌘Q`) and reopen it. Steam only enumerates `compatibilitytools.d` on startup.
 2. Verify that `~/Library/Application Support/Steam/compatibilitytools.d/notproton-finewine-rosetta/compatibilitytool.vdf` exists and is readable.
 3. Check permissions on `~/Library/Application Support/Steam/compatibilitytools.d/notproton-finewine-rosetta/run` (`chmod +x run`).
+
+### Game instantly closes or button reverts to "Play" after 2 seconds
+1. **Check Launch Options in Steam**:
+   - Make sure Launch Options contains **ONLY** `-force-d3d11`.
+   - Remove any `%command%`, `CX_GRAPHICS_BACKEND=...`, `D3DM_ENABLE_METALFX=...`, or `WINEMSYNC=...`. Any text after `%command%` is passed as raw arguments to `Endfield.exe` and will prevent the engine from starting.
+2. **Verify runner has not been removed in NotProton**:
+   - Check if `~/Library/Application Support/notproton/runners/crossover-finewine-26.3/CrossOver` exists.
+   - If missing, re-run `./scripts/notproton-register.sh` or click **Re-register / Update** in the FineWine Patcher app.
+
+### NotProton app shows "CrossOver finewine-26.3: Build finewine-26.3, not supported"
+- This is **cosmetic and completely normal**.
+- NotProton's GUI application checks runner folder names against its internal list of official CodeWeavers CrossOver builds (e.g. `26.3.0.39832`). Because `finewine-26.3` is a custom runner, NotProton displays an orange warning dot and a "Remove..." button.
+- > [!WARNING]
+  > **Do NOT click "Remove..." in NotProton.** Doing so will delete FineWine's staged runner files and prevent Steam from launching the game. If you accidentally clicked Remove, simply run `./scripts/notproton-register.sh` again to restore it.
 
 ### Black screen or game crashes on start
 1. Verify launch options contain `-force-d3d11` (DirectX 12 is not supported).

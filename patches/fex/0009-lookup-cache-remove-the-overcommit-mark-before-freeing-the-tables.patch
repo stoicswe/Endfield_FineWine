@@ -1,0 +1,29 @@
+lookup cache: remove the overcommit mark before freeing the tables
+
+A thread's lookup tables are reserved, marked as an overcommit range, and committed from the
+fault handler, which looks the faulting address up in the list of marked ranges. The
+destructor freed the tables first and removed the mark second. Between the two calls another
+thread that is starting can be given the same address for its own tables and mark it; the
+mark it adds is the one the exiting thread then removes. The new thread's first lookup faults,
+the handler finds no range and passes the fault on as the program's own, and the thread never
+gets out of exception handling: the program hangs with one core busy.
+
+It takes threads starting while others exit. tests/runtime/thread-churn.c (60 rounds of 64
+short threads, about a second) hung every time before this and passes with it; a benchmark
+that starts 256 threads hung about once in 140 runs.
+
+--- a/FEXCore/Source/Interface/Core/LookupCache.cpp
++++ b/FEXCore/Source/Interface/Core/LookupCache.cpp
+@@ -71,8 +71,11 @@
+ }
+ 
+ LookupCache::~LookupCache() {
+-  FEXCore::Allocator::VirtualFree(reinterpret_cast<void*>(PagePointer), TotalCacheSize);
++  // FineWine: unmark before freeing. The other way round, a thread that is starting can be
++  // given this address for its own tables and mark them between the two calls; the unmark then
++  // removes that thread's mark, and its first lookup faults with nothing to commit the memory.
+   ctx->SyscallHandler->UnmarkOvercommitRange(PagePointer, TotalCacheSize);
++  FEXCore::Allocator::VirtualFree(reinterpret_cast<void*>(PagePointer), TotalCacheSize);
+ 
+   // No need to free BlockLinks map.
+   // These will get freed when their memory allocators are deallocated.

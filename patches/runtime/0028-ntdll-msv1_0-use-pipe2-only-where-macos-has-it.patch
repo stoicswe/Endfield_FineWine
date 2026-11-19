@@ -1,0 +1,108 @@
+ntdll, msv1_0: use pipe2 only where macOS has it
+
+macOS has had pipe2() only since macOS 27, and the SDK declares it with no availability
+annotation. Built with the macOS 27 SDK, configure finds it, and ntdll calls it directly: on
+macOS 26 and older the symbol resolves to nothing and the first pipe Wine makes (connecting to
+wineserver, starting a process) jumps to address 0. Setting up a bottle failed on macOS 26 at
+its first step ("'rundll32 win11Install crossover.inf' failed") for exactly this reason.
+
+pipe2 is now referenced weakly and used only when the system has it, with Wine's pipe() and
+fcntl() fallback otherwise: one build serves macOS 27 and the older releases. The list of
+functions newer than the oldest supported macOS, and how each is gated, is
+scripts/lib/macos-gated-apis.txt; scripts/lib/check-macos-compat.sh enforces it on the built
+binaries.
+
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -750,5 +750,17 @@
+ }
+ 
+ #endif  /* defined(__i386__) || defined(__x86_64__) */
++
++/* macOS has had pipe2() since macOS 27 only. The SDK declares it without saying so, so a build
++ * made with the macOS 27 SDK called it unconditionally and, on macOS 26 and older, jumped to
++ * address 0 the first time Wine made a pipe (connecting to wineserver, starting a process).
++ * It is referenced weakly and used only where the system has it. The list of such functions
++ * and how each is gated is scripts/lib/macos-gated-apis.txt in Endfield_FineWine. */
++#if defined(__APPLE__) && defined(HAVE_PIPE2)
++extern int pipe2( int fd[2], int flags ) __attribute__((weak_import));
++#define pipe2_available() (pipe2 != NULL)
++#else
++#define pipe2_available() 1
++#endif
+ 
+ #endif /* __NTDLL_UNIX_PRIVATE_H */
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -1283,7 +1283,7 @@
+ #ifdef HAVE_PIPE2
+     static BOOL have_pipe2 = TRUE;
+ 
+-    if (have_pipe2)
++    if (have_pipe2 && pipe2_available())
+     {
+         if (!(ret = pipe2( fd, O_CLOEXEC ))) return ret;
+         if (errno == ENOSYS || errno == EINVAL) have_pipe2 = FALSE;  /* don't try again */
+diff --git a/dlls/ntdll/unix/process.c b/dlls/ntdll/unix/process.c
+--- a/dlls/ntdll/unix/process.c
++++ b/dlls/ntdll/unix/process.c
+@@ -475,7 +475,7 @@
+     int fd[2], status, err;
+ 
+ #ifdef HAVE_PIPE2
+-    if (pipe2( fd, O_CLOEXEC ) == -1)
++    if (!pipe2_available() || pipe2( fd, O_CLOEXEC ) == -1)
+ #endif
+     {
+         if (pipe(fd) == -1) return STATUS_TOO_MANY_OPENED_FILES;
+@@ -571,7 +571,7 @@
+     NTSTATUS status = STATUS_SUCCESS;
+ 
+ #ifdef HAVE_PIPE2
+-    if (pipe2( fd, O_CLOEXEC ) == -1)
++    if (!pipe2_available() || pipe2( fd, O_CLOEXEC ) == -1)
+ #endif
+     {
+         if (pipe(fd) == -1) return STATUS_TOO_MANY_OPENED_FILES;
+diff --git a/dlls/msv1_0/unixlib.c b/dlls/msv1_0/unixlib.c
+--- a/dlls/msv1_0/unixlib.c
++++ b/dlls/msv1_0/unixlib.c
+@@ -37,6 +37,18 @@
+ #include "sspi.h"
+ 
+ #include "wine/debug.h"
++
++/* macOS has had pipe2() since macOS 27 only. The SDK declares it without saying so, so a build
++ * made with the macOS 27 SDK called it unconditionally and, on macOS 26 and older, jumped to
++ * address 0 the first time Wine made a pipe (connecting to wineserver, starting a process).
++ * It is referenced weakly and used only where the system has it. The list of such functions
++ * and how each is gated is scripts/lib/macos-gated-apis.txt in Endfield_FineWine. */
++#if defined(__APPLE__) && defined(HAVE_PIPE2)
++extern int pipe2( int fd[2], int flags ) __attribute__((weak_import));
++#define pipe2_available() (pipe2 != NULL)
++#else
++#define pipe2_available() 1
++#endif
+ #include "unixlib.h"
+ 
+ #ifdef __APPLE__
+@@ -166,7 +178,7 @@
+     NTSTATUS status = STATUS_SUCCESS;
+ 
+ #ifdef HAVE_PIPE2
+-    if (pipe2( pipe_in, O_CLOEXEC ) < 0)
++    if (!pipe2_available() || pipe2( pipe_in, O_CLOEXEC ) < 0)
+ #endif
+     {
+         if (pipe( pipe_in ) < 0 ) return SEC_E_INTERNAL_ERROR;
+@@ -174,7 +186,7 @@
+         fcntl( pipe_in[1], F_SETFD, FD_CLOEXEC );
+     }
+ #ifdef HAVE_PIPE2
+-    if (pipe2( pipe_out, O_CLOEXEC ) < 0)
++    if (!pipe2_available() || pipe2( pipe_out, O_CLOEXEC ) < 0)
+ #endif
+     {
+         if (pipe( pipe_out ) < 0)

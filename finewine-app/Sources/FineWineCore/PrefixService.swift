@@ -16,9 +16,10 @@ public struct PrefixService {
     public let shortcuts: ShortcutAppBuilder
     public let runner: ProcessRunning
 
-    public init(paths: FineWinePaths, runner: ProcessRunning = SystemProcessRunner(), runtimes: RuntimeStore? = nil) {
+    public init(paths: FineWinePaths, runner: ProcessRunning = SystemProcessRunner(), runtimes: RuntimeStore? = nil,
+                volumes: VolumeProviding = SystemVolumes()) {
         self.paths = paths
-        self.prefixes = PrefixStore(paths: paths)
+        self.prefixes = PrefixStore(paths: paths, volumes: volumes)
         self.runtimes = runtimes ?? RuntimeStore(paths: paths)
         self.profiles = ProfileStore(paths: paths)
         self.shortcuts = ShortcutAppBuilder(directory: paths.shortcuts)
@@ -60,13 +61,14 @@ public struct PrefixService {
     /// Creates a prefix, has Wine set it up, and applies its settings. If Wine fails, the
     /// half-made prefix is removed so the name can be used again.
     public func createPrefix(name: String, runtime: WineRuntime, profile: GameProfile?,
+                             place: PrefixPlace = .thisMac,
                              appearance: MacAppearance? = nil,
                              progress: (@Sendable (String) -> Void)? = nil) throws -> Prefix {
         let problems = runtime.problems()
         guard problems.isEmpty else {
             throw FineWineError("The runtime “\(runtime.name)” can't be used: " + problems.joined(separator: " "))
         }
-        let prefix = try prefixes.create(name: name, runtimeID: runtime.id, profile: profile)
+        let prefix = try prefixes.create(name: name, runtimeID: runtime.id, profile: profile, place: place)
         do {
             progress?(tr("setup.creating_windows_env"))
             try runChecked(try planner(for: prefix).plan(for: .initialize), what: "Setting up the prefix")
@@ -291,8 +293,13 @@ public struct PrefixService {
         }
         let program = prefix.metadata.programs[index]
         // The icon the installer's shortcut named, if it named one; else the program's own.
-        let icon = program.iconPath.flatMap { WindowsPath.macURL(for: $0, inPrefix: prefix.directory) }.flatMap(ICNS.data(fromIconFile:))
-            ?? WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory).flatMap(ICNS.data(fromExecutable:))
+        // Drawn as a Mac app icon when the prefix's programs are, so the shortcut and the
+        // program it starts look alike in the Dock.
+        let macStyle = prefix.metadata.settings.macStyleIcons
+        let icon = program.iconPath.flatMap { WindowsPath.macURL(for: $0, inPrefix: prefix.directory) }
+            .flatMap { ICNS.data(fromIconFile: $0, macStyle: macStyle) }
+            ?? WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory)
+            .flatMap { ICNS.data(fromExecutable: $0, macStyle: macStyle) }
         let url = try shortcuts.build(for: program, in: prefix, icon: icon)
         var updated = prefix
         updated.metadata.programs[index].shortcutPath = url.path
@@ -323,6 +330,13 @@ public struct PrefixService {
             .appendingPathComponent("\(formatter.string(from: date)) \(safe).log")
     }
 
+    /// Where the memory logs of a launch go: a folder named after its log file,
+    /// `<timestamp> <name> memory`.
+    public func memoryTraceFolder(forLog log: URL) -> URL {
+        log.deletingLastPathComponent()
+            .appendingPathComponent(log.deletingPathExtension().lastPathComponent + " memory", isDirectory: true)
+    }
+
     /// Puts the runtime's stand-in for Steam where Steam is in a prefix, unless that very file
     /// is there already. A real Steam installed in the prefix is left alone and used instead.
     func installSteamStandIn(from runtime: WineRuntime, in prefix: Prefix) throws {
@@ -343,7 +357,10 @@ public struct PrefixService {
 
     /// Starts a program and returns its pid.
     @discardableResult
-    public func launch(programID: UUID, in prefix: Prefix,
+    ///
+    /// With `memoryTrace`, the launch also gets a folder beside its log file
+    /// (`memoryTraceFolder`) that the runtime fills with memory logs.
+    public func launch(programID: UUID, in prefix: Prefix, memoryTrace: Bool = false,
                        onExit: @escaping @Sendable (Int32) -> Void = { _ in }) throws -> Int32 {
         guard let program = prefix.program(id: programID) else {
             throw FineWineError("That program is no longer in “\(prefix.name)”.")
@@ -359,8 +376,15 @@ public struct PrefixService {
         keepDesktopInPrefix(prefix)
         refreshEmulator(in: prefix, from: planner.runtime)
         if planner.steamAppID(for: program) != nil { try installSteamStandIn(from: planner.runtime, in: prefix) }
-        return try runner.start(try planner.plan(for: program),
-                                logFile: logFile(for: prefix, name: program.name), onExit: onExit)
+        let log = logFile(for: prefix, name: program.name)
+        var traceFolder: URL?
+        if memoryTrace {
+            let folder = memoryTraceFolder(forLog: log)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            traceFolder = folder
+        }
+        return try runner.start(try planner.plan(for: program, memoryTraceFolder: traceFolder),
+                                logFile: log, onExit: onExit)
     }
 
     @discardableResult

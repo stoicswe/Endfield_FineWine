@@ -73,15 +73,36 @@ final class PEIconTests: XCTestCase {
 final class ICNSTests: XCTestCase {
     func testLayout() throws {
         let icns = try XCTUnwrap(ICNS.data(pngsByPixelSize: [256: Data([1, 2, 3]), 32: Data([9])]))
-        // Header, then elements smallest first: icp5 (1 byte) and ic08 (3 bytes).
-        XCTAssertEqual(Array(icns), Array("icns".utf8) + [0, 0, 0, 28]
-                       + Array("icp5".utf8) + [0, 0, 0, 9] + [9]
+        // Header, then elements smallest first: ic11 (32 pixels, 1 byte), and the 256-pixel
+        // picture in both its slots, ic13 (128 points at 2x) and ic08 (256 at 1x).
+        XCTAssertEqual(Array(icns), Array("icns".utf8) + [0, 0, 0, 39]
+                       + Array("ic11".utf8) + [0, 0, 0, 9] + [9]
+                       + Array("ic13".utf8) + [0, 0, 0, 11] + [1, 2, 3]
                        + Array("ic08".utf8) + [0, 0, 0, 11] + [1, 2, 3])
+    }
+
+    func testOldIconsWithMisreadSlotsAreFound() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        func icns(_ type: String) -> Data {
+            Data("icns".utf8) + Data([0, 0, 0, 17]) + Data(type.utf8) + Data([0, 0, 0, 9, 7])
+        }
+        let old = dir.appendingPathComponent("old.icns"), new = dir.appendingPathComponent("new.icns")
+        try icns("icp5").write(to: old)
+        try XCTUnwrap(ICNS.data(pngsByPixelSize: [32: Data([1]), 256: Data([2])])).write(to: new)
+        XCTAssertTrue(ICNS.hasMisreadSlots(at: old))
+        XCTAssertFalse(ICNS.hasMisreadSlots(at: new))
+        XCTAssertFalse(ICNS.hasMisreadSlots(at: dir.appendingPathComponent("missing.icns")))
     }
 
     func testUnsupportedSizesAreLeftOut() {
         XCTAssertNil(ICNS.data(pngsByPixelSize: [:]))
         XCTAssertNil(ICNS.data(pngsByPixelSize: [48: Data([1])]))
+        // the slots macOS can misread are never written
+        let all = Dictionary(uniqueKeysWithValues: [16, 32, 48, 64, 128, 256, 512, 1024].map { ($0, Data([1])) })
+        let text = String(data: try! XCTUnwrap(ICNS.data(pngsByPixelSize: all)), encoding: .isoLatin1)!
+        for slot in ["icp4", "icp5", "icp6"] { XCTAssertFalse(text.contains(slot), slot) }
     }
 
     func testPNGHasTheRequestedPixelSize() throws {
@@ -99,9 +120,9 @@ final class ICNSTests: XCTestCase {
         let image = NSImage(size: NSSize(width: 256, height: 256), flipped: false) { rect in
             NSColor.green.setFill(); rect.fill(); return true
         }
-        let icns = try XCTUnwrap(ICNS.data(from: image, sizes: [16, 128]))
+        let icns = try XCTUnwrap(ICNS.data(from: image, sizes: [32, 128]))
         let text = String(data: icns, encoding: .isoLatin1)!
-        XCTAssertTrue(text.contains("icp4"))
+        XCTAssertTrue(text.contains("ic11"))
         XCTAssertTrue(text.contains("ic07"))
         XCTAssertFalse(text.contains("ic09"))
     }

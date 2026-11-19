@@ -57,11 +57,14 @@ if [ "$TARGET" != "app" ]; then
   log "2/8 Windows compiler"
   "$REPO/scripts/build-fex.sh" toolchain
   log "3/8 Wine runtime"
+  "$REPO/scripts/build-finewine-deps.sh"
   "$REPO/scripts/build-finewine-runtime.sh" all
   log "4/8 FEX"
   "$REPO/scripts/build-fex.sh" all
   log "5/8 DXMT"
   "$REPO/scripts/build-dxmt.sh" all
+  # Everything that ships, now that FEX and DXMT are in: the runtime runs on macOS 15 and later.
+  "$REPO/scripts/lib/check-macos-compat.sh" 15.0 "$REPO/build/finewine-runtime/bin" "$REPO/build/finewine-runtime/lib"
   if [ "${SKIP_TESTS:-0}" != "1" ]; then
     log "6/8 Runtime checks"
     "$REPO/scripts/test-finewine-runtime.sh"

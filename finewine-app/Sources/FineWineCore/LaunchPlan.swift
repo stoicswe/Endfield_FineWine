@@ -130,6 +130,10 @@ public struct LaunchPlanner {
             overrides += spec.overrides.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
         }
 
+        // A language for non-Unicode programs is set through LC_CTYPE, which an inherited
+        // LC_ALL would override.
+        if prefix.metadata.settings.nonUnicodeLanguage.unixLocale != nil { env.removeValue(forKey: "LC_ALL") }
+
         var userOverrides: String?
         for (name, value) in prefix.metadata.settings.environmentVariables() + extra.map({ ($0.name, $0.value) }) {
             guard EnvironmentVariable.isValidName(name) else { continue }
@@ -139,6 +143,13 @@ public struct LaunchPlanner {
         env["WINEDLLOVERRIDES"] = overrides.joined(separator: ";")
         return env
     }
+
+    // MARK: Memory trace
+
+    /// The environment variable naming the folder the runtime writes memory logs into, one file
+    /// per process: every reservation, commit, decommit, release and mapping of 8 MB or more
+    /// with the modules that asked for it, and totals every five seconds.
+    public static let memoryTraceVariable = "FINEWINE_MEMORY_TRACE"
 
     // MARK: Game Mode
 
@@ -153,10 +164,20 @@ public struct LaunchPlanner {
             .appendingPathComponent("\(program.id.uuidString).rendered")
     }
 
-    /// Whether to start the program as a game: it has rendered before (it, or a game its
-    /// launcher started), or its executable imports a rendering API.
+    /// Whether to start the program as a game: it is a HoYoverse game or HoYoPlay (which only
+    /// starts games), it or another entry for the same executable has rendered before (it, or a
+    /// game its launcher started), or its executable imports a rendering API.
+    ///
+    /// macOS decides whether an app is a game when it starts, so the game a launcher starts can
+    /// only be in Game Mode if the launcher was started as one. A launcher's own imports say
+    /// nothing, and its marker only appears once the game has rendered, too late for that launch.
     public func isGame(_ program: Program) -> Bool {
-        if FileManager.default.fileExists(atPath: gameMarker(for: program).path) { return true }
+        if SteamStandIn.appID(forWindowsPath: program.windowsPath) != nil { return true }
+        let sameExecutable = prefix.metadata.programs.filter {
+            $0.id != program.id && $0.windowsPath.caseInsensitiveCompare(program.windowsPath) == .orderedSame
+        }
+        for entry in [program] + sameExecutable
+        where FileManager.default.fileExists(atPath: gameMarker(for: entry).path) { return true }
         guard let exe = WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory) else { return false }
         return PEImports.usesRenderingAPI(at: exe)
     }
@@ -181,7 +202,11 @@ public struct LaunchPlanner {
     }
 
     /// Runs a program installed in the prefix.
-    public func plan(for program: Program) throws -> LaunchPlan {
+    ///
+    /// With `memoryTraceFolder`, the runtime writes a memory log for the program and everything
+    /// it starts into that folder: its large allocations with their likely callers, and running
+    /// totals with the memory footprint (see `memoryTraceVariable`).
+    public func plan(for program: Program, memoryTraceFolder: URL? = nil) throws -> LaunchPlan {
         var arguments = [program.windowsPath]
         if let profile, profile.matches(windowsPath: program.windowsPath) {
             arguments += profile.launchArguments.filter { !program.arguments.contains($0) }
@@ -208,6 +233,7 @@ public struct LaunchPlanner {
         }
         // The program's own variables keep the last word, as everywhere else.
         for (name, value) in gameModeEnvironment(for: program) where env[name] == nil { env[name] = value }
+        if let memoryTraceFolder { env[Self.memoryTraceVariable] = memoryTraceFolder.path }
         return LaunchPlan(executable: try wine(), arguments: arguments,
                           environment: env, workingDirectory: cwd ?? prefix.directory)
     }

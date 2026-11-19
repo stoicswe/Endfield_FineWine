@@ -26,7 +26,7 @@ struct MainWindow: View {
                         Text(l10n.tr("menu.setting_up_prefix", name))
                     }
                     .padding(.horizontal, 16).padding(.vertical, 10)
-                    .glassEffect()
+                    .fwGlass(in: Capsule())
                     .padding(.bottom, 18)
                 }
             }
@@ -58,8 +58,23 @@ struct MainWindow: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(prefix.name).lineLimit(1)
                             Text(subtitle(for: prefix)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            Label(model.placeName(prefix.place), systemImage: model.placeSymbol(prefix.place))
+                                .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                .help(l10n.tr("drive.stored_on", model.placeName(prefix.place)))
                         }
                         Spacer()
+                        if let size = model.sizeText(for: prefix) {
+                            // how much space the prefix takes on its drive
+                            Text(size)
+                                .font(.caption2.weight(.medium).monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .fixedSize()
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.quaternary, in: Capsule())
+                                .help(l10n.tr("prefix.size_help"))
+                        }
                         if model.busy[prefix.id] != nil {
                             ProgressView().controlSize(.small)
                         } else if model.isRunning(prefix) {
@@ -71,8 +86,25 @@ struct MainWindow: View {
                     .contextMenu { PrefixContextMenu(prefix: prefix) }
                 }
             }
+            // Prefixes on drives that are unplugged, until the drive is back (or hidden).
+            if model.showsDisconnectedPrefixes, !model.disconnectedPrefixes.isEmpty {
+                Section(l10n.tr("drive.not_connected_section")) {
+                    ForEach(model.disconnectedPrefixes, id: \.prefix.id) { entry in
+                        // Not selectable: the prefix isn't here to show. Its id is a UUID like a
+                        // real prefix's, so without this a click selected a prefix that isn't
+                        // loaded and emptied the window.
+                        DisconnectedPrefixRow(drive: entry.drive, prefix: entry.prefix)
+                            .selectionDisabled()
+                    }
+                }
+            }
         }
         .navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 320)
+        // Only prefixes that are here can be selected; anything else goes back to one that is.
+        .onChange(of: model.selection) { _, selected in
+            guard let selected, model.prefix(selected) == nil else { return }
+            model.selection = model.prefixes.first?.id
+        }
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Button {
@@ -80,14 +112,14 @@ struct MainWindow: View {
                 } label: {
                     Label(l10n.tr("main.new_prefix"), systemImage: "plus")
                 }
-                .buttonStyle(.glass)
+                .fwButton()
                 Spacer()
                 Button {
                     openSettings()
                 } label: {
                     Image(systemName: "gearshape")
                 }
-                .buttonStyle(.glass)
+                .fwButton()
                 .help(l10n.tr("main.settings_tooltip"))
             }
             .padding(12)
@@ -102,7 +134,7 @@ struct MainWindow: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let prefix = model.prefix(model.selection) {
+        if let prefix = model.prefix(model.selection) ?? model.prefixes.first {
             PrefixDetailView(prefix: prefix).id(prefix.id)
         } else if model.usableRuntimes.isEmpty {
             EmptyState(symbol: "wineglass", title: l10n.tr("main.add_runtime_title"),
@@ -110,14 +142,14 @@ struct MainWindow: View {
                 Button(l10n.tr("main.add_runtime_btn")) {
                     if let folder = Panels.chooseFolder(message: l10n.tr("dialog.choose_runtime_folder")) { model.addRuntime(from: folder) }
                 }
-                .buttonStyle(.glassProminent).tint(Look.wine)
+                .fwProminentButton().tint(Look.wine)
                 .controlSize(.large)
             }
         } else {
             EmptyState(symbol: "shippingbox", title: l10n.tr("main.first_prefix_title"),
                        message: l10n.tr("main.first_prefix_desc")) {
                 Button(l10n.tr("main.first_prefix_btn")) { showingNewPrefix = true }
-                    .buttonStyle(.glassProminent).tint(Look.wine)
+                    .fwProminentButton().tint(Look.wine)
                     .controlSize(.large)
             }
         }
@@ -132,8 +164,23 @@ struct NewPrefixSheet: View {
     @State private var name = ""
     @State private var runtimeID: String?
     @State private var profileID = GameProfile.generic.id
+    /// The drive chosen: "" for this Mac, else a volume UUID.
+    @State private var driveChoice = ""
+    @State private var volumes: [(volume: VolumeInfo, problem: String?)] = []
 
     private var profile: GameProfile? { model.profiles.first { $0.id == profileID } }
+    private var usableVolumes: [VolumeInfo] { volumes.filter { $0.problem == nil }.map(\.volume) }
+
+    private func freeSpace(_ bytes: Int64?) -> String {
+        bytes.map { l10n.tr("drive.free", ByteCountFormatter.string(fromByteCount: $0, countStyle: .file)) } ?? ""
+    }
+
+    private var driveDetail: String {
+        if driveChoice.isEmpty { return l10n.tr("drive.this_mac_detail") }
+        guard let volume = usableVolumes.first(where: { $0.uuid == driveChoice }) else { return "" }
+        return [l10n.tr("drive.folder_on_drive", volume.name), freeSpace(volume.availableBytes)]
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+    }
     private var runtime: WineRuntime? { model.usableRuntimes.first { $0.id == runtimeID } ?? model.usableRuntimes.first }
 
     var body: some View {
@@ -159,6 +206,22 @@ struct NewPrefixSheet: View {
                     }
                 }
                 Divider()
+                Row(label: l10n.tr("drive.label"), detail: driveDetail) {
+                    Picker(l10n.tr("drive.label"), selection: $driveChoice) {
+                        Label(l10n.tr("drive.this_mac"), systemImage: "desktopcomputer").tag("")
+                        ForEach(usableVolumes, id: \.root) { volume in
+                            Label(volume.name, systemImage: "externaldrive").tag(volume.uuid ?? "")
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                ForEach(volumes.filter { $0.problem != nil }, id: \.volume.root) { entry in
+                    Label(entry.problem ?? "", systemImage: "exclamationmark.triangle")
+                        .font(.footnote).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Divider()
                 if model.usableRuntimes.isEmpty {
                     Label(l10n.tr("sheet.no_runtime_warning"), systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
@@ -180,16 +243,23 @@ struct NewPrefixSheet: View {
                 }
                 Spacer()
                 Button(l10n.tr("app.cancel")) { dismiss() }
-                    .buttonStyle(.glass)
+                    .fwButton()
                     .keyboardShortcut(.cancelAction)
                     .disabled(model.isCreatingPrefix)
                 Button(l10n.tr("app.create")) {
                     guard let runtime else { return }
+                    var place = PrefixPlace.thisMac
+                    if !driveChoice.isEmpty {
+                        // Makes FineWine/Prefixes on the drive and remembers the drive.
+                        guard let volume = usableVolumes.first(where: { $0.uuid == driveChoice }),
+                              let chosen = model.useDrive(volume) else { return }
+                        place = chosen
+                    }
                     Task {
-                        if await model.createPrefix(name: name, runtime: runtime, profile: profile) { dismiss() }
+                        if await model.createPrefix(name: name, runtime: runtime, profile: profile, place: place) { dismiss() }
                     }
                 }
-                .buttonStyle(.glassProminent).tint(Look.wine)
+                .fwProminentButton().tint(Look.wine)
                 .keyboardShortcut(.defaultAction)
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || runtime == nil || model.isCreatingPrefix)
             }
@@ -198,6 +268,13 @@ struct NewPrefixSheet: View {
         .frame(width: 480)
         .background { Backdrop() }
         .interactiveDismissDisabled(model.isCreatingPrefix)
+        .onAppear {
+            volumes = model.candidateVolumes()
+            // The default drive, if it is plugged in; this Mac otherwise.
+            if case .drive(let uuid) = model.preferredPlace, usableVolumes.contains(where: { $0.uuid == uuid }) {
+                driveChoice = uuid
+            }
+        }
     }
 }
 
@@ -243,8 +320,11 @@ struct SettingsView: View {
                     Button(l10n.tr("main.add_runtime_btn")) {
                         if let folder = Panels.chooseFolder(message: l10n.tr("dialog.choose_runtime_folder")) { model.addRuntime(from: folder) }
                     }
-                    .buttonStyle(.glass)
+                    .fwButton()
                 }
+
+                DrivesCard()
+                SnapshotsSettingsCard()
 
                 Card(title: l10n.tr("settings.discord_card"), symbol: "bubble.left.and.bubble.right",
                      footnote: l10n.tr("settings.discord_footnote")) {
@@ -254,8 +334,9 @@ struct SettingsView: View {
                     }
                     Divider()
                     Row(label: l10n.tr("settings.discord_app_id"), detail: discordStatus) {
-                        TextField(l10n.tr("settings.discord_app_id"), text: Binding(get: { model.discordApplicationID },
-                                                                 set: { model.discordApplicationID = $0 }))
+                        TextField(l10n.tr("settings.discord_app_id_placeholder"),
+                                  text: Binding(get: { model.customDiscordApplicationID },
+                                                set: { model.customDiscordApplicationID = $0 }))
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 200)
                             .labelsHidden()
@@ -266,7 +347,7 @@ struct SettingsView: View {
                      footnote: l10n.tr("settings.support_footnote")) {
                     Row(label: l10n.tr("settings.donate_row_label"), detail: l10n.tr("settings.donate_row_desc")) {
                         Button(l10n.tr("menu.donate")) { NSWorkspace.shared.open(Links.wineDonate) }
-                            .buttonStyle(.glassProminent).tint(Look.wine)
+                            .fwProminentButton().tint(Look.wine)
                             .help(l10n.tr("settings.donate_tooltip"))
                     }
                 }
@@ -303,10 +384,10 @@ struct SettingsView: View {
                                                                    set: { model.setLaunchesAtLogin($0) }))
                     Divider()
                     Row(label: l10n.tr("settings.shortcuts_row"), detail: model.service.paths.shortcuts.path) {
-                        Button(l10n.tr("app.show_in_finder")) { reveal(model.service.paths.shortcuts) }.buttonStyle(.glass)
+                        Button(l10n.tr("app.show_in_finder")) { reveal(model.service.paths.shortcuts) }.fwButton()
                     }
                     Row(label: l10n.tr("settings.prefixes_logs_row"), detail: model.service.paths.root.path) {
-                        Button(l10n.tr("app.show_in_finder")) { reveal(model.service.paths.root) }.buttonStyle(.glass)
+                        Button(l10n.tr("app.show_in_finder")) { reveal(model.service.paths.root) }.fwButton()
                     }
                 }
             }
@@ -351,7 +432,7 @@ private struct RuntimeRow: View {
             Spacer()
             if runtime.kind != .bundled {
                 Button(l10n.tr("app.remove")) { confirmingRemoval = true }
-                    .buttonStyle(.glass)
+                    .fwButton()
                     .controlSize(.small)
             }
         }
@@ -422,6 +503,10 @@ struct PrefixContextMenu: View {
         }
         .disabled(busy)
         Button(l10n.tr("context.duplicate")) { Task { await model.duplicate(prefix) } }.disabled(busy)
+        Menu(l10n.tr("move.menu")) { MoveDestinations(prefix: prefix) }
+            .disabled(busy || model.isRunning(prefix))
+        Button(l10n.tr("snapshot.take_now")) { Task { await model.takeSnapshot(of: prefix) } }
+            .disabled(busy || model.isRunning(prefix))
         Button(l10n.tr("context.delete"), role: .destructive) {
             if Panels.confirm(title: l10n.tr("context.delete_confirm_title", prefix.name),
                               message: l10n.tr("context.delete_confirm_msg"),
@@ -430,5 +515,112 @@ struct PrefixContextMenu: View {
             }
         }
         .disabled(busy)
+    }
+}
+
+/// A prefix on a drive that is not plugged in: greyed out, saying which drive to connect.
+struct DisconnectedPrefixRow: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var l10n = LanguageManager.shared
+    let drive: PrefixDrive
+    let prefix: KnownPrefix
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "shippingbox").foregroundStyle(.tertiary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(prefix.name).lineLimit(1).foregroundStyle(.secondary)
+                Label(l10n.tr("drive.connect_to_use", drive.name), systemImage: "externaldrive.badge.xmark")
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+        }
+        .help(l10n.tr("drive.not_connected_msg", prefix.name, drive.name))
+        .contextMenu {
+            Button(l10n.tr("drive.hide_disconnected")) { model.showsDisconnectedPrefixes = false }
+            Button(l10n.tr("drive.forget_action", drive.name)) { model.forgetDrive(drive.uuid) }
+        }
+    }
+}
+
+/// Settings: the drives prefixes are kept on, which one new prefixes go to, and whether
+/// prefixes on unplugged drives are listed.
+struct DrivesCard: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var l10n = LanguageManager.shared
+    @State private var volumes: [(volume: VolumeInfo, problem: String?)] = []
+
+    /// "" for this Mac, else a volume UUID.
+    private var defaultChoice: Binding<String> {
+        Binding(get: {
+            if case .drive(let uuid) = model.preferredPlace { return uuid }
+            return ""
+        }, set: { uuid in
+            if uuid.isEmpty { model.setDefaultPlace(.thisMac); return }
+            if model.drives.contains(where: { $0.uuid == uuid }) { model.setDefaultPlace(.drive(uuid)); return }
+            // A drive not used yet: get it ready, then make it the default.
+            if let volume = volumes.first(where: { $0.volume.uuid == uuid })?.volume, let place = model.useDrive(volume) {
+                model.setDefaultPlace(place)
+            }
+        })
+    }
+
+    /// Plugged-in drives that could hold prefixes but haven't yet.
+    private var newVolumes: [VolumeInfo] {
+        volumes.filter { $0.problem == nil && !model.drives.map(\.uuid).contains($0.volume.uuid ?? "") }.map(\.volume)
+    }
+
+    var body: some View {
+        Card(title: l10n.tr("drive.card"), symbol: "externaldrive", footnote: l10n.tr("drive.card_footnote")) {
+            Row(label: l10n.tr("drive.default_label"), detail: l10n.tr("drive.default_detail")) {
+                Picker(l10n.tr("drive.default_label"), selection: defaultChoice) {
+                    Label(l10n.tr("drive.this_mac"), systemImage: "desktopcomputer").tag("")
+                    ForEach(model.drives) { drive in
+                        Label(model.connectedDrives.contains(drive.uuid) ? drive.name : l10n.tr("drive.name_not_connected", drive.name),
+                              systemImage: "externaldrive").tag(drive.uuid)
+                    }
+                    ForEach(newVolumes, id: \.root) { volume in
+                        Label(volume.name, systemImage: "externaldrive").tag(volume.uuid ?? "")
+                    }
+                }
+                .labelsHidden().fixedSize()
+            }
+            Divider()
+            Toggle(isOn: Binding(get: { model.showsDisconnectedPrefixes }, set: { model.showsDisconnectedPrefixes = $0 })) {
+                Text(l10n.tr("drive.show_disconnected_title"))
+                Text(l10n.tr("drive.show_disconnected_desc"))
+            }
+            ForEach(model.drives) { drive in
+                Divider()
+                driveRow(drive)
+            }
+        }
+        .onAppear { volumes = model.candidateVolumes() }
+        .onChange(of: model.connectedDrives) { volumes = model.candidateVolumes() }
+    }
+
+    private func driveRow(_ drive: PrefixDrive) -> some View {
+        let connected = model.connectedDrives.contains(drive.uuid)
+        let volume = volumes.first { $0.volume.uuid == drive.uuid }?.volume
+        let count = model.prefixes.filter { $0.place == .drive(drive.uuid) }.count
+        let prefixes = connected ? count : drive.prefixes.count
+        var status = connected ? l10n.tr("drive.status_connected") : l10n.tr("drive.status_not_connected")
+        if let bytes = volume?.availableBytes {
+            status += " · " + l10n.tr("drive.free", ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
+        }
+        status += " · " + (prefixes == 1 ? l10n.tr("drive.prefix_count_single") : l10n.tr("drive.prefix_count", prefixes))
+        return Row(label: drive.name, detail: status) {
+            HStack(spacing: 6) {
+                if connected, let volume {
+                    Button(l10n.tr("app.show_in_finder")) {
+                        NSWorkspace.shared.activateFileViewerSelecting([PrefixDriveStore.prefixesFolder(on: volume)])
+                    }
+                    .fwButton()
+                }
+                Button(l10n.tr("drive.forget")) { model.forgetDrive(drive.uuid) }
+                    .fwButton()
+                    .help(l10n.tr("drive.forget_help", drive.name))
+            }
+        }
     }
 }

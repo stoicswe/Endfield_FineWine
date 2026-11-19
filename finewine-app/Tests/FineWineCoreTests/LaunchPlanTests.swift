@@ -156,6 +156,22 @@ final class LaunchPlannerTests: XCTestCase {
         XCTAssertEqual(msi.arguments, ["msiexec", "/i", "/Users/me/Downloads/Thing.MSI"])
     }
 
+    func testLanguageForNonUnicodeProgramsSetsTheCodePageLocale() {
+        var f = Fixture()
+        let base = ["PATH": "/usr/bin", "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"]
+        // automatic: whatever FineWine was started with goes through
+        var env = f.planner(base: base).environment()
+        XCTAssertNil(env["LC_CTYPE"])
+        XCTAssertEqual(env["LC_ALL"], "en_US.UTF-8")
+        // a language: LC_CTYPE says it, LC_ALL (which would override it) is dropped, and LANG,
+        // which Wine's interface language comes from, stays
+        f.prefix.metadata.settings.nonUnicodeLanguage = .japanese
+        env = f.planner(base: base).environment()
+        XCTAssertEqual(env["LC_CTYPE"], "ja_JP.UTF-8")
+        XCTAssertNil(env["LC_ALL"])
+        XCTAssertEqual(env["LANG"], "en_US.UTF-8")
+    }
+
     func testPlansFailClearlyWithoutWine() {
         let sandbox = Sandbox()
         let root = sandbox.makeRuntime(wine: false, server: false)

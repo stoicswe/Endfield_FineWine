@@ -152,3 +152,33 @@ when Game Mode is on; it needs the game to be full screen, which is what
 Nothing here is a game. GPU-bound performance, shader compilation stutter, streaming, audio
 and anti-cheat overhead are not in these numbers. The next measurement that matters is a
 frame-time capture of a real title, which needs the game to be launched and logged in to.
+
+## Loading times (2026-11-17, Arknights: Endfield)
+
+Endfield's loading screen was sampled every 10 seconds for two minutes (`sample`, 3 seconds
+each), with the game running on Vulkan through MoltenVK under FEX.
+
+- **The game mostly waited.** It used 1 to 2 of the Mac's cores. Metal's shader compiler was
+  idle for the whole two minutes, so shaders were not what it waited for.
+- **Thread creation stalled everything.** In 11 of the 12 samples one thread was inside
+  `NtCreateThreadEx`, most of them for the whole 3 seconds. Every thread of an x64 program gets
+  an emulator stack "above 4 GB". Wine looked for room for it in 64K steps, one `mach_vm_map`
+  call each, over everything macOS itself has mapped there (program image, shared cache of
+  system libraries, Metal's and FEX's memory), and further for each new thread. It did that
+  holding `virtual_mutex`. The other threads' page faults, `VirtualAlloc` and `VirtualQuery`
+  calls queued behind it: about 60,000 samples of waiting on that lock.
+- **Fixed in patches/runtime/0031.** When a step is taken, the kernel says where the mapping
+  in the way ends (`mach_vm_region`), and the search goes on right after it. That is the same
+  address stepping would have reached, so the memory found is the same. `tests/runtime/threads.c`
+  (300 x64 threads that stay alive): **420 s before, 0.2 s after.** It helps every x64
+  program that creates threads, which is every game.
+- **Metal's shader cache works for the game loader.** A test bundle marked as a game compiled
+  40 pipelines in 2.1 s cold and in 3 ms warm. A cache entry also survives the process being
+  killed right after the compile. Yet Endfield's entries in the loader's cache
+  (`org.finewine.game`) have not grown since 2026-11-16. Not explained yet; the next step is a
+  load after the fix, watching the compiler and the cache.
+- **`MVK_CONFIG_SHOULD_MAXIMIZE_CONCURRENT_COMPILATION` gives nothing**: 120 cold pipelines
+  took about 4.5 s with and without it, three runs each. Left off.
+- **Endfield runs on Vulkan, not Direct3D 11.** Its log shows Hypergryph's own Vulkan
+  swapchain and PSO warm-up (`enablePsoWarmup:1`, a 614 MB `vulkan_pso_cache.bin`). So DXMT
+  is not involved, whatever the prefix's graphics setting.

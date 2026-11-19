@@ -1,0 +1,120 @@
+diagnosis: switches to turn off piecewise commit and the loop suspend check
+
+Three environment variables, read once when a program starts, that put back how things were
+before a FineWine change, so that a problem can be pinned on one of them (or cleared of them)
+by starting the program again, without another build:
+
+ - FEX_EAGERCOMMIT=1: the lookup tables are committed whole at their first fault (0005), the
+   allocator commits each page whole (0006), and call-return stacks and compile buffers are
+   committed whole (0007).
+ - FEX_NOLOOPSUSPENDCHECK=1: no suspend check before a conditional jump back (0004). A program
+   that suspends a thread spinning in such a loop then hangs again, as Genshin Impact did.
+
+They cost memory or hang programs, so they are for finding a fault only. The Wine side has
+FINEWINE_EAGER_CODE_MAP=1 for the ARM64EC code map (runtime patch 0037).
+
+--- a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
+@@ -257,7 +257,12 @@
+   // jcc, so the state can be reconstructed here, and the check leaves NZCV alone. Blocks of guest
+   // code are entry points or sit at a nonzero guest offset; loops the translator makes inside one
+   // guest instruction (rep string ops) jump to neither and keep running as before.
+-  if (TrueTargetLabel->Backward.Location) {
++  // FEX_NOLOOPSUSPENDCHECK=1 leaves the check out, to rule it in or out when something misbehaves.
++  static const bool NoLoopSuspendCheck = [] {
++    const char* Env = getenv("FEX_NOLOOPSUSPENDCHECK");
++    return Env && Env[0] == '1';
++  }();
++  if (!NoLoopSuspendCheck && TrueTargetLabel->Backward.Location) {
+     const auto TrueBlock = IR->GetOp<IR::IROp_CodeBlock>(Op->TrueBlock);
+     if (TrueBlock->EntryPoint || TrueBlock->GuestEntryOffset != 0) {
+       EmitSuspendInterruptCheck();
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -775,16 +775,23 @@
+ 
+   const auto NtDll = GetModuleHandleW(L"ntdll.dll");
+   const bool IsWine = !!GetProcAddress(NtDll, "wine_get_version");
+-  OvercommitTracker.emplace(IsWine);
++  // FineWine: FEX_EAGERCOMMIT=1 turns off committing emulator memory a piece at a time (the
++  // lookup tables, the allocator's pages, call-return stacks and compile buffers), to rule it in
++  // or out when something misbehaves.
++  const char* EagerEnv = getenv("FEX_EAGERCOMMIT");
++  const bool EagerCommit = EagerEnv && EagerEnv[0] == '1';
++  OvercommitTracker.emplace(IsWine, EagerCommit);
+   // FineWine: let emulator-only memory (call-return stacks, compile buffers) be committed as
+   // it is used. Unmarking a range that was never marked is harmless.
+-  FEXCore::Allocator::VirtualOvercommit = [](void* Ptr, size_t Size, bool Mark) {
+-    if (Mark) {
+-      OvercommitTracker->MarkRange(reinterpret_cast<uint64_t>(Ptr), Size);
+-    } else {
+-      OvercommitTracker->UnmarkRange(reinterpret_cast<uint64_t>(Ptr), Size);
+-    }
+-  };
++  if (!EagerCommit) {
++    FEXCore::Allocator::VirtualOvercommit = [](void* Ptr, size_t Size, bool Mark) {
++      if (Mark) {
++        OvercommitTracker->MarkRange(reinterpret_cast<uint64_t>(Ptr), Size);
++      } else {
++        OvercommitTracker->UnmarkRange(reinterpret_cast<uint64_t>(Ptr), Size);
++      }
++    };
++  }
+ 
+   FEX::Windows::SetupEnvironmentVariableValues(NtDll);
+ 
+--- a/Source/Windows/Common/OvercommitTracker.h
++++ b/Source/Windows/Common/OvercommitTracker.h
+@@ -14,12 +14,16 @@
+ class OvercommitTracker {
+ private:
+   [[maybe_unused]] bool IsWine;
++  // FineWine: FEX_EAGERCOMMIT=1 commits a whole reservation at its first fault, as Wine builds
++  // did before, to rule the piecewise commit in or out when something misbehaves.
++  bool Eager;
+   FEXCore::IntervalList<uint64_t> OvercommitIntervals;
+   std::shared_mutex OvercommitIntervalsMutex;
+ 
+ public:
+-  OvercommitTracker(bool IsWine)
+-    : IsWine {IsWine} {}
++  OvercommitTracker(bool IsWine, bool Eager = false)
++    : IsWine {IsWine}
++    , Eager {Eager} {}
+ 
+   void MarkRange(uint64_t Start, uint64_t Length) {
+     std::unique_lock Lock {OvercommitIntervalsMutex};
+@@ -40,6 +44,10 @@
+       // whole reservation makes all of it readable, and on macOS a page that is only ever read
+       // still costs memory (there is no shared zero page): a program that reads through its own
+       // committed memory then turns each thread's 272 MB of lookup tables into real memory.
++      if (Eager) {
++        VirtualAlloc(reinterpret_cast<void*>(Query.Interval.Offset), Query.Interval.End - Query.Interval.Offset, MEM_COMMIT, PAGE_READWRITE);
++        return true;
++      }
+       static constexpr uint64_t FaultCommitSize = 1024 * 64;
+       const uint64_t Start = std::max<uint64_t>(FaultAddress & ~(FaultCommitSize - 1), Query.Interval.Offset);
+       const uint64_t End = std::min<uint64_t>(Start + FaultCommitSize, Query.Interval.End);
+--- a/External/rpmalloc/rpmalloc/rpmalloc.c
++++ b/External/rpmalloc/rpmalloc/rpmalloc.c
+@@ -1087,10 +1087,19 @@
+ #define PAGE_COMMIT_CHUNK_SHIFT 16
+ #define PAGE_COMMIT_CHUNK ((size_t)1 << PAGE_COMMIT_CHUNK_SHIFT)
+ 
++// FEX_EAGERCOMMIT=1 in the environment commits every page whole, as before this change. It is
++// there to rule the piecewise commit in or out when something misbehaves. Read once; two threads
++// reading it at the same moment get the same answer.
++static int page_commit_eager = -1;
++
+ static inline size_t
+ page_commit_initial_size(size_t page_size) {
++	if (page_commit_eager < 0) {
++		const char* env = getenv("FEX_EAGERCOMMIT");
++		page_commit_eager = (env && env[0] == '1') ? 1 : 0;
++	}
+ 	// With memory pages larger than a piece (huge pages) keep the original behaviour
+-	return (global_config.page_size > PAGE_COMMIT_CHUNK) ? page_size : PAGE_COMMIT_CHUNK;
++	return (page_commit_eager || global_config.page_size > PAGE_COMMIT_CHUNK) ? page_size : PAGE_COMMIT_CHUNK;
+ }
+ 
+ static inline void

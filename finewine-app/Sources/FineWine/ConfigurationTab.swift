@@ -54,6 +54,13 @@ struct ConfigurationTab: View {
                         .frame(width: 110)
                 }
                 Divider()
+                Row(label: l10n.tr("config.nonunicode_label"), detail: l10n.tr("config.nonunicode_detail")) {
+                    Picker(l10n.tr("config.nonunicode_label"), selection: $draft.nonUnicodeLanguage) {
+                        ForEach(NonUnicodeLanguage.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                    }
+                    .labelsHidden().fixedSize()
+                }
+                Divider()
                 Row(label: l10n.tr("config.runtime_label")) {
                     Picker(l10n.tr("config.runtime_label"), selection: $runtimeID) {
                         if selectedRuntime == nil { Text(l10n.tr("app.none")).tag(String?.none) }
@@ -79,6 +86,24 @@ struct ConfigurationTab: View {
                 Toggle(isOn: $draft.metalFXUpscaling) {
                     Text(l10n.tr("config.metalfx_upscale_title"))
                     Text(l10n.tr("config.metalfx_upscale_desc"))
+                }
+                Divider()
+                Toggle(isOn: $draft.renderSizeEnabled) {
+                    Text(l10n.tr("config.render_size_title"))
+                    Text(l10n.tr("config.render_size_desc"))
+                }
+                .disabled(draft.metalFXUpscaling)
+                if !draft.metalFXUpscaling && draft.renderSizeEnabled {
+                    HStack(spacing: 12) {
+                        Slider(value: Binding(get: { Double(draft.renderScale) },
+                                              set: { draft.renderScale = Int(($0 / 5).rounded()) * 5 }),
+                               in: Double(PrefixSettings.renderScaleRange.lowerBound)...Double(PrefixSettings.renderScaleRange.upperBound),
+                               step: 5)
+                        Text(renderSizeLabel(draft.renderScale))
+                            .font(.callout.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 190, alignment: .trailing)
+                    }
                 }
                 Divider()
                 Toggle(isOn: $draft.automaticDPI) {
@@ -156,6 +181,16 @@ struct ConfigurationTab: View {
                     Text(l10n.tr("config.hide_hypervisor_title"))
                     Text(l10n.tr("config.hide_hypervisor_desc"))
                 }
+                Divider()
+                Toggle(isOn: $draft.zeroPages) {
+                    Text(l10n.tr("config.zero_pages_title"))
+                    Text(l10n.tr("config.zero_pages_desc"))
+                }
+                Divider()
+                Toggle(isOn: $draft.compactBlockRecords) {
+                    Text(l10n.tr("config.compact_records_title"))
+                    Text(l10n.tr("config.compact_records_desc"))
+                }
             }
 
             Card(title: l10n.tr("config.appearance_card"), symbol: "paintbrush",
@@ -163,6 +198,11 @@ struct ConfigurationTab: View {
                 Toggle(isOn: $draft.macAppearance) {
                     Text(l10n.tr("config.mac_appearance_title"))
                     Text(l10n.tr("config.mac_appearance_desc"))
+                }
+                Divider()
+                Toggle(isOn: $draft.macStyleIcons) {
+                    Text(l10n.tr("config.mac_icons_title"))
+                    Text(l10n.tr("config.mac_icons_desc"))
                 }
             }
 
@@ -197,7 +237,7 @@ struct ConfigurationTab: View {
                 } label: {
                     Label(l10n.tr("config.add_override"), systemImage: "plus")
                 }
-                .buttonStyle(.glass).controlSize(.small)
+                .fwButton().controlSize(.small)
             }
 
             Card(title: l10n.tr("config.env_card"), symbol: "terminal",
@@ -210,6 +250,11 @@ struct ConfigurationTab: View {
                 TextField("-all", text: $draft.debugChannels)
                     .textFieldStyle(.roundedBorder)
                     .font(.body.monospaced())
+                Divider()
+                Toggle(isOn: $draft.streamlineLog) {
+                    Text(l10n.tr("config.streamline_log_title"))
+                    Text(l10n.tr("config.streamline_log_desc", PrefixSettings.streamlineLogName))
+                }
             }
         }
         .onChange(of: prefix.metadata.settings) { _, new in
@@ -256,15 +301,26 @@ struct ConfigurationTab: View {
                 runtimeID = prefix.metadata.runtimeID
                 desktopEnabled = draft.virtualDesktop != nil
             }
-            .buttonStyle(.glass)
+            .fwButton()
             .disabled(edited == prefix.metadata.settings && runtimeID == prefix.metadata.runtimeID)
             Button(l10n.tr("app.apply")) {
                 Task { await model.apply(edited, runtimeID: runtimeID, to: prefix) }
             }
-            .buttonStyle(.glassProminent).tint(Look.wine)
+            .fwProminentButton().tint(Look.wine)
             .disabled(!hasChanges || !problems.isEmpty)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(padding: 14, tint: problems.isEmpty && hasChanges ? Look.wine : nil)
     }
+}
+
+
+/// "75% · about 2268 × 1473": the screen a program sees at a render size, on the main display.
+@MainActor
+private func renderSizeLabel(_ percent: Int) -> String {
+    guard let screen = NSScreen.main else { return "\(percent)%" }
+    let scale = screen.backingScaleFactor
+    let width = Int((screen.frame.width * scale * Double(percent) / 100).rounded())
+    let height = Int((screen.frame.height * scale * Double(percent) / 100).rounded())
+    return LanguageManager.shared.tr("config.render_size_value", percent, width, height)
 }

@@ -40,6 +40,57 @@ public enum GraphicsBackend: String, Codable, CaseIterable, Sendable {
     public static var scopeNote: String { tr("backend.scope_note") }
 }
 
+/// The language Windows programs that are not Unicode are run in: Windows' "Language for
+/// non-Unicode programs". It picks the ANSI code page their text goes through (932 Shift-JIS,
+/// 936 GBK, 949 for Korean, 950 Big5) and the region formats; Wine's own interface keeps the
+/// Mac's language. Unicode programs, most games among them, show every language either way:
+/// the runtime has fonts for Chinese, Japanese and Korean whatever this says.
+public enum NonUnicodeLanguage: String, Codable, CaseIterable, Sendable {
+    /// What the Mac's language and region give (Wine's own choice).
+    case automatic
+    case english
+    case japanese
+    case chineseSimplified
+    case chineseTraditional
+    case korean
+
+    public var displayName: String {
+        switch self {
+        case .automatic: return tr("nonunicode.automatic")
+        case .english: return tr("nonunicode.english")
+        // Each language in its own name, as Windows and macOS list them.
+        case .japanese: return "日本語"
+        case .chineseSimplified: return "简体中文"
+        case .chineseTraditional: return "繁體中文"
+        case .korean: return "한국어"
+        }
+    }
+
+    /// The Mac locale Wine takes the code page from (`LC_CTYPE`); nil leaves Wine's own choice.
+    public var unixLocale: String? {
+        switch self {
+        case .automatic: return nil
+        case .english: return "en_US.UTF-8"
+        case .japanese: return "ja_JP.UTF-8"
+        case .chineseSimplified: return "zh_CN.UTF-8"
+        case .chineseTraditional: return "zh_TW.UTF-8"
+        case .korean: return "ko_KR.UTF-8"
+        }
+    }
+
+    /// The ANSI code page programs get with this choice; nil for automatic.
+    public var codePage: Int? {
+        switch self {
+        case .automatic: return nil
+        case .english: return 1252
+        case .japanese: return 932
+        case .chineseSimplified: return 936
+        case .chineseTraditional: return 950
+        case .korean: return 949
+        }
+    }
+}
+
 /// How Windows synchronisation objects (events, mutexes, semaphores) are implemented.
 /// How a program's full-screen window is presented on the Mac.
 public enum FullScreenMode: String, Codable, CaseIterable, Sendable {
@@ -196,6 +247,18 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// games that refuse to run in one ("cannot run under a Virtual Machine") refuse here too.
     /// On by default, by the user's decision (2026-11-15).
     public var hideHypervisor: Bool = true
+    /// Back a program's memory with a shared file of zeroes instead of anonymous memory
+    /// (runtime patch 0036, `FINEWINE_ZERO_PAGES`). macOS charges a program for every page it
+    /// reads, even one it never wrote; a game that reads through its own memory (anti-cheat
+    /// does) then pays for everything it has set aside and not used. With this on such reads
+    /// cost nothing; the first write to a page is about a microsecond slower. Experimental and
+    /// off by default: it changes what backs nearly all of a program's memory.
+    public var zeroPages: Bool = false
+    /// Have the x64 emulator keep its per-thread record of translated code in a compact form
+    /// (fex patch 0008, `FEX_COMPACTBLOCKRECORDS`). The usual record costs about 60 bytes for
+    /// each piece of translated code each thread has run, gigabytes in a large game with many
+    /// threads. Experimental and off by default until it has been measured with games.
+    public var compactBlockRecords: Bool = false
     /// Let games that offer NVIDIA DLSS use Apple's MetalFX instead: super resolution as
     /// MetalFX upscaling, frame generation as MetalFX frame interpolation. Direct3D 10 and 11
     /// games get it from DXMT; Direct3D 12 and Vulkan games from the runtime's MoltenVK. FSR
@@ -218,9 +281,31 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// Give windows that have no Mac title bar (launchers, games in a window) a Mac window's
     /// round corners.
     public var roundedWindows: Bool = true
-    /// Upscale a Direct3D 10 or 11 picture that is smaller than its window to the window's
-    /// display pixels with MetalFX, instead of leaving the stretch to the window server.
+    /// Upscale a picture that is smaller than its window to the window's display pixels with
+    /// MetalFX, instead of leaving the stretch to the window server: Direct3D 10 and 11
+    /// through DXMT, Vulkan and Direct3D 12 through MoltenVK. This is how upscaling starts;
+    /// it can be switched while a program runs (the program's View menu, FineWine's menu).
     public var metalFXUpscaling: Bool = true
+    /// Make programs see a smaller screen, `renderScale` percent of the real one in each
+    /// direction, and upscale what they draw with MetalFX. Only used while
+    /// `metalFXUpscaling` is off: the two are different ways to the same end, one following
+    /// the resolution a game is set to and one setting it from outside.
+    public var renderSizeEnabled: Bool = false
+    /// The render size in percent, 50 to 95.
+    public var renderScale: Int = 75
+    public static let renderScaleRange = 50...95
+    /// The render size as it is used: nil when it is not in effect.
+    public var effectiveRenderScale: Int? {
+        guard !metalFXUpscaling, renderSizeEnabled else { return nil }
+        return min(max(renderScale, Self.renderScaleRange.lowerBound), Self.renderScaleRange.upperBound)
+    }
+    /// Whether upscaling is on when a program starts.
+    public var upscalesAtStart: Bool { metalFXUpscaling || effectiveRenderScale != nil }
+    /// Draw programs' icons in the Dock (and their shortcut apps' icons) as Mac app icons: a
+    /// rounded square on Apple's icon grid. See `MacIconStyle`. On by default.
+    public var macStyleIcons: Bool = true
+    /// Windows' "Language for non-Unicode programs". See `NonUnicodeLanguage`.
+    public var nonUnicodeLanguage: NonUnicodeLanguage = .automatic
 
     /// The PCI ids reported when `reportNvidiaGPU` is on: NVIDIA, and its GeForce RTX 5080.
     public static let reportedGPUVendorID: UInt16 = 0x10DE
@@ -232,6 +317,12 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     public var macAppearance: Bool = true
     /// Wine debug channels (`WINEDEBUG`). `-all` is silent and fastest.
     public var debugChannels: String = "-all"
+    /// Have NVIDIA's Streamline, the layer games reach DLSS and frame generation through, write
+    /// its detailed log: each check it makes for a feature and which one fails. The switch is
+    /// Streamline's own (`SL_LOG_LEVEL` and friends), so it works in any game that ships it.
+    public var streamlineLog: Bool = false
+    /// The log's file name, at the top of the prefix's C: drive.
+    public static let streamlineLogName = "streamline.log"
 
     public init() {}
 
@@ -255,7 +346,10 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         rightOptionIsAlt = try c.decodeIfPresent(Bool.self, forKey: .rightOptionIsAlt) ?? d.rightOptionIsAlt
         metalHUD = try c.decodeIfPresent(Bool.self, forKey: .metalHUD) ?? d.metalHUD
         hideHypervisor = try c.decodeIfPresent(Bool.self, forKey: .hideHypervisor) ?? d.hideHypervisor
+        zeroPages = try c.decodeIfPresent(Bool.self, forKey: .zeroPages) ?? d.zeroPages
+        compactBlockRecords = try c.decodeIfPresent(Bool.self, forKey: .compactBlockRecords) ?? d.compactBlockRecords
         debugChannels = try c.decodeIfPresent(String.self, forKey: .debugChannels) ?? d.debugChannels
+        streamlineLog = try c.decodeIfPresent(Bool.self, forKey: .streamlineLog) ?? d.streamlineLog
         macAppearance = try c.decodeIfPresent(Bool.self, forKey: .macAppearance) ?? d.macAppearance
         dlssThroughMetalFX = try c.decodeIfPresent(Bool.self, forKey: .dlssThroughMetalFX) ?? d.dlssThroughMetalFX
         reportNvidiaGPU = try c.decodeIfPresent(Bool.self, forKey: .reportNvidiaGPU) ?? d.reportNvidiaGPU
@@ -263,7 +357,12 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         steamForHoYoverse = try c.decodeIfPresent(Bool.self, forKey: .steamForHoYoverse) ?? d.steamForHoYoverse
         roundedWindows = try c.decodeIfPresent(Bool.self, forKey: .roundedWindows) ?? d.roundedWindows
         metalFXUpscaling = try c.decodeIfPresent(Bool.self, forKey: .metalFXUpscaling) ?? d.metalFXUpscaling
+        renderSizeEnabled = try c.decodeIfPresent(Bool.self, forKey: .renderSizeEnabled) ?? d.renderSizeEnabled
+        renderScale = try c.decodeIfPresent(Int.self, forKey: .renderScale) ?? d.renderScale
         fullScreenMode = try c.decodeIfPresent(FullScreenMode.self, forKey: .fullScreenMode) ?? d.fullScreenMode
+        macStyleIcons = try c.decodeIfPresent(Bool.self, forKey: .macStyleIcons) ?? d.macStyleIcons
+        // An unknown value (from a newer FineWine) falls back to automatic.
+        nonUnicodeLanguage = (try? c.decodeIfPresent(NonUnicodeLanguage.self, forKey: .nonUnicodeLanguage)) ?? d.nonUnicodeLanguage
     }
 
     // MARK: Validation
@@ -352,6 +451,10 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
             edits.append(.delete(Self.explorerKey, "Desktop"))
         }
 
+        // The localized names of Windows' Chinese, Japanese and Korean fonts (宋体, ＭＳ ゴシック,
+        // 맑은 고딕, ...); the runtime's wine.inf maps the English ones. See CJKFonts.
+        edits += CJKFonts.registryEdits(localizedOnly: true)
+
         if macAppearance, let appearance {
             edits += MacStyle.registryEdits(for: appearance)
         } else if !macAppearance, previous?.macAppearance == true {
@@ -377,8 +480,23 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         out.append(("FINEWINE_METAL_HUD", metalHUD ? "1" : "0"))
         out.append(("FINEWINE_FULLSCREEN", fullScreenMode.rawValue))
         if !roundedWindows { out.append(("FINEWINE_ROUNDED_WINDOWS", "0")) }
-        if !metalFXUpscaling { out.append(("FINEWINE_METALFX_AUTO", "0")) }
+        // Upscaling starts on with "automatic" or with a render size; a render size also makes
+        // the program see a smaller screen (runtime patch 0040).
+        if let scale = effectiveRenderScale { out.append(("FINEWINE_RENDER_SCALE", String(scale))) }
+        else if !metalFXUpscaling { out.append(("FINEWINE_METALFX_AUTO", "0")) }
+        if !macStyleIcons { out.append(("FINEWINE_MAC_ICONS", "0")) }
         if hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
+        if zeroPages { out.append(("FINEWINE_ZERO_PAGES", "1")) }
+        if compactBlockRecords { out.append(("FEX_COMPACTBLOCKRECORDS", "1")) }
+        if streamlineLog {
+            out.append(("SL_LOG_LEVEL", "2"))       // 2: verbose
+            out.append(("SL_LOG_PATH", "C:\\"))
+            out.append(("SL_LOG_NAME", Self.streamlineLogName))
+        }
+        // Wine takes the ANSI code page from LC_CTYPE, and the interface language from
+        // LC_MESSAGES or LANG (or, with neither, the Mac's language), which stay as they are.
+        // LC_ALL would override LC_CTYPE, so the environment drops it (LaunchPlanner).
+        if let locale = nonUnicodeLanguage.unixLocale { out.append(("LC_CTYPE", locale)) }
         if dlssThroughMetalFX {
             // Lets nvngx.dll load for Direct3D 12 and Vulkan programs, whose DLSS calls it
             // turns into MetalFX work in MoltenVK.

@@ -227,3 +227,13 @@ final class NSISTests: XCTestCase {
         XCTAssertFalse(NSISArchive.isNSISInstaller(b))
     }
 }
+
+final class GameProfileInstallerTests: XCTestCase {
+    func testTheGryphlinkInstallerGetsTheEndfieldProfile() {
+        let profiles = GameProfile.builtIn
+        let url = URL(fileURLWithPath: "/Users/me/Downloads/GRYPHLINK_v1.6.0.1607_6_6_endfield.exe")
+        XCTAssertEqual(GameProfile.forInstaller(url, among: profiles)?.id, "arknights-endfield")
+        XCTAssertEqual(GameProfile.forInstaller(url, among: profiles)?.settings.windowsBuild, "26100")
+        XCTAssertNil(GameProfile.forInstaller(URL(fileURLWithPath: "/tmp/SomeGameSetup.exe"), among: profiles))
+    }
+}

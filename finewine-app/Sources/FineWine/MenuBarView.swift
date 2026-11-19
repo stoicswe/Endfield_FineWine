@@ -39,10 +39,28 @@ struct MenuBarView: View {
                 // handle below it. (Left to itself a scroll view in this panel takes almost no
                 // height at all, and the cards were cut off.)
                 ScrollView {
-                    GlassEffectContainer(spacing: 10) {
+                    FWGlassContainer(spacing: 10) {
                         VStack(spacing: 10) {
                             ForEach(model.prefixes) { prefix in
                                 MenuPrefixCard(prefix: prefix)
+                            }
+                            if model.showsDisconnectedPrefixes, !model.disconnectedPrefixes.isEmpty {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(l10n.tr("drive.not_connected_section")).font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                    ForEach(model.disconnectedPrefixes, id: \.prefix.id) { entry in
+                                        HStack(spacing: 8) {
+                                            Image(systemName: "externaldrive.badge.xmark").foregroundStyle(.tertiary)
+                                            Text(entry.prefix.name).lineLimit(1).foregroundStyle(.secondary)
+                                            Spacer()
+                                            Text(l10n.tr("drive.connect_to_use", entry.drive.name))
+                                                .font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                                        }
+                                        .help(l10n.tr("drive.not_connected_msg", entry.prefix.name, entry.drive.name))
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .glassCard(padding: 12)
                             }
                         }
                     }
@@ -107,10 +125,10 @@ struct MenuBarView: View {
             } label: {
                 Label(l10n.tr("menu.manage_prefixes"), systemImage: "square.grid.2x2")
             }
-            .buttonStyle(.glassProminent).tint(Look.wine)
+            .fwProminentButton().tint(Look.wine)
             Spacer()
             Button(l10n.tr("menu.donate")) { NSWorkspace.shared.open(Links.wineDonate) }
-                .buttonStyle(.glass)
+                .fwButton()
                 .help(l10n.tr("menu.donate_help"))
             Button {
                 openSettings()
@@ -118,14 +136,14 @@ struct MenuBarView: View {
             } label: {
                 Image(systemName: "gearshape")
             }
-            .buttonStyle(.glass)
+            .fwButton()
             .help(l10n.tr("menu.settings"))
             Button {
                 NSApp.terminate(nil)
             } label: {
                 Image(systemName: "power")
             }
-            .buttonStyle(.glass)
+            .fwButton()
             .help(l10n.tr("menu.quit_help"))
         }
     }
@@ -139,7 +157,11 @@ private struct MenuPrefixCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(prefix.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(prefix.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Label(model.placeName(prefix.place), systemImage: model.placeSymbol(prefix.place))
+                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
                 Spacer()
                 if let status = model.busy[prefix.id] {
                     Text(status).font(.caption).foregroundStyle(.secondary)
@@ -149,10 +171,21 @@ private struct MenuPrefixCard: View {
                         Button(l10n.tr("menu.force_shut_down"), role: .destructive) { Task { await model.forceShutDown(prefix) } }
                     }
                     .menuStyle(.button)
-                    .buttonStyle(.glass)
+                    .fwButton()
                     .controlSize(.small)
                     .fixedSize()
                     .help(l10n.tr("menu.shut_down_help"))
+                }
+                if model.busy[prefix.id] == nil, model.isRunning(prefix) {
+                    // MetalFX upscaling, switched while the prefix runs
+                    Button {
+                        model.toggleUpscaling(prefix)
+                    } label: {
+                        Image(systemName: model.isUpscalingOn(prefix) ? "sparkles.rectangle.stack.fill" : "sparkles.rectangle.stack")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(model.isUpscalingOn(prefix) ? Color.accentColor : Color.secondary)
+                    .help(model.isUpscalingOn(prefix) ? l10n.tr("menu.upscaling_on_help") : l10n.tr("menu.upscaling_off_help"))
                 }
                 Button {
                     model.show(prefixID: prefix.id, section: "configuration")

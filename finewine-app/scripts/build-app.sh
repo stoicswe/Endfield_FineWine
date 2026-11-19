@@ -41,6 +41,8 @@ log "Assembling $APP_NAME.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$EXE"
+# The real SDK in the binary, or macOS draws the app without Liquid Glass (see the script).
+"$HERE/../scripts/lib/stamp-sdk-version.sh" "$APP/Contents/MacOS/$EXE" 26.0
 # The app icon is the DARK appearance of the Icon Composer artwork in Resources/FW_Icon, on every
 # system appearance. Compiling the .icon document with actool would give an icon that follows
 # the system (light in light mode), so instead a plain .icns is made from the dark PNG exports

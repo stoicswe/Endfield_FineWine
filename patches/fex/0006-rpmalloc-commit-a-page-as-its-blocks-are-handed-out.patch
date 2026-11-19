@@ -1,0 +1,133 @@
+rpmalloc: commit a page as its blocks are handed out
+
+FEX's own allocations go through rpmalloc. Each thread has a heap that cuts 256 MB spans into
+pages by object size: 64 KB pages for objects up to 4 KB, 4 MB pages for objects up to 256 KB,
+64 MB pages for objects up to 8 MB. A page was committed whole the first time it was used, so
+one 300 KB vector committed 64 MB.
+
+Committed memory can be read, and on macOS a page that is only read still becomes real memory.
+A game that reads through its committed memory (anti-cheat does) paid for all of it: with the
+lookup tables and Wine's code map fixed, 6.5 GB of Arknights: Endfield's 15.4 GB was in these
+spans. In a test with 32 emulated threads the heaps had 570 MB committed and a few MB in use.
+
+rpmalloc hands out the blocks of a page in address order and reuses freed blocks before taking
+new ones, so the used part of a page is always a prefix. The page now records how many 64 KB
+pieces of it are committed (in spare bits of its flags word; the header layout is unchanged)
+and page_initialize_blocks, the slow path that takes a new block, extends the commit to cover
+the block it hands out. A page starts with one piece and goes back to one when it is
+decommitted and reused. Small pages are one piece and behave as before. A commit costs about
+0.5 us under Wine; allocation speed measures the same.
+
+Same test after this and patch 0007: heaps 70 MB committed.
+
+diff --git a/External/rpmalloc/rpmalloc/rpmalloc.c b/External/rpmalloc/rpmalloc/rpmalloc.c
+index a697ae9..021f12b 100644
+--- a/External/rpmalloc/rpmalloc/rpmalloc.c
++++ b/External/rpmalloc/rpmalloc/rpmalloc.c
+@@ -404,6 +404,8 @@ struct page_t {
+ 	uint32_t has_aligned_block : 1;
+ 	//! Fast combination flag for either huge, fully allocated or has aligned blocks
+ 	uint32_t generic_free : 1;
++	//! FineWine: number of 64 KB pieces committed from the start of the page (see page_commit_initial_size)
++	uint32_t commit_chunks : 12;
+ 	//! Local free list count
+ 	uint32_t local_free_count;
+ 	//! Local free list
+@@ -1071,13 +1073,48 @@ page_get_local_free_block(page_t* page) {
+ 	return block;
+ }
+ 
++// FineWine: a page is committed as its blocks are handed out, not all at once.
++//
++// rpmalloc committed a whole page the first time it was used: 4 MB for an object up to 256 KB,
++// 64 MB for one up to 8 MB. Committed memory can be read, and on macOS a page of memory that is
++// only read still becomes real memory. A game that reads through its committed memory (anti-cheat
++// does) then pays for every emulated thread's unused megabytes: 6.5 GB in Arknights: Endfield.
++//
++// Blocks are handed out in address order (block_initialized is the high-water mark) and freed
++// ones are reused before new ones, so the used part of a page is a prefix. commit_chunks counts
++// the 64 KB pieces committed from the page's start; page_initialize_blocks extends it. Small
++// pages are one piece and are unchanged. A commit costs about 0.5 us under Wine.
++#define PAGE_COMMIT_CHUNK_SHIFT 16
++#define PAGE_COMMIT_CHUNK ((size_t)1 << PAGE_COMMIT_CHUNK_SHIFT)
++
++static inline size_t
++page_commit_initial_size(size_t page_size) {
++	// With memory pages larger than a piece (huge pages) keep the original behaviour
++	return (global_config.page_size > PAGE_COMMIT_CHUNK) ? page_size : PAGE_COMMIT_CHUNK;
++}
++
++static inline void
++page_commit_blocks_until(page_t* page, size_t end) {
++	size_t committed = (size_t)page->commit_chunks << PAGE_COMMIT_CHUNK_SHIFT;
++	if (EXPECTED(end <= committed))
++		return;
++	size_t page_size = page_get_size(page);
++	end = (end + (PAGE_COMMIT_CHUNK - 1)) & ~(PAGE_COMMIT_CHUNK - 1);
++	if (end > page_size)
++		end = page_size;
++	global_memory_interface->memory_commit(pointer_offset(page, committed), end - committed);
++	page->commit_chunks = (uint32_t)(end >> PAGE_COMMIT_CHUNK_SHIFT);
++}
++
+ static inline void
+ page_decommit_memory_pages(page_t* page) {
+ 	if (page->is_decommitted)
+ 		return;
+ 	void* extra_page = pointer_offset(page, global_config.page_size);
+-	size_t extra_page_size = page_get_size(page) - global_config.page_size;
+-	global_memory_interface->memory_decommit(extra_page, extra_page_size);
++	size_t committed = (size_t)page->commit_chunks << PAGE_COMMIT_CHUNK_SHIFT;
++	if (committed > global_config.page_size)
++		global_memory_interface->memory_decommit(extra_page, committed - global_config.page_size);
++	page->commit_chunks = 0;
+ 	page->is_decommitted = 1;
+ }
+ 
+@@ -1086,8 +1123,10 @@ page_commit_memory_pages(page_t* page) {
+ 	if (!page->is_decommitted)
+ 		return;
+ 	void* extra_page = pointer_offset(page, global_config.page_size);
+-	size_t extra_page_size = page_get_size(page) - global_config.page_size;
+-	global_memory_interface->memory_commit(extra_page, extra_page_size);
++	size_t initial_size = page_commit_initial_size(page_get_size(page));
++	if (initial_size > global_config.page_size)
++		global_memory_interface->memory_commit(extra_page, initial_size - global_config.page_size);
++	page->commit_chunks = (uint32_t)(initial_size >> PAGE_COMMIT_CHUNK_SHIFT);
+ 	page->is_decommitted = 0;
+ #if ENABLE_DECOMMIT
+ #if !defined(__APPLE__)
+@@ -1234,6 +1273,10 @@ page_push_local_free_to_heap(page_t* page) {
+ static NOINLINE void*
+ page_initialize_blocks(page_t* page) {
+ 	rpmalloc_assert(page->block_initialized < page->block_count, "Block initialization internal failure");
++#if ENABLE_DECOMMIT
++	if (page->page_type != PAGE_SMALL)
++		page_commit_blocks_until(page, PAGE_HEADER_SIZE + ((size_t)page->block_size * ((size_t)page->block_initialized + 1)));
++#endif
+ 	block_t* block = page_block(page, page->block_initialized);
+ 	++page->block_initialized;
+ 	++page->block_used;
+@@ -1334,8 +1377,12 @@ span_allocate_page(span_t* span) {
+ 
+ #if ENABLE_DECOMMIT
+ 	// The first page is always committed on initial span map of memory
++	size_t initial_size = page_commit_initial_size(span->page_size);
+ 	if (span->page_initialized)
+-		global_memory_interface->memory_commit(page, span->page_size);
++		global_memory_interface->memory_commit(page, initial_size);
++	page->commit_chunks = (uint32_t)(initial_size >> PAGE_COMMIT_CHUNK_SHIFT);
++#else
++	page->commit_chunks = (uint32_t)(span->page_size >> PAGE_COMMIT_CHUNK_SHIFT);
+ #endif
+ 	++span->page_initialized;
+ 
+@@ -1587,7 +1634,7 @@ heap_get_span(heap_t* heap, page_type_t page_type) {
+ 			page_address_mask = LARGE_PAGE_MASK;
+ 		}
+ #if ENABLE_DECOMMIT
+-		global_memory_interface->memory_commit(span, page_size);
++		global_memory_interface->memory_commit(span, page_commit_initial_size(page_size));
+ #endif
+ 		span->heap = heap;
+ 		span->page_type = page_type;

@@ -1,0 +1,86 @@
+winemac: read the displays again on activation only when they changed
+
+Every time a Wine program becomes the active app, winemac sends it a "displays changed" event,
+in case a display change was missed while it was in the background (another Wine program that
+had changed the resolution may have died). win32u answers by reading every display again: all
+modes, EDID over IOKit, the GPUs, and it deletes and rewrites the display registry keys through
+the server. That runs on the thread that handles the program's messages. Measured in Genshin
+Impact: 48% of a 5-second sample, about 2.4 seconds, at each switch back to the game.
+
+winemac now keeps the displays as Wine was last told about them (ids, places, sizes, modes,
+refresh rates) and skips the event on activation when they are the same. A real change still
+arrives through the reconfiguration callback, which also runs in the background, and an
+activation after a change that was somehow missed still sends the event, because the state
+differs. FINEWINE_DISPLAY_RESYNC=always brings the old behaviour back.
+
+tests/runtime/idle-window.c with activate.swift: three activations read the displays once
+(the first), where they read them three times before.
+
+--- a/dlls/winemac.drv/cocoa_app.h
++++ b/dlls/winemac.drv/cocoa_app.h
+@@ -93,6 +93,7 @@
+     NSImage* applicationIcon;
+ 
+     BOOL beenActive;
++    NSString* finewineDisplayState; /* the displays as Wine was last told about them */
+ 
+     NSMutableSet* windowsBeingDragged;
+ }
+--- a/dlls/winemac.drv/cocoa_app.m
++++ b/dlls/winemac.drv/cocoa_app.m
+@@ -1221,10 +1221,55 @@
+         [self adjustWindowLevels];
+     }
+ 
++    /* FineWine: the displays, their places, sizes and modes, as one string to compare. */
++    - (NSString*) finewineCurrentDisplayState
++    {
++        CGDirectDisplayID displays[32];
++        uint32_t count = 0, i;
++        NSMutableString* state = [NSMutableString string];
++
++        if (CGGetOnlineDisplayList(sizeof(displays) / sizeof(displays[0]), displays, &count) != kCGErrorSuccess)
++            return nil;
++        for (i = 0; i < count; i++)
++        {
++            CGRect bounds = CGDisplayBounds(displays[i]);
++            CGDisplayModeRef mode = CGDisplayCopyDisplayMode(displays[i]);
++            [state appendFormat:@"%u:%d,%d,%d,%g,%g,%g,%g,%zu,%zu,%g,%u;", (unsigned int)displays[i],
++                   (int)CGDisplayIsActive(displays[i]), (int)CGDisplayIsMain(displays[i]),
++                   (int)CGDisplayMirrorsDisplay(displays[i]),
++                   bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height,
++                   mode ? CGDisplayModeGetPixelWidth(mode) : 0, mode ? CGDisplayModeGetPixelHeight(mode) : 0,
++                   mode ? CGDisplayModeGetRefreshRate(mode) : 0.0, mode ? (unsigned int)CGDisplayModeGetIOFlags(mode) : 0];
++            if (mode) CGDisplayModeRelease(mode);
++        }
++        return state;
++    }
++
+     - (void) sendDisplaysChanged:(BOOL)activating
+     {
+         macdrv_event* event;
+         WineEventQueue* queue;
++
++        /* FineWine: becoming active sends this so that Wine catches up with a display change it
++         * may have missed (see applicationDidBecomeActive:). Wine answers by reading every
++         * display again, all modes, EDID and GPU, and rewriting its registry keys, on the
++         * thread that handles the program's messages: 2.4 seconds measured in a game, at every
++         * switch back to it. When the displays are as Wine was last told, there is nothing to
++         * catch up with. FINEWINE_DISPLAY_RESYNC=always brings the old behaviour back. */
++        {
++            static int always = -1;
++            NSString* state = [self finewineCurrentDisplayState];
++            if (always < 0)
++            {
++                const char* env = getenv("FINEWINE_DISPLAY_RESYNC");
++                always = env && !strcmp(env, "always");
++            }
++            if (activating && !always && state && finewineDisplayState &&
++                [state isEqualToString:finewineDisplayState])
++                return;
++            [finewineDisplayState release];
++            finewineDisplayState = [state copy];
++        }
+ 
+         event = macdrv_create_event(DISPLAYS_CHANGED, nil);
+         event->displays_changed.activating = activating;

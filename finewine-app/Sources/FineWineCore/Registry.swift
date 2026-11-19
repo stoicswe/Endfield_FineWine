@@ -6,6 +6,8 @@ public struct RegistryEdit: Equatable, Sendable {
         case setString(String)
         case setDWord(UInt32)
         case setBinary([UInt8])
+        /// A REG_MULTI_SZ: a list of strings.
+        case setMultiString([String])
         case deleteValue
         case deleteKey
     }
@@ -30,6 +32,9 @@ public struct RegistryEdit: Equatable, Sendable {
     }
     public static func binary(_ key: String, _ name: String, _ value: [UInt8]) -> RegistryEdit {
         RegistryEdit(key: key, name: name, action: .setBinary(value))
+    }
+    public static func multiString(_ key: String, _ name: String, _ values: [String]) -> RegistryEdit {
+        RegistryEdit(key: key, name: name, action: .setMultiString(values))
     }
     public static func delete(_ key: String, _ name: String) -> RegistryEdit {
         RegistryEdit(key: key, name: name, action: .deleteValue)
@@ -64,6 +69,15 @@ public enum RegistryFile {
                 case .setDWord(let value): out += "\(name)=dword:\(String(format: "%08x", value))\r\n"
                 case .setBinary(let bytes):
                     out += "\(name)=hex:" + bytes.map { String(format: "%02x", $0) }.joined(separator: ",") + "\r\n"
+                case .setMultiString(let values):
+                    // hex(7): each string in UTF-16LE with its terminating zero, then one more zero
+                    var bytes: [UInt8] = []
+                    for value in values {
+                        for unit in value.utf16 { bytes += [UInt8(unit & 0xFF), UInt8(unit >> 8)] }
+                        bytes += [0, 0]
+                    }
+                    bytes += [0, 0]
+                    out += "\(name)=hex(7):" + bytes.map { String(format: "%02x", $0) }.joined(separator: ",") + "\r\n"
                 case .deleteValue: out += "\(name)=-\r\n"
                 case .deleteKey: break
                 }

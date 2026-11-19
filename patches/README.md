@@ -74,6 +74,23 @@ Original to this project. The two Rosetta fixes live in `dlls/ntdll/unix/signal_
     (`build-wine.sh` MODULES, `package.sh`, `apply-modules.sh`, `swap-into-crossover.sh`, and
     the patcher's payload) and why it is ad-hoc signed like `wineserver` (an exec'd Mach-O).
 
+- **`0013-winemac-the-dock-shows-a-program-s-largest-icon-drawn-as-a-mac-app-icon.patch`** —
+  `runtime/0030` done for CrossOver's older Mac driver. Every size of a program's icon reaches the
+  Dock (the bitmap sizes were read off a reused stack and lost). The program's own icon is read
+  once per process, not on every new window; that replaces CrossOver's Helldivers 2 hack. A
+  window's larger icon replaces it, but Wine's stand-in logo never does. Icons are drawn the way
+  FineWine draws them (every size up to 1024 pixels, a shape sized by its visible part, small
+  icons crisp) in place of CrossOver's mask, which stays as the fallback. `FINEWINE_MAC_ICONS=0`
+  turns the drawing off. Ships `winemac.so` and its Windows half `winemac.drv`. x64 only: the
+  ARM payload is built from upstream Wine, whose `winemac.drv` would not match CrossOver ARM's
+  own `winemac.so`. The runtime's Chinese, Japanese and Korean font work (`runtime/0029`) is
+  FineWine's only, by the user's decision.
+- **`0012-ntdll-use-pipe2-only-where-macos-has-it.patch`** — `pipe2()` exists from macOS 27
+  only, and the SDK declares it with no availability annotation, so modules built with the
+  macOS 27 SDK called it unconditionally and crashed on macOS 26 and older at the first pipe
+  (bottle creation failed at "'rundll32 win11Install crossover.inf' failed"). It is now a weak
+  reference used only when present, with Wine's `pipe()` fallback otherwise. See
+  `scripts/lib/macos-gated-apis.txt`.
 - **`0009-winemac-composite-the-alpha-of-blur-behind-windows.patch`** and
   **`0010-dwmapi-mark-blur-behind-windows-for-the-mac-driver.patch`** — remove the black
   margin around the Gryphline launcher. The launcher is a rounded Qt window inside a transparent
@@ -186,6 +203,73 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0009-vkd3d-let-nvngx-record-metalfx-work-in-a-command-list.patch` gives Direct3D 12 two
   private data GUIDs through which `nvngx.dll` gets a texture's VkImage and records DLSS work
   in a command list, to be carried out by MoltenVK as MetalFX.
+- `0034-ntdll-a-memory-log-for-a-running-program.patch`: `FINEWINE_MEMORY_TRACE=<folder>` makes
+  each process write `<program>-<pid>.log` there: every memory operation of 8 MB or more
+  (`FINEWINE_MEMORY_TRACE_MIN`) with its thread and likely callers, and totals with the footprint
+  every five seconds. FineWine's "Play with Memory Log" sets it. Checked by
+  `tests/runtime/memtrace.c`.
+- `0035-ntdll-commit-the-arm64ec-code-map-as-it-is-read-on-macos.patch`: Wine's map of which
+  pages hold ARM64EC code is 4 GB and was committed in full, read-only. On macOS a page that is
+  read becomes real memory, so a program that reads through its committed memory paid for all
+  of it (3.6 GB in Arknights: Endfield). The map now starts reserved and a page is committed
+  when it is first read. Tested by `tests/runtime/scan-memory.c` together with fex 0005. Threads that
+  fault on the same page at once all get through (`tests/runtime/code-map-race.c`; the first
+  version of this patch crashed there).
+- `0036-ntdll-zero-pages-for-macos-behind-a-switch.patch`: with `FINEWINE_ZERO_PAGES=1`,
+  memory from NtAllocateVirtualMemory and thread stacks is backed by private mappings of one
+  32 MB file of zeroes instead of anonymous memory, so reading memory that was never written
+  costs nothing, as on Linux. The first write to a page is about 1 µs slower. Off by default
+  until it has been run with games.
+- `0037-ntdll-a-switch-to-commit-the-arm64ec-code-map-whole.patch`: `FINEWINE_EAGER_CODE_MAP=1`
+  commits the map whole again, as before `0035`. Costs up to 4 GB; for finding a fault only.
+- `0038-win32u-report-hardware-gpu-scheduling.patch`: `D3DKMTQueryAdapterInfo` answers
+  `KMTQAITYPE_WDDM_2_7_CAPS` with hardware GPU scheduling on, which Streamline reads before
+  frame generation is offered.
+- `0039-winemac-a-stand-in-under-the-windows-file-name-so-discord-finds-the-game.patch`: Discord
+  finds a game by the file name of a running app that is not in a bundle and has a window. A
+  program here runs from a bundle of its own name, so the Mac driver starts
+  `finewine-presence` (`runtime-extras/presence-helper`) next to it under the Windows file
+  name: no Dock icon, one clear pixel of window, gone when the program ends.
+  `FINEWINE_GAME_PRESENCE=0` turns it off.
+- `0040-winemac-win32u-a-menu-switch-for-metalfx-upscaling-and-a-render-size.patch`: View >
+  MetalFX Upscaling (Control-Command-U) switches upscaling while a program runs.
+  `FINEWINE_RENDER_SCALE=<percent>` makes programs see a smaller screen through Wine's display
+  mode emulation, so games draw fewer pixels and MetalFX upscales; sizes are snapped to ones
+  Wine's 16-bit scaling fractions can hold.
+- `0033-winemac-read-the-displays-again-on-activation-only-when-they-changed.patch`: switching
+  to a Wine program made Wine read every display again (modes, EDID, GPUs, registry keys) on the
+  program's message thread, 2.4 seconds in a game. Now only when the displays differ from what
+  Wine was last told. `FINEWINE_DISPLAY_RESYNC=always` brings the old behaviour back. Checked by
+  `tests/runtime/idle-window.c` with `activate.swift` (`FINEWINE_TEST_ACTIVATE=1`).
+- `0032-winemac-a-program-s-bundle-carries-its-icon-for-game-mode.patch`: the program's bundle in
+  the prefix gets the icon as `AppIcon.icns`, which is what Game Mode's menu and notice show.
+- `0031-ntdll-jump-past-macos-mappings-when-looking-for-free-memory.patch`: the search for free
+  address space jumps past macOS's own mappings instead of stepping through them 64K at a time
+  (creating 300 x64 threads: 420 s to 0.2 s). Checked by `tests/runtime/threads.c`.
+- `0030-winemac-the-dock-shows-a-program-s-largest-icon-drawn-as-a-mac-app-icon.patch`: only one
+  picture of a program's icon ever reached the Dock (Wine read the icon list off the program's
+  stack after reusing it), 16 pixels as often as 256; now every size does. A window's icon
+  replaces the program's when it is larger: a whole group from whichever module it was loaded
+  from, or the icon itself if it was made at run time. Wine's stand-in logo for windows without
+  an icon never does. The icon is drawn on Apple's icon grid, the rounded square of a Mac app
+  icon: a square picture fills it, any other shape stands on a light plate.
+  `FINEWINE_MAC_ICONS=0` turns the drawing off. Checked by `tests/runtime/app-icon.c`.
+- `0029-win32u-dwrite-chinese-japanese-and-korean-text-with-the-mac-s-own-fonts.patch`: Chinese,
+  Japanese and Korean text drew as empty boxes in every font, through GDI and DirectWrite
+  (Chromium launchers), because Wine's font links and DirectWrite's fallback name Windows' and
+  Linux's CJK fonts. `wine.inf` now maps the Windows names ("MS Gothic", "Microsoft YaHei",
+  "PMingLiU", "Malgun Gothic", ...) to the Mac's own fonts (Hiragino, Songti, Heiti, Apple SD
+  Gothic Neo) under `HKCU\Software\Wine\Fonts\Replacements`, which both read. The links then
+  resolve, and are picked by the ANSI code page when MS Shell Dlg is set to a font they are not
+  keyed on. DirectWrite falls back to the Windows names too, and matches a region locale
+  ("zh-CN") to the mappings for its script ("zh-Hans"). Checked by `tests/runtime/cjk.c`.
+- `0028-ntdll-msv1_0-use-pipe2-only-where-macos-has-it.patch`: the same as
+  `x64/stage1-macos/0012` for this Wine, plus the two calls in `msv1_0`.
+- `0027-ntdll-arm64ec-stop-stack-walks-that-leave-the-real-frames.patch`: the source form of the
+  patcher's `ArmNtdllFix` for CrossOver ARM. `RtlWalkFrameChain` stops where there is no unwind
+  data (as the x86_64 version does), and `RtlIsEcCode` no longer reads past its bitmap for a
+  junk address. Without them Arknights: Endfield hung at its logo, its main thread walking the
+  stack for IL2CPP for good.
 - `0026-winemac-dwmapi-show-what-dxmt-draws-in-windows-that-also-paint-and-keep-their-transparency.patch`:
   two fixes for launcher windows drawn with Direct3D through DXMT. A window that was also
   painted the ordinary way (Qt fills its window once) had DXMT's view hidden for good and stayed
@@ -281,17 +365,70 @@ builds for the CrossOver payloads do not get these. Apache-2.0, like MoltenVK.
 - `0004-metalfx-as-a-command-and-reported-gpu-ids.patch` adds a command that records a MetalFX
   upscale or frame interpolation in a command buffer, which is what DLSS is mapped to for
   Direct3D 12 and Vulkan programs, and lets a prefix choose the GPU ids Vulkan reports.
+- `0005-pipeline-cache-header-carries-the-reported-gpu-ids.patch`: with another GPU reported,
+  the pipeline cache header still carried Apple's ids, so Unity (Endfield) dropped its cache and
+  stopped saving it. The header now carries the reported ids.
+- `0006-upscale-a-swapchain-smaller-than-its-window-with-metalfx.patch`: a swapchain smaller than
+  its layer is in display pixels (a lower resolution in a game, a render size, Retina mode off)
+  is drawn off screen and upscaled into the drawable with MetalFX's spatial scaler at present:
+  what `patches/dxmt/0004` does for Direct3D 11, for Vulkan and Direct3D 12. Same switches as
+  DXMT (`FINEWINE_METALFX_AUTO`, `finewine.metalfx.<process id>`, `FINEWINE_METALFX_SWAPCHAIN=0`).
 
 The patches apply as a series on `0001`. Details and limits are in
 [`docs/project-information/21-metal4-and-ray-tracing.md`](../docs/project-information/21-metal4-and-ray-tracing.md).
 
 ## `fex/` — the x64 emulator
 
-Applied by `scripts/build-fex.sh` to FEX at the commit pinned in that script.
+Applied by `scripts/build-fex.sh` to FEX at the commit pinned in `finewine-sources.lock`.
+FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`.
 
 - `0001-arm64ec-read-the-teb-from-thread-specific-data-on-macos.patch` replaces FEX's ten reads
-  of the TEB through x18 with the thread-specific data lookup the runtime uses. FEX's Windows
-  ARM64EC build is otherwise unchanged; it is installed in the runtime as `xtajit64.dll`.
+  of the TEB through x18 with the thread-specific data lookup the runtime uses.
+- `0002-windows-guard-the-call-ret-stack-with-whole-host-pages.patch`: the call-return stack's
+  guard pages are 64 KB, whole 16 KB Mac pages, instead of 4 KB.
+- `0003-cpuid-name-an-unknown-arm-cpu-as-the-host-does.patch`: x64 programs are told the Mac's
+  own name for its CPU ("Apple M3") instead of "Unknown ARM CPU" (macOS does not give programs
+  the CPU ID FEX names CPUs by). The source form of the patcher's `ArmEmulatorIdentity` brand
+  edit for CrossOver ARM. Its other part, the hypervisor bit, is FineWine's "Hide the hypervisor
+  flag" setting (`FEX_HIDEHYPERVISORBIT=1`), on by default.
+- `0004-jit-let-conditional-loops-be-suspended.patch`: a thread spinning in a loop that ends in a
+  conditional jump back can be suspended. FEX looked for suspend requests only at block starts
+  and unconditional jumps back, so SuspendThread + GetThreadContext on such a thread waited
+  forever. Garbage collectors stop threads this way; Genshin Impact froze on its warning screen.
+  Costs about 5% in a three-instruction loop, less in real ones. Tested by
+  `tests/runtime/suspend-spin.c`.
+- `0005-windows-commit-the-lookup-tables-a-piece-at-a-time-under-wine.patch`: each emulated
+  thread reserves 272 MB for its block lookup tables. Under Wine FEX committed all of it at the
+  first use; on Windows it commits 64 KB around each fault, and now does the same under Wine.
+  Committed memory can be read, and on macOS a page that is only read still becomes real memory.
+  Arknights: Endfield reads through its writable memory and grew to 40 GB in seven minutes.
+  Tested by `tests/runtime/scan-memory.c` (16 idle threads: about 5 GB before, 370 MB after).
+- `0006-rpmalloc-commit-a-page-as-its-blocks-are-handed-out.patch`: FEX's allocator committed
+  a whole page at first use, 4 MB for an object up to 256 KB and 64 MB for one up to 8 MB. It
+  hands blocks out in address order, so a page is now committed in 64 KB pieces as far as its
+  blocks have been handed out. 6.5 GB of Endfield's 15.4 GB was in these pages. The patch
+  reaches into the `External/rpmalloc` submodule; `git apply` in the FEX tree handles that.
+- `0007-windows-commit-call-return-stacks-and-compile-buffers-as-they-are-used.patch`: the
+  4 MB call-return stack and the 8 and 16 MB compile buffers of each thread are reserved and
+  committed by the fault handler 64 KB at a time (`FEXCore::Allocator::VirtualOvercommit`).
+  Only for memory that system calls never see. With 0006: 32 threads that ran 24,000 blocks
+  each and then had all their memory read went from 1655 MB to 265 MB; speed unchanged.
+- `0008-lookup-cache-a-compact-record-of-each-threads-cached-blocks.patch`: with
+  `FEX_COMPACTBLOCKRECORDS=1`, each thread's record of the blocks it has cached is a sorted
+  array of 32-bit offsets for each page of guest code instead of a hash set (about 60 bytes a
+  block). Off by default; the original record is untouched. In a 32-thread test FEX's heap
+  went from 103 MB to 56 MB. Tested either way by `tests/runtime/code-rewrite.c`.
+- `0009-lookup-cache-remove-the-overcommit-mark-before-freeing-the-tables.patch`: an exiting
+  thread freed its lookup tables and then removed their mark from the list of ranges that are
+  committed on a fault; a thread starting in between could get the same address and lose its
+  own mark, and then hung in exception handling. An upstream ordering bug.
+  `tests/runtime/thread-churn.c` hung every time before.
+- `0010-switches-to-turn-off-piecewise-commit-and-the-loop-suspend-check.patch`: for finding
+  a fault without another build. `FEX_EAGERCOMMIT=1` commits lookup tables, allocator pages,
+  call-return stacks and compile buffers whole again (undoes `0005`-`0007` at run time, and
+  their memory saving); `FEX_NOLOOPSUSPENDCHECK=1` leaves out the check of `0004` (Genshin
+  Impact then hangs again). `tests/runtime/reg-fault.c` checks that registers, flags and float
+  state survive the commit faults taken in translated code.
 
 ## `dxmt/` — Direct3D on Metal
 
@@ -308,5 +445,17 @@ Applied by `scripts/build-fex.sh` to FEX at the commit pinned in that script.
   buffers are smaller than its window is in display pixels (by 5% to 4x) is upscaled to the
   window's pixels with MetalFX's spatial scaler, instead of being stretched by the window
   server. `FINEWINE_METALFX_AUTO=0` turns it off.
+- `0005-nvapi-dxgi-what-streamline-asks-about-the-gpu-at-startup.patch`: adds
+  `NvAPI_GetLogicalGPUFromPhysicalGPU`, where NVIDIA's Streamline stopped at startup in Endfield
+  with the GPU reported as NVIDIA, and makes DXGI and NVAPI report Wine's adapter LUID so it
+  agrees with `D3DKMTEnumAdapters2` and Vulkan. Whether the game then offers DLSS is untested.
+- `0006-dxgi-register-nvngx-under-the-name-newer-ngx-sdks-read.patch`: the NGX SDK inside
+  Streamline 2.10 reads the folder of `nvngx.dll` from the value `NGXPath` (driver service key,
+  then the global key), not `FullPath`. Both are now written. Without it every NGX call came
+  back "not implemented" and Endfield offered no DLSS.
+- `0007-d3d11-winemetal-upscaling-follows-a-switch-that-can-be-thrown-while-running.patch`: the
+  Direct3D 11 upscaling of `0004` can be switched while a program runs. `FINEWINE_METALFX_AUTO=0`
+  only says it starts off; the notification state `finewine.metalfx.<process id>` (1 on, 2 off)
+  overrides it. `FINEWINE_METALFX_SWAPCHAIN=0` turns the mechanism off.
 - `build-arm64ec-finewine.txt` is the meson cross file `scripts/build-dxmt.sh` builds DXMT with.
   It is DXMT's own ARM64EC cross file plus one linker flag (see the comment in the file).

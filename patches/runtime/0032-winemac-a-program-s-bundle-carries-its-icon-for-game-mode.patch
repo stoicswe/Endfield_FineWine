@@ -1,0 +1,112 @@
+winemac: a program's bundle carries its icon, which is what Game Mode shows
+
+The Dock shows the icon a program gives it while it runs (0030), but macOS's own screens that
+show a running app without asking it, Game Mode's menu bar item and its notice among them,
+take the icon from the app's bundle on disk. The bundles programs are started from (0024) had
+none, so Game Mode showed a blank app icon next to the game's name.
+
+When a program started from a bundle of its own name gets its icon, the same picture is now
+written into that bundle as Contents/Resources/AppIcon.icns (every iconset size, 16 to 1024
+pixels; the icns writer keeps 64 and 1024 only when marked as @2x, 144 dpi), CFBundleIconFile
+names it in the bundle's Info.plist, and LaunchServices is told the bundle changed. It is
+written only when it differs from what is there. The loaders' own bundles are never touched.
+FINEWINE_BUNDLE_ICONS=0 turns it off.
+
+--- a/dlls/winemac.drv/cocoa_app.m
++++ b/dlls/winemac.drv/cocoa_app.m
+@@ -282,7 +282,87 @@
+     }
+     return [[styled representations] count] ? styled : icon;
+ }
++
++/* FineWine: macOS's own screens that show a running app without asking it, Game Mode's menu
++ * bar item and its notice among them, take the icon from the app's bundle on disk, not the one
++ * the app gives the Dock. A program started from a bundle of its own name (.finewine-apps in
++ * its prefix) gets its icon written there too: Contents/Resources/AppIcon.icns, named in the
++ * bundle's Info.plist, and LaunchServices is told the bundle changed. Written only when the
++ * icon differs from what is there. FINEWINE_BUNDLE_ICONS=0 turns this off. */
++static void finewine_store_bundle_icon(NSImage* icon)
++{
++    /* the sizes of an iconset: each point size at 72 dpi and twice the pixels at 144 (@2x);
++     * the icns writer keeps 64 and 1024 pixels only as @2x images */
++    static const struct { int px, dpi; } sides[] = { { 16, 72 }, { 32, 144 }, { 32, 72 }, { 64, 144 },
++        { 128, 72 }, { 256, 144 }, { 256, 72 }, { 512, 144 }, { 512, 72 }, { 1024, 144 } };
++    const char *value = getenv("FINEWINE_BUNDLE_ICONS");
++    NSString* bundle = [[NSBundle mainBundle] bundlePath];
++    NSString *contents, *icnsPath, *plistPath;
++    NSMutableDictionary* info;
++    NSMutableData* data;
++    CGImageDestinationRef destination;
++    unsigned i, added = 0;
++
++    if (!icon || (value && !strcmp(value, "0"))) return;
++    /* only the bundles made for programs, never the runtime's own loaders */
++    if ([bundle rangeOfString:@"/.finewine-apps/"].location == NSNotFound || ![bundle hasSuffix:@".app"]) return;
++    contents = [bundle stringByAppendingPathComponent:@"Contents"];
++    icnsPath = [contents stringByAppendingPathComponent:@"Resources/AppIcon.icns"];
++    plistPath = [contents stringByAppendingPathComponent:@"Info.plist"];
+ 
++    data = [NSMutableData data];
++    destination = CGImageDestinationCreateWithData((CFMutableDataRef)data, CFSTR("com.apple.icns"),
++                                                   sizeof(sides) / sizeof(sides[0]), NULL);
++    if (!destination) return;
++    for (i = 0; i < sizeof(sides) / sizeof(sides[0]); i++)
++    {
++        int px = sides[i].px;
++        NSBitmapImageRep* rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:px pixelsHigh:px
++                                                                     bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO
++                                                                    colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
++        NSDictionary* properties = @{ (NSString*)kCGImagePropertyDPIWidth: @(sides[i].dpi),
++                                      (NSString*)kCGImagePropertyDPIHeight: @(sides[i].dpi) };
++        NSGraphicsContext* context;
++        if (!rep) continue;
++        context = [NSGraphicsContext graphicsContextWithBitmapImageRep:rep];
++        [NSGraphicsContext saveGraphicsState];
++        [NSGraphicsContext setCurrentContext:context];
++        [context setImageInterpolation:NSImageInterpolationHigh];
++        [icon drawInRect:NSMakeRect(0, 0, px, px) fromRect:NSZeroRect operation:NSCompositingOperationCopy fraction:1];
++        [NSGraphicsContext restoreGraphicsState];
++        if ([rep CGImage])
++        {
++            CGImageDestinationAddImage(destination, [rep CGImage], (CFDictionaryRef)properties);
++            added++;
++        }
++        [rep release];
++    }
++    if (!added || !CGImageDestinationFinalize(destination) || ![data length])
++    {
++        CFRelease(destination);
++        return;
++    }
++    CFRelease(destination);
++
++    info = [NSMutableDictionary dictionaryWithContentsOfFile:plistPath];
++    if ([[NSData dataWithContentsOfFile:icnsPath] isEqualToData:data] &&
++        [[info objectForKey:@"CFBundleIconFile"] isEqual:@"AppIcon"])
++        return;
++
++    [[NSFileManager defaultManager] createDirectoryAtPath:[icnsPath stringByDeletingLastPathComponent]
++                              withIntermediateDirectories:YES attributes:nil error:NULL];
++    if (![data writeToFile:icnsPath atomically:YES]) return;
++    if (info && ![[info objectForKey:@"CFBundleIconFile"] isEqual:@"AppIcon"])
++    {
++        [info setObject:@"AppIcon" forKey:@"CFBundleIconFile"];
++        if (![info writeToFile:plistPath atomically:YES]) return;
++    }
++    /* a new modification date and a fresh registration, so cached icons of the bundle go */
++    [[NSFileManager defaultManager] setAttributes:@{ NSFileModificationDate: [NSDate date] }
++                                     ofItemAtPath:bundle error:NULL];
++    LSRegisterURL((CFURLRef)[NSURL fileURLWithPath:bundle isDirectory:YES], true);
++}
++
+ @implementation WineApplicationController
+ 
+     @synthesize keyboardType, lastFlagsChanged;
+@@ -1505,6 +1585,7 @@
+         }
+ 
+         self.applicationIcon = nsimage;
++        finewine_store_bundle_icon(nsimage);
+         /* FineWine: FINEWINE_APP_ICON_DUMP=<file> writes the Dock icon's largest picture there as
+          * a PNG each time it changes, for checking it (scripts/test-finewine-runtime.sh). */
+         if (nsimage && getenv("FINEWINE_APP_ICON_DUMP"))

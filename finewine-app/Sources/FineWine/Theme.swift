@@ -46,15 +46,46 @@ struct Backdrop: View {
     }
 }
 
+// MARK: Liquid Glass
+//
+// FineWine runs on macOS 26 and later (the user's decision, 2026-11-17), so it uses Liquid Glass
+// throughout. Every use of glass goes through these few helpers, so its look is set in one place.
+
 extension View {
     /// A glass card around the view.
     func glassCard(padding: CGFloat = 16, tint: Color? = nil, interactive: Bool = false) -> some View {
-        var glass = Glass.regular
-        if let tint { glass = glass.tint(tint.opacity(0.22)) }
-        if interactive { glass = glass.interactive() }
-        return self
+        self
             .padding(padding)
-            .glassEffect(glass, in: .rect(cornerRadius: Look.cardRadius))
+            .fwGlass(tint: tint.map { $0.opacity(0.22) }, interactive: interactive,
+                     in: RoundedRectangle(cornerRadius: Look.cardRadius, style: .continuous))
+    }
+
+    /// Liquid Glass in `shape`.
+    func fwGlass<S: Shape>(tint: Color? = nil, interactive: Bool = false, in shape: S) -> some View {
+        self.glassEffect(Self.fwGlassKind(tint: tint, interactive: interactive), in: shape)
+    }
+
+    private static func fwGlassKind(tint: Color?, interactive: Bool) -> Glass {
+        var glass = Glass.regular
+        if let tint { glass = glass.tint(tint) }
+        if interactive { glass = glass.interactive() }
+        return glass
+    }
+
+    /// A glass button.
+    func fwButton() -> some View { self.buttonStyle(.glass) }
+
+    /// A prominent glass button.
+    func fwProminentButton() -> some View { self.buttonStyle(.glassProminent) }
+}
+
+/// Groups glass shapes so they blend into each other.
+struct FWGlassContainer<Content: View>: View {
+    var spacing: CGFloat
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        GlassEffectContainer(spacing: spacing) { content() }
     }
 }
 
@@ -117,7 +148,7 @@ struct Pill: View {
         .foregroundStyle(tint)
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .glassEffect(.regular.tint(tint.opacity(0.18)), in: .capsule)
+        .fwGlass(tint: tint.opacity(0.18), in: Capsule())
     }
 }
 
@@ -136,7 +167,7 @@ struct ProgramIcon: View {
                 .font(.system(size: size * 0.5, weight: .medium))
                 .foregroundStyle(Look.accent)
                 .frame(width: size, height: size)
-                .glassEffect(.regular.tint(Look.wine.opacity(0.2)), in: .rect(cornerRadius: size * 0.28))
+                .fwGlass(tint: Look.wine.opacity(0.2), in: RoundedRectangle(cornerRadius: size * 0.28, style: .continuous))
         }
     }
 }
@@ -154,7 +185,7 @@ struct EmptyState<Actions: View>: View {
                 .font(.system(size: 34, weight: .medium))
                 .foregroundStyle(Look.accent)
                 .frame(width: 76, height: 76)
-                .glassEffect(.regular.tint(Look.wine.opacity(0.2)), in: .circle)
+                .fwGlass(tint: Look.wine.opacity(0.2), in: Circle())
             Text(title).font(.title2.weight(.semibold))
             Text(message)
                 .foregroundStyle(.secondary)

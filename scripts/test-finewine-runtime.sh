@@ -6,6 +6,11 @@
 #   2. runs a Windows console program and returns its output
 #   3. lets a program generate code and run it (tests/runtime/jit.c)
 #   4. runs x64 programs through FEX (tests/runtime/x64-hello.c, x64-stress.c), if FEX is installed
+#   4a. creates 300 x64 threads that stay alive, quickly (tests/runtime/threads.c)
+#   4b. suspends an x64 thread spinning in a tight loop and reads its registers
+#      (tests/runtime/suspend-spin.c)
+#   4c. writes a memory log when asked: large allocations with their caller, and totals
+#      (tests/runtime/memtrace.c)
 #   5. creates a Vulkan device and renders with Direct3D 12, both through MoltenVK, from ARM64 and
 #      x64, with and without DXMT selected (tests/runtime/vulkan-device.c, d3d12-clear.c)
 #   5a. builds acceleration structures (in command buffers and on the host), compacts, serializes
@@ -20,6 +25,11 @@
 #   5b. renders with Direct3D 11 through DXMT, from ARM64 and from x64 (tests/runtime/d3d11-clear.c),
 #      if DXMT is installed
 #   6. repairs TEB accesses made through x18 (tests/runtime/arm64-x18.c)
+#   6a. draws Chinese, Japanese and Korean text, and uses each language's code page when asked
+#      (tests/runtime/cjk.c)
+#   6b. gives the Dock a program's largest icon, drawn as a Mac app icon (tests/runtime/app-icon.c)
+#   6c. with FINEWINE_TEST_ACTIVATE=1 (it switches apps three times): switching to a program does
+#      not make Wine read the displays again when they have not changed (tests/runtime/idle-window.c)
 #   7. boots a second prefix with MSync on
 # Wine writes .update-timestamp as soon as a prefix is set up; the registry files only appear
 # when its server exits, so they are not a usable marker. No windows or dialogs are shown. Exit status is 0 only if every check passes.
@@ -100,6 +110,108 @@ else
       *) fail "decommitted memory kept its contents (ARM64: '$one', x64: '$two')" ;; esac
   else
     fail "could not build tests/runtime/decommit.c"; tail -n 3 "$WORK/decommit-build.log"
+  fi
+  # Each x64 thread gets an emulator stack above 4 GB, past macOS's own mappings. Finding room
+  # for it stepped over those 64K at a time: 300 threads took 420 seconds, with all other memory
+  # calls of the program waiting (a game's loading screen). Now well under a second.
+  if "$MINGW" -O1 -o "$WORK/threads.exe" "$REPO/tests/runtime/threads.c" >"$WORK/threads-build.log" 2>&1; then
+    out="$("$RT/bin/wine" "$WORK/threads.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$out" in "threads: ok "*) pass "x64: 300 threads alive at once start quickly (${out#threads: ok } ms)" ;;
+      *) fail "creating many x64 threads is slow or fails: $out" ;; esac
+  else
+    fail "could not build tests/runtime/threads.c"; tail -n 3 "$WORK/threads-build.log"
+  fi
+  # A garbage collector suspends every thread and reads its registers. FEX looked for a suspend
+  # request only at block starts and unconditional jumps back, so a thread spinning in a loop that
+  # ends in a conditional jump could never be suspended and the collector waited forever
+  # (Genshin Impact on its warning screen). patches/fex/0004.
+  if "$MINGW" -O1 -o "$WORK/suspend-spin.exe" "$REPO/tests/runtime/suspend-spin.c" >"$WORK/suspend-spin-build.log" 2>&1; then
+    out="$("$RT/bin/wine" "$WORK/suspend-spin.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$out" in "suspend-spin: ok "*) pass "x64: a thread spinning in a tight loop can be suspended and its registers read" ;;
+      *) fail "suspending a spinning x64 thread hangs or fails: $out" ;; esac
+  else
+    fail "could not build tests/runtime/suspend-spin.c"; tail -n 3 "$WORK/suspend-spin-build.log"
+  fi
+  # A program that reads through its own memory (anti-cheat does) must not turn FEX's lookup
+  # tables (272 MB a thread) or Wine's ARM64EC code map (4 GB) into real memory; Arknights:
+  # Endfield reached 40 GB. Both are now committed as they are used. patches/fex/0005, runtime 0035.
+  if "$MINGW" -O1 -o "$WORK/scan-memory.exe" "$REPO/tests/runtime/scan-memory.c" >"$WORK/scan-memory-build.log" 2>&1; then
+    mkdir -p "$WORK/scan-memory"
+    out="$(FINEWINE_MEMORY_TRACE="$WORK/scan-memory" "$RT/bin/wine" "$WORK/scan-memory.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    mb="$(cat "$WORK/scan-memory"/scan-memory-*.log 2>/dev/null | sed -n 's/.*totals footprint=\([0-9]*\).*/\1/p' | tail -n 1)"
+    case "$out" in "scan-memory: ok "*)
+      if [ -n "$mb" ] && [ "$mb" -lt 1000 ]; then pass "x64: reading through all committed memory with 16 threads alive costs ${mb} MB"
+      else fail "x64: reading through all committed memory grew the program to ${mb:-?} MB"; fi ;;
+      *) fail "the memory scan test failed: $out" ;; esac
+  else
+    fail "could not build tests/runtime/scan-memory.c"; tail -n 3 "$WORK/scan-memory-build.log"
+  fi
+  # Wine's ARM64EC code map is committed a page at a time as it is read (runtime patch 0035).
+  # Threads that read the same new page at once must all get through: the first version failed
+  # every thread but the first with an access violation.
+  if "$MINGW" -O1 -o "$WORK/code-map-race.exe" "$REPO/tests/runtime/code-map-race.c" >"$WORK/code-map-race-build.log" 2>&1; then
+    out="$("$RT/bin/wine" "$WORK/code-map-race.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$out" in "code-map-race: ok "*) pass "x64: 16 threads jumping into new code at the same moment all run it" ;;
+      *) fail "threads entering new code together crash or hang: $out" ;; esac
+  else
+    fail "could not build tests/runtime/code-map-race.c"; tail -n 3 "$WORK/code-map-race-build.log"
+  fi
+  # Threads starting while others exit: an exiting thread freed its lookup tables before taking
+  # them off FEX's list of ranges to commit on a fault, and could take a new thread's tables off
+  # it instead; that thread then hung in exception handling. patches/fex/0009. The program is
+  # given 60 seconds (it needs about one).
+  if "$MINGW" -O1 -o "$WORK/thread-churn.exe" "$REPO/tests/runtime/thread-churn.c" >"$WORK/thread-churn-build.log" 2>&1; then
+    ( "$RT/bin/wine" "$WORK/thread-churn.exe" </dev/null >"$WORK/thread-churn.out" 2>/dev/null ) & churn=$!
+    n=0; while kill -0 "$churn" 2>/dev/null && [ "$n" -lt 120 ]; do sleep 0.5; n=$((n+1)); done
+    if kill -0 "$churn" 2>/dev/null; then
+      pkill -f "$WORK/thread-churn.exe" 2>/dev/null; wait "$churn" 2>/dev/null
+      fail "x64: threads starting while others exit hang"
+    else
+      out="$(tr -d '\r' <"$WORK/thread-churn.out" | tail -n 1)"
+      case "$out" in "thread-churn: ok "*) pass "x64: ${out#thread-churn: ok } short threads start while others exit" ;;
+        *) fail "short x64 threads: $out" ;; esac
+    fi
+  else
+    fail "could not build tests/runtime/thread-churn.c"; tail -n 3 "$WORK/thread-churn-build.log"
+  fi
+  # Code that is rewritten, protected and rewritten, or freed and replaced must never run in its
+  # old form on any thread, with FEX's usual record of cached blocks and with the compact one
+  # (FEX_COMPACTBLOCKRECORDS=1, patches/fex/0008).
+  if "$MINGW" -O1 -o "$WORK/code-rewrite.exe" "$REPO/tests/runtime/code-rewrite.c" >"$WORK/code-rewrite-build.log" 2>&1; then
+    out="$(FEX_COMPACTBLOCKRECORDS=0 "$RT/bin/wine" "$WORK/code-rewrite.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    out2="$(FEX_COMPACTBLOCKRECORDS=1 "$RT/bin/wine" "$WORK/code-rewrite.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$out|$out2" in "code-rewrite: ok "*"|code-rewrite: ok "*) pass "x64: rewritten and replaced code never runs in its old form on 8 threads (usual and compact block records)" ;;
+      *) fail "x64 code rewriting: usual records: $out; compact records: $out2" ;; esac
+  else
+    fail "could not build tests/runtime/code-rewrite.c"; tail -n 3 "$WORK/code-rewrite-build.log"
+  fi
+  # The emulator commits its own memory in the fault handler, also while translated code runs.
+  # Registers, vector registers, flags, the x87 stack and MXCSR must come back unchanged from
+  # such a fault: 192 threads each call 2048 fresh functions with all of them loaded.
+  if "$MINGW" -O1 -o "$WORK/reg-fault.exe" "$REPO/tests/runtime/reg-fault.c" >"$WORK/reg-fault-build.log" 2>&1; then
+    out="$("$RT/bin/wine" "$WORK/reg-fault.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$out" in "reg-fault: ok "*) pass "x64: registers, flags and float state survive the emulator's commit faults" ;;
+      *) fail "x64 state across commit faults: $out" ;; esac
+  else
+    fail "could not build tests/runtime/reg-fault.c"; tail -n 3 "$WORK/reg-fault-build.log"
+  fi
+  # FINEWINE_MEMORY_TRACE=<folder> makes each program log its large memory operations, with the
+  # modules that asked for them, and totals with its footprint every five seconds (patch 0034).
+  if "$MINGW" -O1 -o "$WORK/memtrace.exe" "$REPO/tests/runtime/memtrace.c" >"$WORK/memtrace-build.log" 2>&1; then
+    mkdir -p "$WORK/memtrace"
+    out="$(FINEWINE_MEMORY_TRACE="$WORK/memtrace" "$RT/bin/wine" "$WORK/memtrace.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    mlog="$(ls "$WORK/memtrace"/memtrace-*.log 2>/dev/null | head -n 1)"
+    missing=""
+    for want in 'reserve+commit .*size=32.00 .*callers: .*memtrace.exe' 'reset .*size=32.00' 'decommit .*size=32.00' \
+                'release .*size=32.00' 'map .*size=16.00' 'unmap .*size=16.00' 'totals footprint=[1-9].* decommit-kept=[0-9]'; do
+      [ -n "$mlog" ] && [ "$(grep -c -e "$want" "$mlog")" -ge 1 ] || missing="$missing [$want]"
+    done
+    quiet="$("$RT/bin/wine" "$WORK/memtrace.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    if [ "$out" = "memtrace: ok" ] && [ "$quiet" = "memtrace: ok" ] && [ -z "$missing" ]; then
+      pass "memory log: large allocations with their caller, resets, decommits, mappings and totals with the footprint"
+    else fail "memory log is missing lines:$missing (program said '$out')"; fi
+  else
+    fail "could not build tests/runtime/memtrace.c"; tail -n 3 "$WORK/memtrace-build.log"
   fi
   # 32-bit programs cannot run here (no memory below 4 GB). An installer that starts the 32-bit
   # setup program of a runtime Wine has built in must see it succeed; any other 32-bit program
@@ -562,10 +674,170 @@ else
   fi
   unset WINEDLLPATH
 fi
+
+# Chinese, Japanese and Korean text (tests/runtime/cjk.c): each East Asian code page converts,
+# the ANSI code page follows the locale a prefix is started with (FineWine's "Language for
+# non-Unicode programs" sets LC_CTYPE), every font programs ask for draws all three scripts
+# through GDI, also with FineWine's Mac dialog font, and DirectWrite's fallback finds a font for
+# each in each locale.
+if "$REPO/build/llvm-mingw/bin/aarch64-w64-mingw32-clang" -O1 -mconsole -municode -o "$WORK/cjk.exe" "$REPO/tests/runtime/cjk.c" \
+     -lgdi32 -ldwrite -luuid >"$WORK/cjk-build.log" 2>&1; then
+  cjk(){ "$RT/bin/wineserver" -k 2>/dev/null; env -u LANG -u LC_ALL "$@" "$RT/bin/wine" "$WORK/cjk.exe" ${CJK_CP:-0} </dev/null 2>/dev/null | tr -d '\r'; }
+  out="$(cjk)"
+  case "$out" in *"cjk: all checks passed"*) pass "Chinese, Japanese and Korean: code pages convert, every font draws all three (GDI), DirectWrite falls back to fonts that have them" ;;
+    *) fail "Chinese, Japanese and Korean text:"; echo "$out" | grep -E "^FAIL" | head -n 5 ;; esac
+  bad=""
+  for pair in ja_JP:932 zh_CN:936 zh_TW:950 ko_KR:949; do
+    out="$(CJK_CP="${pair#*:}" cjk LC_CTYPE="${pair%:*}.UTF-8")"
+    case "$out" in *"cjk: all checks passed"*) ;; *) bad="$bad ${pair%:*}" ;; esac
+  done
+  [ -z "$bad" ] && pass "with each East Asian language for non-Unicode programs, the ANSI code page is that language's (932, 936, 950, 949) and text still draws" \
+    || fail "language for non-Unicode programs:$bad"
+  for name in "MS Shell Dlg" "MS Shell Dlg 2" "Tahoma"; do
+    "$RT/bin/wine" reg add 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\FontSubstitutes' /v "$name" /d "Helvetica Neue" /f >/dev/null 2>&1
+  done
+  out="$(cjk)"
+  case "$out" in *"cjk: all checks passed"*) pass "the same with FineWine's Mac dialog font (Helvetica Neue for MS Shell Dlg and Tahoma)" ;;
+    *) fail "Chinese, Japanese and Korean text with the Mac dialog font:"; echo "$out" | grep -E "^FAIL" | head -n 5 ;; esac
+else
+  fail "could not build tests/runtime/cjk.c"; tail -n 3 "$WORK/cjk-build.log"
+fi
+
+# The Dock icon (tests/runtime/app-icon.c, icons from tests/runtime/make-icons.py): every size of
+# a program's own icon reaches the Dock, a window's larger icon replaces a small one (from a file,
+# and from another module's group), Wine's stand-in logo never does, and the icon is drawn as a
+# Mac app icon (1024 pixels) unless FINEWINE_MAC_ICONS=0. Each case shows a window for 2 seconds.
+ICONS="$WORK/icons"
+MINGWA="$REPO/build/llvm-mingw/bin/aarch64-w64-mingw32-clang"
+if python3 -I "$REPO/tests/runtime/make-icons.py" "$ICONS" >"$WORK/icon-build.log" 2>&1 \
+   && ( for k in round tiny; do printf '1 ICON "%s/%s.ico"\n' "$ICONS" "$k" > "$ICONS/$k.rc" \
+        && "$REPO/build/llvm-mingw/bin/aarch64-w64-mingw32-windres" "$ICONS/$k.rc" -O coff -o "$ICONS/$k.res" \
+        && "$MINGWA" -O1 -mwindows -o "$ICONS/icon-$k.exe" "$REPO/tests/runtime/app-icon.c" "$ICONS/$k.res" || exit 1; done ) >>"$WORK/icon-build.log" 2>&1; then
+  dock(){ local out="$1"; shift; rm -f "${out:?}"; FINEWINE_APP_ICON_DUMP="$out" WINEDEBUG=+macdrv,+image "$RT/bin/wine" "$@" </dev/null 2>&1 | tr -d '\r'; }
+  width(){ [ -f "$1" ] && sips -g pixelWidth "$1" 2>/dev/null | awk '/pixelWidth/{print $2}'; }
+  log1="$(dock "$ICONS/round.png" "$ICONS/icon-round.exe" own)"
+  case "$log1" in *"offered 4 images, largest 256 pixels"*) [ "$(width "$ICONS/round.png")" = 1024 ] \
+      && pass "the Dock gets every size of a program's icon (4 of 4, up to 256 pixels), drawn as a 1024-pixel Mac app icon" \
+      || fail "Dock icon not drawn as a Mac app icon (width $(width "$ICONS/round.png"))" ;;
+    *) fail "the Dock did not get every size of the program's icon:"; echo "$log1" | grep -E "offered|entry" | head -n 5 ;; esac
+  # Game Mode's menu and notice take the icon from the bundle on disk, not from the Dock.
+  bundle="$(find "$WINEPREFIX/.finewine-apps" -maxdepth 2 -name 'icon-round*.app' 2>/dev/null | head -n 1)"
+  if [ -n "$bundle" ] && [ "$(plutil -extract CFBundleIconFile raw "$bundle/Contents/Info.plist" 2>/dev/null)" = AppIcon ] \
+     && sips -g pixelWidth "$bundle/Contents/Resources/AppIcon.icns" 2>/dev/null | grep -q 'pixelWidth: 1024'; then
+    pass "the program's bundle carries its icon too (AppIcon.icns, 1024 pixels), which is what Game Mode shows"
+  else fail "no icon in the program's bundle (${bundle:-no bundle found})"; fi
+  log2="$(dock "$ICONS/tiny.png" "$ICONS/icon-tiny.exe" own)"
+  case "$log2" in *"Dock icon now 32 pixels"*) case "$log2" in *"Dock icon now 256"*) fail "Wine's stand-in icon replaced a program's own" ;;
+      *) pass "a window without an icon does not put Wine's logo in the Dock in place of the program's own" ;; esac ;;
+    *) fail "a 32-pixel program got no Dock icon" ;; esac
+  log3="$(dock "$ICONS/file.png" "$ICONS/icon-tiny.exe" file "Z:$ICONS/round.ico")"
+  log4="$(dock "$ICONS/module.png" "$ICONS/icon-tiny.exe" module "Z:$ICONS/icon-round.exe")"
+  case "$log3|$log4" in *"Dock icon now 256 pixels"*"|"*"Dock icon now 256 pixels"*)
+      pass "a window's 256-pixel icon replaces a program's 32-pixel one: loaded from a file, and from another module's group" ;;
+    *) fail "a window's larger icon did not reach the Dock (file: $(echo "$log3" | grep -c 'now 256'), module: $(echo "$log4" | grep -c 'now 256'))" ;; esac
+  FINEWINE_MAC_ICONS=0 dock "$ICONS/plain.png" "$ICONS/icon-round.exe" own >/dev/null
+  [ "$(width "$ICONS/plain.png")" = 256 ] && pass "FINEWINE_MAC_ICONS=0 leaves the icon as it is" \
+    || fail "FINEWINE_MAC_ICONS=0 still changed the icon (width $(width "$ICONS/plain.png"))"
+else
+  fail "could not build the Dock icon test programs"; tail -n 3 "$WORK/icon-build.log"
+fi
 "$RT/bin/wineserver" -k 2>/dev/null
 
 # MSync announces itself only once per user session, so the check is that the prefix boots
 # with it switched on; a broken MSync hangs or aborts here.
+# Switching to a Wine program made Wine read every display again (modes, EDID, GPUs, registry) on
+# the program's message thread: 2.4 seconds in a game at each switch back to it. It now does so
+# only when the displays changed (patch 0033). The check switches apps, so it runs only when asked.
+if [ "${FINEWINE_TEST_ACTIVATE:-0}" = 1 ] && [ -x "$MINGW" ] && "$MINGW" -O1 -o "$WORK/idle-window.exe" "$REPO/tests/runtime/idle-window.c" -luser32 -lgdi32 >"$WORK/idle-build.log" 2>&1; then
+  WINEDEBUG=trace+display "$RT/bin/wine" "$WORK/idle-window.exe" 9 >"$WORK/idle.out" 2>"$WORK/idle.err" </dev/null &
+  for _ in $(seq 1 60); do grep -c ready "$WORK/idle.out" >/dev/null 2>&1 && break; sleep 0.25; done
+  sleep 1; idle_pid="$(pgrep -f 'idle-window.exe' | head -n 1)"
+  swift "$REPO/tests/runtime/activate.swift" "$idle_pid" 3 >/dev/null 2>&1
+  sleep 1; reads="$(grep -c 'GPU count' "$WORK/idle.err")"; wait
+  if [ "$reads" -le 1 ]; then pass "switching to a program three times read the displays $reads time(s), not three"
+  else fail "switching to a program three times read the displays $reads times"; fi
+else
+  echo "  - display reads on switching to a program not checked: it switches apps (FINEWINE_TEST_ACTIVATE=1 to run it)"
+fi
+
+# Discord finds a game by the file name of a running app that is not in a bundle and has a
+# window. A program runs from a bundle of its own name, so the Mac driver starts a small
+# program next to it under the Windows file name (patch 0039, runtime-extras/presence-helper):
+# it must be there with the program's folder and file name while the program shows a window,
+# and gone when the program ends.
+if [ -x "$RT/lib/wine/aarch64-unix/finewine-presence" ] && [ -x "$MINGW" ] \
+   && "$MINGW" -O1 -o "$WORK/presence-game.exe" "$REPO/tests/runtime/idle-window.c" -luser32 -lgdi32 >"$WORK/presence-build.log" 2>&1; then
+  mkdir -p "$WINEPREFIX/drive_c/Presence Test"
+  cp "$WORK/presence-game.exe" "$WINEPREFIX/drive_c/Presence Test/presence-game.exe"
+  "$RT/bin/wine" 'C:\Presence Test\presence-game.exe' 4 </dev/null >/dev/null 2>&1 &
+  presence_pid=$!; seen=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+    case "$(ps -axww -o command)" in *"/.finewine-apps/presence/Presence Test/presence-game.exe "*) seen=1; break ;; esac
+    kill -0 "$presence_pid" 2>/dev/null || break
+    perl -e 'select(undef, undef, undef, 0.1)'
+  done
+  wait "$presence_pid" 2>/dev/null
+  # The program's process can take a few seconds to finish after its launcher has returned.
+  left=1
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+    case "$(ps -axww -o command)" in *"/.finewine-apps/presence/Presence Test/presence-game.exe "*) ;; *) left=0; break ;; esac
+    perl -e 'select(undef, undef, undef, 0.5)'
+  done
+  if [ "$seen" = 1 ] && [ "$left" = 0 ]; then pass "a program has a stand-in under its Windows file name while it runs (for Discord)"
+  else fail "presence stand-in: seen=$seen still-there=$left"; ps -axww -o pid,ppid,etime,command | grep -E "presence|Presence" | grep -v grep | cut -c1-260; fi
+else
+  echo "  - presence stand-in not checked: no finewine-presence in this runtime, or no llvm-mingw"
+fi
+
+# A Vulkan swap chain smaller than its window in display pixels is upscaled by MetalFX in
+# MoltenVK (patches/moltenvk/0006), the switch for it can be thrown while the program runs,
+# and a render size makes programs see a smaller screen (runtime patch 0040). The test
+# prefix has Wine's Retina mode off, so on a display with two pixels to the point the
+# program's 480x300 swap chain is half its window. A small window appears for a few seconds.
+UPVKH="$REPO/build/moltenvk-finewine-src/Package/Release/MoltenVK/include"
+if [ ! -x "$MINGW" ] || [ ! -f "$UPVKH/vulkan/vulkan_core.h" ]; then
+  echo "  - Vulkan upscaling not checked: no llvm-mingw, or no Vulkan headers from the MoltenVK build"
+elif ! "$MINGW" -O1 -I"$UPVKH" -o "$WORK/vulkan-upscale.exe" "$REPO/tests/runtime/vulkan-upscale.c" -luser32 -lgdi32 >"$WORK/upscale-build.log" 2>&1; then
+  fail "could not build tests/runtime/vulkan-upscale.c"; tail -n 3 "$WORK/upscale-build.log"
+else
+  up_run(){ # log seconds [env...] -> runs the program, its output and MoltenVK's log in the file
+    local log="$1" secs="$2"; shift 2
+    env FINEWINE_GAME_PRESENCE=0 "$@" "$RT/bin/wine" "$WORK/vulkan-upscale.exe" "$secs" >"$log" 2>&1 </dev/null
+  }
+  up_run "$WORK/up-on.log" 2
+  up_run "$WORK/up-off.log" 2 FINEWINE_METALFX_AUTO=0
+  # started switched off, switched on from outside as the FineWine app does it
+  up_run "$WORK/up-live.log" 6 FINEWINE_METALFX_AUTO=0 &
+  up_pid=$!; live_pid=""
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if grep -aq 'vulkan-upscale: ready' "$WORK/up-live.log" 2>/dev/null; then live_pid="$(pgrep -f 'vulkan-upscale.exe 6' | tail -n 1)"; break; fi
+    perl -e 'select(undef, undef, undef, 0.25)'
+  done
+  [ -n "$live_pid" ] && for p in $(pgrep -f 'vulkan-upscale.exe 6'); do notifyutil -s "finewine.metalfx.$p" 1 >/dev/null 2>&1; done
+  wait "$up_pid" 2>/dev/null
+  base="$(tr -d '\r' <"$WORK/up-on.log" | sed -n 's/.*vulkan-upscale: ok .* screen \([0-9]*\)x\([0-9]*\).*/\1 \2/p')"
+  # a render size: the display's modes are set up when Wine's server starts
+  "$RT/bin/wineserver" -k 2>/dev/null; "$RT/bin/wineserver" -w 2>/dev/null
+  up_run "$WORK/up-size.log" 2 FINEWINE_RENDER_SCALE=75
+  "$RT/bin/wineserver" -k 2>/dev/null; "$RT/bin/wineserver" -w 2>/dev/null
+  sized="$(tr -d '\r' <"$WORK/up-size.log" | sed -n 's/.*vulkan-upscale: ok .* screen \([0-9]*\)x\([0-9]*\).*/\1 \2/p')"
+  bad=""
+  if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] && system_profiler SPDisplaysDataType 2>/dev/null | grep -q Retina; then
+    grep -aq "MetalFX upscales the swapchain's 480 x 300 picture to 960 x 600" "$WORK/up-on.log" || bad="$bad not-upscaled"
+    grep -aq "MetalFX upscales" "$WORK/up-off.log" && bad="$bad upscaled-when-off"
+    grep -aq "upscaling of the swapchain switched on" "$WORK/up-live.log" || bad="$bad not-switched-live"
+  fi
+  for f in on off live size; do grep -aq 'vulkan-upscale: ok' "$WORK/up-$f.log" || bad="$bad program($f)"; done
+  # 75% of the screen in each direction, to within a few pixels of rounding
+  if [ -n "$base" ] && [ -n "$sized" ]; then
+    set -- $base $sized
+    [ $(( $3 * 100 - $1 * 75 )) -gt -1700 ] && [ $(( $3 * 100 - $1 * 75 )) -lt 1700 ] \
+      && [ $(( $4 * 100 - $2 * 75 )) -gt -1700 ] && [ $(( $4 * 100 - $2 * 75 )) -lt 1700 ] || bad="$bad render-size($sized of $base)"
+  else bad="$bad render-size(no sizes)"; fi
+  if [ -z "$bad" ]; then pass "a Vulkan picture smaller than its window is upscaled with MetalFX, switched while running, and a render size shrinks the screen programs see ($sized of $base)"
+  else fail "Vulkan upscaling:$bad"; grep -ah "FineWine\|vulkan-upscale" "$WORK"/up-*.log | tail -n 8; fi
+fi
+
 export WINEPREFIX="$WORK/pfx2" WINEMSYNC=1 WINEDEBUG=-all
 if "$RT/bin/wine" wineboot --init </dev/null >"$WORK/msync.log" 2>&1 && [ -f "$WINEPREFIX/.update-timestamp" ] \
    && [ "$("$RT/bin/wine" cmd /c echo msync-ok </dev/null 2>/dev/null | tr -d '\r')" = "msync-ok" ]; then

@@ -19,13 +19,36 @@ final class AppModel: ObservableObject {
     let service: PrefixService
 
     @Published var prefixes: [Prefix] = []
+    /// Every drive FineWine keeps prefixes on, plugged in or not.
+    @Published var drives: [PrefixDrive] = []
+    /// The UUIDs of the drives among them that are plugged in now.
+    @Published var connectedDrives: Set<String> = []
     @Published var runtimes: [WineRuntime] = []
     @Published var profiles: [GameProfile] = []
     @Published var selection: UUID?
     /// Live process ids started from FineWine, per prefix.
     @Published var running: [UUID: Set<Int32>] = [:]
+    /// The prefixes that have processes right now, however they were started: a launcher
+    /// FineWine started ends once it has started the game, and programs are also started from
+    /// their Mac apps or were running before FineWine was opened. Looked up every few seconds.
+    @Published var alive: Set<UUID> = []
+    /// MetalFX upscaling as it was switched from FineWine's menu while a prefix runs; a
+    /// prefix that is not here goes by its settings. Forgotten when the prefix stops.
+    @Published var liveUpscaling: [UUID: Bool] = [:]
+    /// The space each prefix takes on its drive, in bytes, once it has been measured. Walking
+    /// a prefix with a large game in it takes a few seconds, so it is done in the background,
+    /// one prefix at a time, and again only after a while.
+    @Published var prefixSizes: [UUID: Int64] = [:]
+    private var sizesMeasuredAt: [UUID: Date] = [:]
+    private var sizeMeasuringUnderWay = false
+    private var aliveTimer: Timer?
+    private var aliveLookupUnderWay = false
     /// What a prefix is busy with ("Setting up…"), shown in place of its controls.
     @Published var busy: [UUID: String] = [:]
+    /// Copies under way (a move, snapshot or restore), by prefix, so they can be cancelled.
+    @Published var copies: [UUID: CopyProgress] = [:]
+    /// Every snapshot on this Mac and on the drives plugged in, newest first.
+    @Published var snapshots: [PrefixSnapshot] = []
     @Published var alert: AppAlert?
     @Published var isCreatingPrefix = false
     /// The prefix being made for a file opened from Finder, shown while it is set up.
@@ -53,6 +76,96 @@ final class AppModel: ObservableObject {
         self.service = service
         try? service.paths.ensureDirectories()
         reload()
+        watchDrives()
+    }
+
+    // MARK: Drives
+
+    /// Reloads when drives are plugged in, ejected or renamed. A drive FineWine has used comes
+    /// back with its prefixes ready to run, and says so.
+    private func watchDrives() {
+        let center = NSWorkspace.shared.notificationCenter
+        center.addObserver(forName: NSWorkspace.didMountNotification, object: nil, queue: .main) { note in
+            let root = note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL
+            Task { @MainActor in AppModel.shared.driveMounted(at: root) }
+        }
+        for name in [NSWorkspace.didUnmountNotification, NSWorkspace.didRenameVolumeNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                Task { @MainActor in AppModel.shared.reload() }
+            }
+        }
+    }
+
+    private func driveMounted(at root: URL?) {
+        let before = Set(prefixes.map(\.id))
+        reload()
+        let arrived = prefixes.filter { !before.contains($0.id) }
+        guard !arrived.isEmpty else { return }
+        let drive = arrived.first.map { placeName($0.place) } ?? root?.lastPathComponent ?? ""
+        let names = arrived.map(\.name).joined(separator: ", ")
+        if let token = StatusSplash.shared.show(title: tr("drive.connected_title", drive), message: tr("drive.connected_msg", names)) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { StatusSplash.shared.hide(token) }
+        }
+    }
+
+    /// Show prefixes on drives that are not plugged in (greyed out, saying which drive to
+    /// connect), or leave them out until the drive is back.
+    static let showDisconnectedKey = "ShowPrefixesOnDisconnectedDrives"
+    var showsDisconnectedPrefixes: Bool {
+        get { UserDefaults.standard.object(forKey: Self.showDisconnectedKey) as? Bool ?? true }
+        set {
+            objectWillChange.send()
+            UserDefaults.standard.set(newValue, forKey: Self.showDisconnectedKey)
+        }
+    }
+
+    /// Prefixes on drives that are not plugged in, as FineWine last saw them.
+    var disconnectedPrefixes: [(drive: PrefixDrive, prefix: KnownPrefix)] {
+        drives.filter { !connectedDrives.contains($0.uuid) }
+            .flatMap { drive in drive.prefixes.map { (drive, $0) } }
+            .sorted { $0.prefix.name.localizedStandardCompare($1.prefix.name) == .orderedAscending }
+    }
+
+    /// "This Mac", or the drive's name.
+    func placeName(_ place: PrefixPlace) -> String {
+        switch place {
+        case .thisMac: return tr("drive.this_mac")
+        case .drive(let uuid): return drives.first { $0.uuid == uuid }?.name ?? tr("drive.unknown")
+        }
+    }
+
+    func placeSymbol(_ place: PrefixPlace) -> String {
+        if case .drive = place { return "externaldrive" }
+        return "desktopcomputer"
+    }
+
+    /// Where new prefixes go, as the user set it (the default drive may be unplugged).
+    var preferredPlace: PrefixPlace { service.prefixes.drives.preferredPlace }
+
+    /// Drives a prefix could be put on now, each with the reason it can't, if it can't.
+    func candidateVolumes() -> [(volume: VolumeInfo, problem: String?)] { service.prefixes.drives.candidateVolumes() }
+
+    /// Gets a drive ready for prefixes (`FineWine/Prefixes` on it) and remembers it.
+    func useDrive(_ volume: VolumeInfo) -> PrefixPlace? {
+        do {
+            let place = try service.prefixes.drives.use(volume)
+            reload()
+            return place
+        } catch {
+            show(error, title: tr("drive.err_title"))
+            return nil
+        }
+    }
+
+    func setDefaultPlace(_ place: PrefixPlace) {
+        do { try service.prefixes.drives.setDefault(place) } catch { show(error, title: tr("drive.err_title")) }
+        objectWillChange.send()
+    }
+
+    /// Forgets a drive. Its prefixes stay on it, and come back if it is plugged in again.
+    func forgetDrive(_ uuid: String) {
+        do { try service.prefixes.drives.forget(uuid) } catch { show(error, title: tr("drive.err_title")) }
+        reload()
     }
 
     /// The Mac's current look: light or dark, and the accent colour.
@@ -77,11 +190,30 @@ final class AppModel: ObservableObject {
     // MARK: State
 
     func reload() {
+        defer { watchRunningPrefixes(); measurePrefixSizes() }
+        service.prefixes.refreshDrives()
         prefixes = service.prefixes.list()
+        drives = service.prefixes.drives.drives
+        connectedDrives = Set(drives.map(\.uuid).filter { service.prefixes.drives.mountedVolume($0) != nil })
         runtimes = service.runtimes.list()
         profiles = service.profiles.list()
+        snapshots = service.prefixes.snapshots()
         if selection == nil || !prefixes.contains(where: { $0.id == selection }) {
             selection = prefixes.first?.id
+        }
+        repairShortcutIcons()
+    }
+
+    /// Shortcut apps made before 2026-11-17 have icons macOS draws as noise at small sizes
+    /// (`ICNS.hasMisreadSlots`). Each is made again, once, with an icon it reads correctly.
+    private func repairShortcutIcons() {
+        for prefix in prefixes {
+            for program in prefix.metadata.programs {
+                guard let path = program.shortcutPath else { continue }
+                let icon = URL(fileURLWithPath: path).appendingPathComponent("Contents/Resources/AppIcon.icns")
+                guard ICNS.hasMisreadSlots(at: icon), let current = self.prefix(prefix.id) else { continue }
+                createShortcut(for: program.id, in: current)
+            }
         }
     }
 
@@ -90,7 +222,93 @@ final class AppModel: ObservableObject {
     func prefix(_ id: UUID?) -> Prefix? { prefixes.first { $0.id == id } }
     func runtime(for prefix: Prefix) -> WineRuntime? { runtimes.first { $0.id == prefix.metadata.runtimeID } }
     func profile(for prefix: Prefix) -> GameProfile? { profiles.first { $0.id == prefix.metadata.profileID } }
-    func isRunning(_ prefix: Prefix) -> Bool { !(running[prefix.id] ?? []).isEmpty }
+    func isRunning(_ prefix: Prefix) -> Bool { !(running[prefix.id] ?? []).isEmpty || alive.contains(prefix.id) }
+
+    /// Whether MetalFX upscaling is on in a prefix's running programs, as far as FineWine
+    /// knows: what its menu last switched it to, else how the prefix starts programs. (A
+    /// program's own View menu can switch it too; that is not followed here.)
+    func isUpscalingOn(_ prefix: Prefix) -> Bool {
+        liveUpscaling[prefix.id] ?? prefix.metadata.settings.upscalesAtStart
+    }
+
+    /// Switches MetalFX upscaling in everything the prefix is running, without restarting it.
+    func toggleUpscaling(_ prefix: Prefix) {
+        let on = !isUpscalingOn(prefix)
+        liveUpscaling[prefix.id] = on
+        let service = UncheckedBox(service)
+        Task.detached(priority: .userInitiated) {
+            LiveUpscaling.set(on, processIDs: service.value.findProcesses(prefix.directory))
+        }
+    }
+
+    /// A prefix's size as text ("12.4 GB"), nil until it has been measured.
+    func sizeText(for prefix: Prefix) -> String? {
+        prefixSizes[prefix.id].map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+    }
+
+    /// Measures the prefixes that have not been measured in the last `maxAge` seconds (all of
+    /// them with 0). Links are not followed: a prefix's z: drive points at the whole Mac.
+    func measurePrefixSizes(maxAge: TimeInterval = 300) {
+        guard !sizeMeasuringUnderWay else { return }
+        let now = Date()
+        let due = prefixes.filter { prefix in
+            guard let last = sizesMeasuredAt[prefix.id] else { return true }
+            return now.timeIntervalSince(last) >= maxAge
+        }
+        for id in prefixSizes.keys where !prefixes.contains(where: { $0.id == id }) {
+            prefixSizes[id] = nil
+            sizesMeasuredAt[id] = nil
+        }
+        guard !due.isEmpty else { return }
+        sizeMeasuringUnderWay = true
+        Task { @MainActor in
+            for prefix in due {
+                let folder = prefix.directory
+                let bytes = await Task.detached(priority: .utility) { FolderCopy.measure(folder).allocated }.value
+                // a prefix that was deleted or unplugged meanwhile measures as nothing
+                if FileManager.default.fileExists(atPath: folder.path) { prefixSizes[prefix.id] = bytes }
+                sizesMeasuredAt[prefix.id] = Date()
+            }
+            sizeMeasuringUnderWay = false
+        }
+    }
+
+    /// Starts looking, every few seconds, for which prefixes have processes.
+    func watchRunningPrefixes() {
+        guard aliveTimer == nil else { return }
+        let timer = Timer(timeInterval: 4, repeats: true) { _ in
+            Task { @MainActor in AppModel.shared.refreshAlive() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        aliveTimer = timer
+        refreshAlive()
+    }
+
+    /// Looks once for which prefixes have processes. The looking runs `lsof` and `ps`, so it
+    /// is done off the main thread, and never twice at the same time.
+    func refreshAlive() {
+        guard !aliveLookupUnderWay else { return }
+        aliveLookupUnderWay = true
+        let all = prefixes
+        let service = UncheckedBox(service)
+        Task { @MainActor in
+            let switched = liveUpscaling
+            let found = await Task.detached(priority: .utility) { () -> Set<UUID> in
+                var found: Set<UUID> = []
+                for prefix in all {
+                    let pids = service.value.findProcesses(prefix.directory)
+                    guard !pids.isEmpty else { continue }
+                    found.insert(prefix.id)
+                    // programs started since the switch was thrown are told as well
+                    if let on = switched[prefix.id] { LiveUpscaling.set(on, processIDs: pids) }
+                }
+                return found
+            }.value
+            aliveLookupUnderWay = false
+            if found != alive { alive = found }
+            for id in liveUpscaling.keys where !found.contains(id) { liveUpscaling[id] = nil }
+        }
+    }
     var runningCount: Int { running.values.reduce(0) { $0 + $1.count } }
 
     private func replace(_ prefix: Prefix) {
@@ -126,14 +344,15 @@ final class AppModel: ObservableObject {
 
     // MARK: Prefixes
 
-    func createPrefix(name: String, runtime: WineRuntime, profile: GameProfile?) async -> Bool {
+    func createPrefix(name: String, runtime: WineRuntime, profile: GameProfile?, place: PrefixPlace? = nil) async -> Bool {
+        let place = place ?? service.prefixes.drives.defaultPlace
         isCreatingPrefix = true
         defer { isCreatingPrefix = false }
         let appearance = currentAppearance
         let token = StatusSplash.shared.show(title: tr("splash.setting_up", name), message: tr("splash.creating_prefix"))
         defer { StatusSplash.shared.hide(token) }
         let created = await work(on: nil, "", failure: tr("dialog.err_prefix_create")) {
-            try $0.createPrefix(name: name, runtime: runtime, profile: profile, appearance: appearance) { stage in
+            try $0.createPrefix(name: name, runtime: runtime, profile: profile, place: place, appearance: appearance) { stage in
                 Task { @MainActor in StatusSplash.shared.update(token, message: stage) }
             }
         }
@@ -178,6 +397,8 @@ final class AppModel: ObservableObject {
             try $0.deletePrefix(prefix)
         }
         running[prefix.id] = nil
+        alive.remove(prefix.id)
+        refreshAlive()
         reload()
     }
 
@@ -186,6 +407,8 @@ final class AppModel: ObservableObject {
             try $0.stopAll(in: prefix)
         }
         running[prefix.id] = nil
+        alive.remove(prefix.id)
+        refreshAlive()
     }
 
     /// Asks every program in the prefix to close, as shutting Windows down does.
@@ -194,6 +417,8 @@ final class AppModel: ObservableObject {
             try $0.shutDown(prefix)
         }
         running[prefix.id] = nil
+        alive.remove(prefix.id)
+        refreshAlive()
     }
 
     /// Ends everything in the prefix at once, frozen programs included.
@@ -202,6 +427,8 @@ final class AppModel: ObservableObject {
             try $0.forceShutDown(prefix)
         }
         running[prefix.id] = nil
+        alive.remove(prefix.id)
+        refreshAlive()
     }
 
     // MARK: Discord
@@ -220,8 +447,18 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// The id of the Discord application the activity is filed under.
+    /// FineWine's own Discord application (its name and icon are what Discord shows).
+    static let builtInDiscordApplicationID = "1572416361274015815"
+
+    /// The id of the Discord application the activity is filed under: the user's own if they
+    /// entered one in Settings, else FineWine's.
     var discordApplicationID: String {
+        let custom = customDiscordApplicationID
+        return custom.isEmpty ? Self.builtInDiscordApplicationID : custom
+    }
+
+    /// An application id the user entered instead of FineWine's; empty for FineWine's.
+    var customDiscordApplicationID: String {
         get { UserDefaults.standard.string(forKey: Self.discordApplicationKey) ?? "" }
         set {
             objectWillChange.send()
@@ -430,14 +667,14 @@ final class AppModel: ObservableObject {
         return StatusSplash.shared.showLaunch(title: tr("splash.starting_program", name), icon: icon, updatingPrefix: updating)
     }
 
-    func launch(_ program: Program, in prefix: Prefix) {
+    func launch(_ program: Program, in prefix: Prefix, memoryTrace: Bool = false) {
         let box = PIDBox()
         let prefixID = prefix.id
         // The icon of the program's shortcut app, when it has one: that is the program's own.
         let icon = program.shortcutPath.flatMap { FileManager.default.fileExists(atPath: $0) ? NSWorkspace.shared.icon(forFile: $0) : nil }
         let status = startingStatus(program.name, icon: icon, in: prefix)
         do {
-            let pid = try service.launch(programID: program.id, in: prefix, onExit: exitHandler(prefixID: prefix.id, pidBox: box) {
+            let pid = try service.launch(programID: program.id, in: prefix, memoryTrace: memoryTrace, onExit: exitHandler(prefixID: prefix.id, pidBox: box) {
                 StatusSplash.shared.hide(status)
                 AppModel.shared.adoptNewPrograms(in: prefixID)
             })
@@ -557,6 +794,13 @@ final class AppModel: ObservableObject {
         switch link {
         case .launch(let prefixID, let programID):
             guard let prefix = prefix(prefixID), let program = prefix.program(id: programID) else {
+                // A prefix on a drive that is unplugged: say which drive to connect.
+                if let away = disconnectedPrefixes.first(where: { $0.prefix.id == prefixID }) {
+                    alert = AppAlert(title: tr("drive.not_connected_title", away.drive.name),
+                                     message: tr("drive.not_connected_msg", away.prefix.name, away.drive.name))
+                    openMainWindow()
+                    return
+                }
                 alert = AppAlert(title: tr("dialog.dead_shortcut_title"),
                                  message: tr("dialog.dead_shortcut_msg"))
                 openMainWindow()
@@ -691,7 +935,10 @@ final class AppModel: ObservableObject {
         pendingPrefixNames.append(name)
         Task { @MainActor in
             settingUpPrefixName = name
-            let created = await createPrefix(name: name, runtime: runtime, profile: nil)
+            // A game this app has a profile for (the GRYPHLINK installer: Arknights: Endfield)
+            // gets that profile's settings.
+            let created = await createPrefix(name: name, runtime: runtime,
+                                             profile: GameProfile.forInstaller(url, among: profiles))
             pendingPrefixNames.removeAll { $0 == name }
             settingUpPrefixName = pendingPrefixNames.first
             guard created, let prefix = prefixes.first(where: { $0.name == name }) else {

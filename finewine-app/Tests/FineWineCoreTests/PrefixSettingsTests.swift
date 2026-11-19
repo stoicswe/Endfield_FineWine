@@ -1,4 +1,5 @@
 import XCTest
+import notify
 @testable import FineWineCore
 
 final class PrefixSettingsTests: XCTestCase {
@@ -174,6 +175,20 @@ final class PrefixSettingsTests: XCTestCase {
         // The hypervisor flag is hidden unless the prefix says otherwise.
         var shown = PrefixSettings(); shown.hideHypervisor = false
         XCTAssertFalse(shown.environmentVariables().contains { $0.name == "FEX_HIDEHYPERVISORBIT" })
+        // Zero pages are an experiment: off unless the prefix turns them on, and off for a
+        // prefix saved before the setting existed.
+        XCTAssertFalse(PrefixSettings().zeroPages)
+        var zero = PrefixSettings(); zero.zeroPages = true
+        XCTAssertEqual(zero.environmentVariables().first { $0.name == "FINEWINE_ZERO_PAGES" }?.value, "1")
+        XCTAssertFalse(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).zeroPages)
+        XCTAssertTrue(try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(zero)).zeroPages)
+        // The emulator's compact records: the same rules.
+        XCTAssertFalse(PrefixSettings().compactBlockRecords)
+        var compact = PrefixSettings(); compact.compactBlockRecords = true
+        XCTAssertEqual(compact.environmentVariables().first { $0.name == "FEX_COMPACTBLOCKRECORDS" }?.value, "1")
+        XCTAssertFalse(compact.environmentVariables().contains { $0.name == "FINEWINE_ZERO_PAGES" })
+        XCTAssertFalse(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).compactBlockRecords)
+        XCTAssertTrue(try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(compact)).compactBlockRecords)
 
         settings.metalHUD = true
         settings.hideHypervisor = true
@@ -185,6 +200,69 @@ final class PrefixSettingsTests: XCTestCase {
                              "FINEWINE_METAL_HUD": "1", "FINEWINE_FULLSCREEN": "space",
                              "FEX_HIDEHYPERVISORBIT": "1", "FINEWINE_DLSS": "1", "DXMT_ENABLE_NVEXT": "1",
                              "DXMT_CONFIG": "dxgi.customVendorId=106b", "MY_FLAG": "1"])
+    }
+
+    func testStreamlineLogSetsStreamlinesOwnVariables() throws {
+        var settings = PrefixSettings()
+        XCTAssertNil(Dictionary(uniqueKeysWithValues: settings.environmentVariables().map { ($0.name, $0.value) })["SL_LOG_LEVEL"])
+        settings.streamlineLog = true
+        let env = Dictionary(uniqueKeysWithValues: settings.environmentVariables().map { ($0.name, $0.value) })
+        XCTAssertEqual(env["SL_LOG_LEVEL"], "2")
+        XCTAssertEqual(env["SL_LOG_PATH"], #"C:\"#)
+        XCTAssertEqual(env["SL_LOG_NAME"], "streamline.log")
+        XCTAssertTrue(try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(settings)).streamlineLog)
+    }
+
+    func testUpscalingStartsAutomaticOffOrWithARenderSize() throws {
+        func env(_ settings: PrefixSettings) -> [String: String] {
+            Dictionary(uniqueKeysWithValues: settings.environmentVariables().map { ($0.name, $0.value) })
+        }
+        var settings = PrefixSettings()
+        // automatic: nothing is said, upscaling starts on, the screen is the real one
+        XCTAssertNil(env(settings)["FINEWINE_METALFX_AUTO"])
+        XCTAssertNil(env(settings)["FINEWINE_RENDER_SCALE"])
+        XCTAssertTrue(settings.upscalesAtStart)
+        // a render size is only used while automatic is off
+        settings.renderSizeEnabled = true
+        settings.renderScale = 70
+        XCTAssertNil(settings.effectiveRenderScale)
+        XCTAssertNil(env(settings)["FINEWINE_RENDER_SCALE"])
+        settings.metalFXUpscaling = false
+        XCTAssertEqual(env(settings)["FINEWINE_RENDER_SCALE"], "70")
+        XCTAssertNil(env(settings)["FINEWINE_METALFX_AUTO"])
+        XCTAssertTrue(settings.upscalesAtStart)
+        // out of range values are brought in
+        settings.renderScale = 10
+        XCTAssertEqual(env(settings)["FINEWINE_RENDER_SCALE"], "50")
+        settings.renderScale = 400
+        XCTAssertEqual(env(settings)["FINEWINE_RENDER_SCALE"], "95")
+        // neither: upscaling starts off
+        settings.renderSizeEnabled = false
+        XCTAssertEqual(env(settings)["FINEWINE_METALFX_AUTO"], "0")
+        XCTAssertNil(env(settings)["FINEWINE_RENDER_SCALE"])
+        XCTAssertFalse(settings.upscalesAtStart)
+        // stored and read back; settings from before the render size have none
+        settings.renderSizeEnabled = true
+        settings.renderScale = 65
+        let back = try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(back.effectiveRenderScale, 65)
+        XCTAssertFalse(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).renderSizeEnabled)
+    }
+
+    func testLiveUpscalingSwitchIsReadBack() {
+        // a process id nothing uses, so no running program is told anything
+        let pid: Int32 = 99_999_989
+        XCTAssertEqual(LiveUpscaling.notificationName(processID: 123), "finewine.metalfx.123")
+        // The system keeps a state only while something is registered for the name, as a
+        // running program is (DXMT, MoltenVK and the Mac driver each register).
+        var holder: Int32 = 0
+        XCTAssertEqual(notify_register_check(LiveUpscaling.notificationName(processID: pid), &holder), UInt32(NOTIFY_STATUS_OK))
+        defer { notify_cancel(holder) }
+        XCTAssertEqual(LiveUpscaling.set(true, processIDs: [pid]), 1)
+        XCTAssertEqual(LiveUpscaling.current(processID: pid), true)
+        LiveUpscaling.set(false, processIDs: [pid])
+        XCTAssertEqual(LiveUpscaling.current(processID: pid), false)
+        XCTAssertNil(LiveUpscaling.meaning(ofState: 0))
     }
 
     func testEmptyDebugChannelsFallBackToSilent() {
@@ -326,5 +404,33 @@ final class PrefixSettingsTests: XCTestCase {
         // settings saved before the switch existed have it on
         let old = try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8))
         XCTAssertTrue(old.metalFXUpscaling)
+    }
+
+    func testNonUnicodeLanguages() throws {
+        let expected: [NonUnicodeLanguage: (String?, Int?)] = [
+            .automatic: (nil, nil), .english: ("en_US.UTF-8", 1252), .japanese: ("ja_JP.UTF-8", 932),
+            .chineseSimplified: ("zh_CN.UTF-8", 936), .chineseTraditional: ("zh_TW.UTF-8", 950),
+            .korean: ("ko_KR.UTF-8", 949),
+        ]
+        for language in NonUnicodeLanguage.allCases {
+            XCTAssertEqual(language.unixLocale, expected[language]?.0, "\(language)")
+            XCTAssertEqual(language.codePage, expected[language]?.1, "\(language)")
+            XCTAssertFalse(language.displayName.isEmpty)
+            if let locale = language.unixLocale {
+                // the locale has to exist on the Mac, or setlocale() gives Wine "C" for everything
+                XCTAssertTrue(FileManager.default.fileExists(atPath: "/usr/share/locale/\(locale)"), locale)
+            }
+        }
+        var settings = PrefixSettings()
+        XCTAssertFalse(settings.environmentVariables().contains { $0.0 == "LC_CTYPE" })
+        settings.nonUnicodeLanguage = .korean
+        XCTAssertTrue(settings.environmentVariables().contains { $0.0 == "LC_CTYPE" && $0.1 == "ko_KR.UTF-8" })
+        // round trip, and settings saved before the choice existed (or by a newer FineWine with
+        // a value this one does not know) are automatic
+        let saved = try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(saved.nonUnicodeLanguage, .korean)
+        XCTAssertEqual(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).nonUnicodeLanguage, .automatic)
+        let unknown = Data(#"{"nonUnicodeLanguage":"klingon"}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(PrefixSettings.self, from: unknown).nonUnicodeLanguage, .automatic)
     }
 }

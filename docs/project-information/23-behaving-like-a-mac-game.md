@@ -117,3 +117,27 @@ program cannot be traced to its prefix from outside. Every process now keeps
 the prefix's other processes, the server's own shutdown ended it, and nothing was left. The
 direct-kill step is covered by a unit test with a stand-in process; it has not been needed
 against a real stuck server.
+
+## Game Mode's icon (2026-11-17)
+
+The Dock showed a game's own icon, but Game Mode's menu bar item and notice showed a blank app
+icon. The Dock takes the icon the running program gives it (patch 0030); Game Mode, like other
+system screens, reads the icon from the app bundle on disk, and the bundles programs start from
+(`.finewine-apps/<game|program>/<name>.app`, patch 0024) had none. Patch 0032 writes the same
+picture into that bundle as `Contents/Resources/AppIcon.icns` (16 to 1024 pixels), names it in
+`CFBundleIconFile`, and re-registers the bundle with LaunchServices. It is only rewritten when
+the icon changes. On a game's first launch with this, Game Mode can switch on before the icon
+is written; from the next launch on it is already there. `FINEWINE_BUNDLE_ICONS=0` turns it off.
+Checked by `scripts/test-finewine-runtime.sh`; not yet seen in Game Mode's own menu.
+
+## Game Mode for games started by a launcher (2026-11-18)
+
+Genshin Impact started from FineWine's "HoYoPlay" entry ran without Game Mode: HoYoPlay's
+`launcher.exe` imports no rendering API, and the "this program rendered" marker is only created
+once the game draws, too late for that launch, since macOS decides whether an app is a game when
+it starts and the game inherits its launcher's loader. The "Genshin Impact" entry for the same
+`launcher.exe` already had a marker, but markers were only looked up per entry.
+
+A program is now started as a game also when another entry for the same executable has a marker,
+and always when it is a HoYoverse game or HoYoPlay (the programs the Steam stand-in recognises),
+so their first launch is in Game Mode too. Tested by `GameModeLaunchTests`.

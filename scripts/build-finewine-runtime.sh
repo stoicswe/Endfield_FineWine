@@ -38,6 +38,10 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 . "$REPO/scripts/lib/sources-lock.sh"; lock_load   # WINE_TAG, WINE_COMMIT, BREW_*_MAJOR
+# The oldest macOS the runtime runs on; newer functions only behind a check
+# (scripts/lib/macos-gated-apis.txt, enforced by scripts/lib/check-macos-compat.sh in `package`).
+MACOS_MIN="15.0"
+export MACOSX_DEPLOYMENT_TARGET="$MACOS_MIN"
 BUILD_DIR="${BUILD_DIR:-$REPO/build}"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"
 # WINE_TAG and WINE_COMMIT come from finewine-sources.lock
@@ -46,6 +50,10 @@ SRC="$BUILD_DIR/finewine-runtime-src"
 OBJ="$BUILD_DIR/finewine-runtime-build"
 STAGE="$BUILD_DIR/finewine-runtime-stage"
 OUT="$BUILD_DIR/finewine-runtime"
+# FreeType and GnuTLS built for macOS $MACOS_MIN by scripts/build-finewine-deps.sh; Wine is
+# configured against them and the runtime carries them. (Homebrew's are built for the Mac they
+# are installed on and would not load on an older one.)
+DEPS="$BUILD_DIR/finewine-deps"
 BREW="$(command -v brew || echo /opt/homebrew/bin/brew)"
 
 # ARM-series patches that can't go into an ARM64X build. In ARM64EC code __x86_64__ is defined
@@ -65,7 +73,7 @@ toolchain(){
 
 cmd_deps(){
   log "Installing build dependencies with Homebrew"
-  "$BREW" install bison pkgconf llvm lld freetype gnutls sdl2 molten-vk
+  "$BREW" install bison pkgconf llvm lld molten-vk
   check_tools
 }
 
@@ -140,7 +148,8 @@ cmd_configure(){
         x86_64_CC=clang \
         aarch64_CFLAGS="$PE_CFLAGS" arm64ec_CFLAGS="$PE_CFLAGS" \
         CC="/usr/bin/clang -arch arm64" CXX="/usr/bin/clang++ -arch arm64" OBJC="/usr/bin/clang -arch arm64" \
-        PKG_CONFIG_PATH="$hb/lib/pkgconfig" CPPFLAGS="-I$hb/include" LDFLAGS="-L$hb/lib" \
+        PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$hb/lib/pkgconfig" CPPFLAGS="-I$DEPS/include -I$hb/include" \
+        LDFLAGS="-L$DEPS/lib -L$hb/lib" --without-sdl \
         --enable-archs=arm64ec,aarch64 --prefix=/ --disable-tests \
         --without-x --without-krb5 --without-gstreamer --without-gphoto --without-sane --without-pcap \
         --without-usb --without-cups --without-opencl --without-pcsclite --without-dbus --without-netapi
@@ -174,7 +183,7 @@ bundle_dylib(){
   [ -f "$OUT/lib/$name" ] && return 0
   cp -L "$src" "$OUT/lib/$name"; chmod u+w "$OUT/lib/$name"
   install_name_tool -id "@rpath/$name" "$OUT/lib/$name" 2>/dev/null
-  otool -L "$src" | awk 'NR>1{print $1}' | grep -E "^($("$BREW" --prefix)|@rpath|@loader_path)" | while IFS= read -r dep; do
+  otool -L "$src" | awk 'NR>1{print $1}' | grep -E "^($("$BREW" --prefix)|$DEPS|@rpath|@loader_path)" | while IFS= read -r dep; do
     local real="$dep"
     case "$dep" in
       @rpath/*|@loader_path/*) real="$(dirname "$(readlink -f "$src" 2>/dev/null || echo "$src")")/$(basename "$dep")" ;;
@@ -252,8 +261,11 @@ cmd_package(){
   local hb; hb="$("$BREW" --prefix)"
   # The libraries Wine opens by name at run time. FineWine puts <runtime>/lib on
   # DYLD_FALLBACK_LIBRARY_PATH, so they only need to be here.
-  for lib in "$hb/lib/libfreetype.6.dylib" "$hb/lib/libgnutls.30.dylib" "$hb/lib/libSDL2-2.0.0.dylib"; do
-    [ -f "$lib" ] && bundle_dylib "$lib"
+  # FreeType and GnuTLS (with Nettle and GMP), built for macOS $MACOS_MIN. No SDL2: without it
+  # Wine reads game controllers through macOS's own IOHID support.
+  for lib in "$DEPS/lib/libfreetype.6.dylib" "$DEPS/lib/libgnutls.30.dylib"; do
+    [ -f "$lib" ] || die "no $lib: run scripts/build-finewine-deps.sh"
+    bundle_dylib "$lib"
   done
   # MoltenVK: this repository's patched arm64 build when it exists, else Homebrew's.
   if [ -f "$BUILD_DIR/moltenvk-out-finewine/libMoltenVK.dylib" ]; then
@@ -301,6 +313,8 @@ JSON
   "$REPO/scripts/lib/make-game-loader.sh" "$OUT/lib/wine/aarch64-unix" || die "could not make the game loader"
   # The stand-in for the Steam client that some games need to find before they start.
   "$REPO/scripts/lib/build-steam-helper.sh" "$OUT" || die "could not build the Steam helper"
+  # The program that lets Discord find a Windows game by its file name (runtime patch 0039).
+  "$REPO/scripts/lib/build-presence-helper.sh" "$OUT" "$MACOS_MIN" || die "could not build the presence helper"
   # Packaging starts from an empty folder, so the two add-ons built by their own scripts are
   # put back when their builds exist: FEX (x64 programs) and DXMT (Direct3D 10 and 11 on Metal).
   if [ -f "$BUILD_DIR/fex-arm64ec/Bin/libarm64ecfex.dll" ]; then
@@ -314,6 +328,9 @@ JSON
     echo "note: no DXMT build; Direct3D 10 and 11 will not work (scripts/build-dxmt.sh all)"
   fi
   echo "runtime: $OUT ($id, $(du -sh "$OUT" | cut -f1))"
+  # Every Mac binary in the runtime must run on macOS $MACOS_MIN.
+  "$REPO/scripts/lib/check-macos-compat.sh" "$MACOS_MIN" "$OUT/bin" "$OUT/lib" \
+    || die "the runtime does not run on macOS $MACOS_MIN (see above)"
 }
 
 case "${1:-}" in

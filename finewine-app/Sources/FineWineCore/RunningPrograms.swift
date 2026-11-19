@@ -17,7 +17,13 @@ public enum RunningPrograms {
             let file = path.split(separator: "\\").last.map(String.init) ?? path
             let stem = String(file.dropLast(4))
             if lower.hasSuffix("\\steam\\steam.exe") || stem.lowercased().contains("crashhandler") { continue }
+            // A listed program is recognised by its file. A game that only a launcher can start
+            // is listed with the launcher's file, so it is also recognised by its folder: the
+            // innermost folder on the path that is named like a listed program
+            // (…\games\Arknights Endfield\Endfield.exe is "Arknights Endfield").
             let listed = programs.first { normalized($0.windowsPath) == lower }?.name
+                ?? path.split(separator: "\\").dropLast().reversed().lazy
+                    .compactMap { folder in programs.first { folded($0.name) == folded(String(folder)) }?.name }.first
             let name = listed ?? stem
             if !names.contains(name) { names.append(name) }
         }
@@ -36,6 +42,11 @@ public enum RunningPrograms {
         guard isDrivePath || trimmed.hasPrefix("/"),
               let end = trimmed.range(of: ".exe", options: .caseInsensitive) else { return nil }
         return trimmed[..<end.upperBound].replacingOccurrences(of: "/", with: "\\")
+    }
+
+    /// A name as it is compared with a folder's: letters and digits only, in lower case.
+    private static func folded(_ name: String) -> String {
+        String(name.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
     }
 
     private static func normalized(_ path: String) -> String {

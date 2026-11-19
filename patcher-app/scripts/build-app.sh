@@ -97,6 +97,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/licenses" \
          "$APP/Contents/Resources/payload/server" \
          "$APP/Contents/Resources/payload/lib64"
 cp "$BIN" "$APP/Contents/MacOS/$EXE"
+# The real SDK in the binary, or macOS 26 and later draw the app without Liquid Glass.
+"$REPO/scripts/lib/stamp-sdk-version.sh" "$APP/Contents/MacOS/$EXE" 15.0
 cp "$HERE/Resources/licenses/"*.txt "$APP/Contents/Resources/licenses/"
 
 # Copy localization bundles
@@ -148,7 +150,7 @@ $ICON_PLIST
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>13.0</string>
+	<string>15.0</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
 	<key>NSPrincipalClass</key>
@@ -173,6 +175,7 @@ find_module(){ # flat-name  tree-relative-path
 }
 NTDLL="$(find_module ntdll.so dlls/ntdll/ntdll.so)"
 WINEMAC="$(find_module winemac.so dlls/winemac.drv/winemac.so)"
+WINEMACPE="$(find_module winemac.drv dlls/winemac.drv/x86_64-windows/winemac.drv)"
 DWMAPI="$(find_module dwmapi.dll dlls/dwmapi/x86_64-windows/dwmapi.dll)"
 KERNEL32="$(find_module kernel32.dll dlls/kernel32/x86_64-windows/kernel32.dll)"
 NTOSKRNL="$(find_module ntoskrnl.exe dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe)"
@@ -185,7 +188,7 @@ if   [ -f "$PAYLOAD_DIR/libMoltenVK.dylib" ]; then MVK="$PAYLOAD_DIR/libMoltenVK
 elif [ -f "$MOLTENVK_DIR/libMoltenVK.dylib" ]; then MVK="$MOLTENVK_DIR/libMoltenVK.dylib"
 else MVK=""; fi
 
-if [ -z "$NTDLL" ] || [ -z "$WINEMAC" ] || [ -z "$DWMAPI" ] || [ -z "$KERNEL32" ] || [ -z "$NTOSKRNL" ] || [ -z "$LSASS" ] || [ -z "$WINEBOOT" ] || [ -z "$RUNDLL32" ] || [ -z "$WINESERVER" ] || [ -z "$MVK" ]; then
+if [ -z "$NTDLL" ] || [ -z "$WINEMAC" ] || [ -z "$WINEMACPE" ] || [ -z "$DWMAPI" ] || [ -z "$KERNEL32" ] || [ -z "$NTOSKRNL" ] || [ -z "$LSASS" ] || [ -z "$WINEBOOT" ] || [ -z "$RUNDLL32" ] || [ -z "$WINESERVER" ] || [ -z "$MVK" ]; then
   if [ "${ALLOW_MISSING_PAYLOAD:-0}" = "1" ]; then
     warn "payload modules not found — building WITHOUT payload (smoke test only)"
     ui_skip
@@ -199,6 +202,7 @@ else
   P="$APP/Contents/Resources/payload"
   cp "$NTDLL"    "$P/x86_64-unix/ntdll.so"
   cp "$WINEMAC"  "$P/x86_64-unix/winemac.so"
+  cp "$WINEMACPE" "$P/x86_64-windows/winemac.drv"
   cp "$DWMAPI"   "$P/x86_64-windows/dwmapi.dll"
   cp "$KERNEL32" "$P/x86_64-windows/kernel32.dll"
   cp "$NTOSKRNL" "$P/x86_64-windows/ntoskrnl.exe"
