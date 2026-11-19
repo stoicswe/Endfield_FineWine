@@ -169,25 +169,25 @@ final class PrefixSettingsTests: XCTestCase {
     func testEnvironmentVariables() {
         var settings = PrefixSettings()
         XCTAssertEqual(settings.environmentVariables().map(\.name), ["WINEDEBUG", "WINEMSYNC", "MTL_HUD_ENABLED", "FINEWINE_METAL_HUD", "FINEWINE_FULLSCREEN",
-                        "FEX_HIDEHYPERVISORBIT", "FINEWINE_DLSS", "DXMT_ENABLE_NVEXT", "DXMT_CONFIG"])
+                        "FEX_HIDEHYPERVISORBIT", "FINEWINE_ZERO_PAGES", "FEX_COMPACTBLOCKRECORDS", "FINEWINE_DLSS", "DXMT_ENABLE_NVEXT", "DXMT_CONFIG"])
         XCTAssertEqual(settings.environmentVariables().first?.value, "-all")
         // The hypervisor flag is hidden unless the prefix says otherwise.
         var shown = PrefixSettings(); shown.hideHypervisor = false
         XCTAssertFalse(shown.environmentVariables().contains { $0.name == "FEX_HIDEHYPERVISORBIT" })
-        // Zero pages are an experiment: off unless the prefix turns them on, and off for a
-        // prefix saved before the setting existed.
-        XCTAssertFalse(PrefixSettings().zeroPages)
-        var zero = PrefixSettings(); zero.zeroPages = true
-        XCTAssertEqual(zero.environmentVariables().first { $0.name == "FINEWINE_ZERO_PAGES" }?.value, "1")
-        XCTAssertFalse(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).zeroPages)
-        XCTAssertTrue(try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(zero)).zeroPages)
-        // The emulator's compact records: the same rules.
-        XCTAssertFalse(PrefixSettings().compactBlockRecords)
-        var compact = PrefixSettings(); compact.compactBlockRecords = true
-        XCTAssertEqual(compact.environmentVariables().first { $0.name == "FEX_COMPACTBLOCKRECORDS" }?.value, "1")
-        XCTAssertFalse(compact.environmentVariables().contains { $0.name == "FINEWINE_ZERO_PAGES" })
-        XCTAssertFalse(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).compactBlockRecords)
-        XCTAssertTrue(try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(compact)).compactBlockRecords)
+        // Zero pages: on by default; a prefix saved before the setting existed gets the new
+        // default (true) so it benefits from the memory saving without the user touching it.
+        XCTAssertTrue(PrefixSettings().zeroPages)
+        var zeroOff = PrefixSettings(); zeroOff.zeroPages = false
+        XCTAssertFalse(zeroOff.environmentVariables().contains { $0.name == "FINEWINE_ZERO_PAGES" })
+        XCTAssertTrue(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).zeroPages)
+        XCTAssertFalse(try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(zeroOff)).zeroPages)
+        // The emulator's compact records: same rules — on by default.
+        XCTAssertTrue(PrefixSettings().compactBlockRecords)
+        var compactOff = PrefixSettings(); compactOff.compactBlockRecords = false
+        XCTAssertFalse(compactOff.environmentVariables().contains { $0.name == "FEX_COMPACTBLOCKRECORDS" })
+        XCTAssertTrue(compactOff.environmentVariables().contains { $0.name == "FINEWINE_ZERO_PAGES" })
+        XCTAssertTrue(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).compactBlockRecords)
+        XCTAssertFalse(try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(compactOff)).compactBlockRecords)
 
         settings.metalHUD = true
         settings.hideHypervisor = true
@@ -197,7 +197,8 @@ final class PrefixSettingsTests: XCTestCase {
         let env = Dictionary(uniqueKeysWithValues: settings.environmentVariables().map { ($0.name, $0.value) })
         XCTAssertEqual(env, ["WINEDEBUG": "err+all", "WINEMSYNC": "1", "MTL_HUD_ENABLED": "1",
                              "FINEWINE_METAL_HUD": "1", "FINEWINE_FULLSCREEN": "space",
-                             "FEX_HIDEHYPERVISORBIT": "1", "FINEWINE_DLSS": "1", "DXMT_ENABLE_NVEXT": "1",
+                             "FEX_HIDEHYPERVISORBIT": "1", "FINEWINE_ZERO_PAGES": "1",
+                             "FEX_COMPACTBLOCKRECORDS": "1", "FINEWINE_DLSS": "1", "DXMT_ENABLE_NVEXT": "1",
                              "DXMT_CONFIG": "dxgi.customVendorId=106b", "MY_FLAG": "1"])
     }
 

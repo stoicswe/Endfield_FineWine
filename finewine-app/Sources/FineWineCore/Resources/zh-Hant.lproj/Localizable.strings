@@ -248,10 +248,10 @@
 "config.sync_detail" = "Windows 事件、互斥鎖與號誌的底層調度方式。";
 "config.hide_hypervisor_title" = "隱藏虛擬化/虛擬機器旗標 (Hypervisor)";
 "config.hide_hypervisor_desc" = "x64 模擬器預設會透過 CPU 旗標宣告自身為虛擬機器，導致部分反作弊及反虛擬機器遊戲誤判而拒絕啟動。預設開啟以隱藏旗標。";
-"config.zero_pages_title" = "讀取未使用的記憶體不計入用量（實驗性）";
-"config.zero_pages_desc" = "在 macOS 上，記憶體只要被讀取就會計入程式的用量，即使從未寫入過。像反作弊那樣會讀取自身全部記憶體的遊戲，因此會多佔用許多 GB。開啟後，這類讀取不再計入用量；每塊記憶體的首次寫入會略慢。預設關閉；如果程式出現異常，請重新關閉。";
-"config.compact_records_title" = "壓縮模擬器記錄（實驗性）";
-"config.compact_records_desc" = "x64 模擬器會為每個執行緒記錄該執行緒執行過的每一段遊戲程式碼。在執行緒很多的大型遊戲中，這些記錄會佔用數 GB。開啟後，記錄以只需一半或更少空間的形式保存。預設關閉；如果遊戲卡頓增多或出現異常，請重新關閉。";
+"config.zero_pages_title" = "讀取未使用的記憶體不計入用量";
+"config.zero_pages_desc" = "在 macOS 上，記憶體只要被讀取就會計入程式的用量，即使從未寫入過。像反作弊那樣會讀取自身全部記憶體的遊戲，因此會多佔用許多 GB。開啟後，這類讀取不再計入用量；每塊記憶體的首次寫入會略慢。預設開啟；如果程式出現異常，請關閉。";
+"config.compact_records_title" = "壓縮模擬器記錄";
+"config.compact_records_desc" = "x64 模擬器會為每個執行緒記錄該執行緒執行過的每一段遊戲程式碼。在執行緒很多的大型遊戲中，這些記錄會佔用數 GB。開啟後，記錄以只需一半或更少空間的形式保存。預設開啟；如果遊戲卡頓增多或出現異常，請關閉。";
 "config.appearance_card" = "外觀樣式";
 "config.appearance_footnote" = "適用於使用標準 Windows 控制項目的介面（包含 Wine 工具）。視窗邊框與標題列由 macOS 繪製。遊戲自繪介面不受影響。";
 "config.mac_appearance_title" = "符合 macOS 風格";
