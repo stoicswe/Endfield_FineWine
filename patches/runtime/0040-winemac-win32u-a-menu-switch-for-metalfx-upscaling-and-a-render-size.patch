@@ -1,0 +1,208 @@
+winemac, win32u: a menu switch for MetalFX upscaling, and a render size
+
+View > MetalFX Upscaling (Control-Command-U) switches, while the program runs, whether a
+picture smaller than its window is upscaled by MetalFX. It sets the state of the notification
+"finewine.metalfx.<process id>", which DXMT and MoltenVK look at (patches/dxmt/0007,
+patches/moltenvk/0006).
+
+FINEWINE_RENDER_SCALE=<percent, 25 to 99> makes programs see a screen that many percent of the
+real one in each direction. It turns Wine's display mode emulation on (EmulateModeset) and
+makes the mode a program finds when it starts an emulated one of that size, as if it had been
+chosen in a game's settings. A game then draws that many pixels and MetalFX brings the picture
+to the real size; everything else is scaled by Wine. The mode is given once per size (kept as
+FineWineRenderScale beside the modes), so a program's own later choice stays.
+
+Wine keeps the relation between an emulated mode and the real one as a fraction of two 16-bit
+numbers multiplied by the DPI, and stops with an assertion for sizes that do not reduce that
+far (3024x1964 at 75% rounded to 2268x1474 did). The nearest size that does, for every DPI a
+prefix can have, is taken, an even one where possible.
+
+diff --git a/dlls/winemac.drv/cocoa_app.h b/dlls/winemac.drv/cocoa_app.h
+--- a/dlls/winemac.drv/cocoa_app.h
++++ b/dlls/winemac.drv/cocoa_app.h
+@@ -136,6 +136,9 @@
+     - (BOOL) isMetalHUDShown;
+     - (void) applyMetalHUD;
+     - (void) toggleMetalHUD:(id)sender;
++    /* FineWine: MetalFX upscaling of a picture smaller than its window. See cocoa_app.m. */
++    - (BOOL) isUpscalingWanted;
++    - (void) toggleUpscaling:(id)sender;
+     - (void) updateFullscreenWindows;
+ 
+     - (BOOL) handleEvent:(NSEvent*)anEvent;
+diff --git a/dlls/winemac.drv/cocoa_app.m b/dlls/winemac.drv/cocoa_app.m
+--- a/dlls/winemac.drv/cocoa_app.m
++++ b/dlls/winemac.drv/cocoa_app.m
+@@ -21,6 +21,7 @@
+ #import "config.h"
+ #import "macdrv.h"
+ #include <dlfcn.h>
++#include <notify.h>
+ #include <sys/wait.h>
+ #import <objc/runtime.h>
+ 
+@@ -645,6 +646,13 @@
+                                keyEquivalent:@"h"];
+             /* Control-Command-H: no function key in it, which on a Mac's own keyboard needs Fn
+              * and otherwise changes the volume. Option-F12 works as well (-handleEvent:). */
++            [item setKeyEquivalentModifierMask:NSEventModifierFlagControl | NSEventModifierFlagCommand];
++            [item setTarget:self];
++            /* FineWine: MetalFX upscaling of a picture smaller than its window, switched while
++             * the program runs. Control-Command-U. */
++            item = [submenu addItemWithTitle:@"MetalFX Upscaling"
++                                      action:@selector(toggleUpscaling:)
++                               keyEquivalent:@"u"];
+             [item setKeyEquivalentModifierMask:NSEventModifierFlagControl | NSEventModifierFlagCommand];
+             [item setTarget:self];
+             item = [[[NSMenuItem alloc] init] autorelease];
+@@ -1215,9 +1223,52 @@
+         [self performSelector:@selector(applyMetalHUD) withObject:nil afterDelay:4.0];
+     }
+ 
++    /* FineWine: a program that draws smaller than its window has its picture brought to the
++     * window's size by MetalFX: by DXMT for Direct3D 10 and 11, by MoltenVK for Vulkan and
++     * Direct3D 12. Both look, a few times a second, at one switch: FINEWINE_METALFX_AUTO=0
++     * starts with it off, and the state of the notification "finewine.metalfx.<process id>"
++     * overrides that (1 on, 2 off, 0 not said). The View menu's item sets that state for this
++     * process; the FineWine app sets it from outside in the same way. */
++    static int upscalingToken = NOTIFY_TOKEN_INVALID;
++
++    - (int) upscalingToken
++    {
++        if (upscalingToken == NOTIFY_TOKEN_INVALID)
++        {
++            char name[64];
++            snprintf(name, sizeof(name), "finewine.metalfx.%d", getpid());
++            if (notify_register_check(name, &upscalingToken) != NOTIFY_STATUS_OK)
++                upscalingToken = NOTIFY_TOKEN_INVALID;
++        }
++        return upscalingToken;
++    }
++
++    - (BOOL) isUpscalingWanted
++    {
++        const char* byDefault = getenv("FINEWINE_METALFX_AUTO");
++        int token = [self upscalingToken];
++        uint64_t state = 0;
++
++        if (token != NOTIFY_TOKEN_INVALID && notify_get_state(token, &state) == NOTIFY_STATUS_OK && state)
++            return state == 1;
++        return !(byDefault && byDefault[0] == '0');
++    }
++
++    - (void) toggleUpscaling:(id)sender
++    {
++        int token = [self upscalingToken];
++        if (token != NOTIFY_TOKEN_INVALID)
++            notify_set_state(token, [self isUpscalingWanted] ? 2 : 1);
++    }
++
+     - (BOOL) validateMenuItem:(NSMenuItem *)menuItem
+     {
+         SEL action = [menuItem action];
++        if (action == @selector(toggleUpscaling:))
++        {
++            [menuItem setState:[self isUpscalingWanted] ? NSControlStateValueOn : NSControlStateValueOff];
++            return TRUE;
++        }
+         if (action == @selector(finewineRestoreWindow:) || action == @selector(finewineMinimizeWindow:) ||
+             action == @selector(finewineMaximizeWindow:) || action == @selector(finewineCloseWindow:))
+         {
+diff --git a/dlls/win32u/sysparams.c b/dlls/win32u/sysparams.c
+--- a/dlls/win32u/sysparams.c
++++ b/dlls/win32u/sysparams.c
+@@ -2196,10 +2196,56 @@
+     *modes_count = count;
+     free( screen_sizes );
+     return modes;
++}
++
++/* FineWine: FINEWINE_RENDER_SCALE=<percent, 25 to 99> makes programs see a screen that many
++ * percent of the real one in each direction: the display mode they find when they start is an
++ * emulated one of that size, as if it had been chosen in a game's settings, and Wine's mode
++ * emulation (EmulateModeset) is on. What they draw is brought to the real size when it is
++ * shown: by MetalFX for Direct3D and Vulkan (DXMT, MoltenVK), by Wine for everything else.
++ * A program can still pick another size, the real one included. */
++static UINT finewine_render_scale(void)
++{
++    static int scale = -1;
++    if (scale < 0)
++    {
++        const char *env = getenv( "FINEWINE_RENDER_SCALE" );
++        int value = env ? atoi( env ) : 0;
++        scale = (value >= 25 && value <= 99) ? value : 0;
++    }
++    return scale;
++}
++
++/* Wine keeps the relation between an emulated mode and the real one as a fraction of two
++ * 16-bit numbers, per direction and multiplied by the DPI (monitor_get_dpi, make_ratio), and
++ * stops with an assertion when a size does not reduce that far. The size nearest to the one
++ * wanted that does, for every DPI a prefix can have, is taken; an even one where possible. */
++static UINT finewine_snap_size( UINT physical, UINT wanted )
++{
++    static const UINT dpis[] = {96, 120, 144, 168, 192, 216, 240, 288, 384, 480};
++    UINT delta, i, k;
++
++    for (delta = 0; delta < 256; delta++)
++    {
++        for (k = 0; k < 2; k++)
++        {
++            UINT size = k ? wanted + delta : wanted - delta;
++            if (!size || size > physical || (k && !delta)) continue;
++            if ((size & 1) && delta < 128) continue;  /* an even size where there is one near */
++            for (i = 0; i < ARRAY_SIZE(dpis); i++)
++            {
++                UINT d = gcd( dpis[i] * physical, size );
++                if (dpis[i] * physical / d >= 65536 || size / d >= 65536) break;
++            }
++            if (i == ARRAY_SIZE(dpis)) return size;
++        }
++    }
++    return physical;
+ }
+ 
+ static void add_modes( const DEVMODEW *current, UINT host_modes_count, const DEVMODEW *host_modes, void *param )
+ {
++    static const WCHAR render_scaleW[] = {'F','i','n','e','W','i','n','e','R','e','n','d','e','r','S','c','a','l','e',0};
+     struct device_manager_ctx *ctx = param;
+     DEVMODEW dummy, physical, detached = *current, virtual, *virtual_modes = NULL;
+     UINT virtual_count, modes_count = host_modes_count;
+@@ -2234,6 +2280,28 @@
+     {
+         if (!read_source_mode( source->key, ENUM_CURRENT_SETTINGS, &virtual ) || is_detached_mode( &virtual ))
+             virtual = physical;
++
++        /* FineWine: the mode for the prefix's render size is given once, when the size is
++         * first met or has changed; after that the mode is whatever was last chosen, so that
++         * a program's own choice stays. The size it was given for is kept beside the modes. */
++        {
++            char buffer[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(DWORD)];
++            KEY_VALUE_PARTIAL_INFORMATION *value = (void *)buffer;
++            DWORD scale = finewine_render_scale(), applied = 0;
++
++            if (query_reg_value( source->key, render_scaleW, value, sizeof(buffer) ) == sizeof(DWORD))
++                applied = *(const DWORD *)value->Data;
++            if (scale != applied)
++            {
++                virtual = physical;
++                if (scale)
++                {
++                    virtual.dmPelsWidth = finewine_snap_size( physical.dmPelsWidth, physical.dmPelsWidth * scale / 100 );
++                    virtual.dmPelsHeight = finewine_snap_size( physical.dmPelsHeight, physical.dmPelsHeight * scale / 100 );
++                }
++                set_reg_value( source->key, render_scaleW, REG_DWORD, &scale, sizeof(scale) );
++            }
++        }
+ 
+         if ((virtual_modes = get_virtual_modes( current, &physical, host_modes, host_modes_count, &virtual_count )))
+         {
+@@ -6083,6 +6151,8 @@
+         decorated_mode = IS_OPTION_TRUE( buffer[0] );
+     if (!get_config_key( hkey, appkey, "EmulateModeset", buffer, sizeof(buffer) ))
+         emulate_modeset = IS_OPTION_TRUE( buffer[0] );
++    /* FineWine: a render size for the prefix is an emulated display mode (see add_modes) */
++    if (finewine_render_scale()) emulate_modeset = TRUE;
+ 
+ #undef IS_OPTION_TRUE
+ 

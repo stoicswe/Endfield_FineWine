@@ -34,6 +34,8 @@
 "menu.settings" = "Settings";
 "menu.quit_help" = "Quit FineWine. If programs are running, you are asked first, and they are closed.";
 "menu.shut_down" = "Shut Down";
+"menu.upscaling_on_help" = "MetalFX upscaling is on. Click to switch it off in the running programs.";
+"menu.upscaling_off_help" = "MetalFX upscaling is off. Click to switch it on in the running programs.";
 "menu.force_shut_down" = "Force Shut Down";
 "menu.shut_down_help" = "Shut Down asks every program to close. Force Shut Down also ends a program that has frozen.";
 "menu.configure_prefix" = "Configure this prefix";
@@ -217,8 +219,11 @@
 "config.direct3d_label" = "Direct3D";
 "config.retina_title" = "High-resolution mode";
 "config.retina_desc" = "Programs draw at the display's real pixel resolution, so they are as sharp as Mac apps. Turn it off if a program runs too slowly at full resolution.";
-"config.metalfx_upscale_title" = "Sharpen lower resolutions with MetalFX";
-"config.metalfx_upscale_desc" = "When a Direct3D 10 or 11 game draws fewer pixels than its window has (a lower resolution chosen in the game, or high-resolution mode off), the picture is upscaled to the display's pixels with MetalFX instead of being stretched. Games using their own upscaler are left alone.";
+"config.metalfx_upscale_title" = "Sharpen lower resolutions with MetalFX (automatic)";
+"config.metalfx_upscale_desc" = "When a game draws fewer pixels than its window has (a lower resolution chosen in the game, or high-resolution mode off), the picture is upscaled to the display's pixels with MetalFX instead of being stretched: Direct3D 10 and 11, Direct3D 12 and Vulkan. Games using their own upscaler are left alone. This is how programs start; it can be switched while a game runs, from the game's View menu (Control-Command-U) or FineWine's menu bar icon.";
+"config.render_size_title" = "Set a render size";
+"config.render_size_desc" = "Makes programs see a smaller screen, so that games draw fewer pixels without changing anything in the game, and upscales the picture with MetalFX. Everything in the prefix is drawn at this size, launchers included, so text is a little softer. Available while the automatic option above is off. Takes effect the next time the prefix starts.";
+"config.render_size_value" = "%d%% · about %d × %d";
 "config.auto_dpi_title" = "Scale automatically";
 "config.auto_dpi_desc_retina" = "Sets the Windows DPI from the display (%@ on this Mac), so text and controls keep their normal size.";
 "config.auto_dpi_desc_normal" = "Keeps the Windows DPI at 96, which matches macOS when high-resolution mode is off.";

@@ -32,6 +32,9 @@ final class AppModel: ObservableObject {
     /// FineWine started ends once it has started the game, and programs are also started from
     /// their Mac apps or were running before FineWine was opened. Looked up every few seconds.
     @Published var alive: Set<UUID> = []
+    /// MetalFX upscaling as it was switched from FineWine's menu while a prefix runs; a
+    /// prefix that is not here goes by its settings. Forgotten when the prefix stops.
+    @Published var liveUpscaling: [UUID: Bool] = [:]
     private var aliveTimer: Timer?
     private var aliveLookupUnderWay = false
     /// What a prefix is busy with ("Setting up…"), shown in place of its controls.
@@ -215,6 +218,23 @@ final class AppModel: ObservableObject {
     func profile(for prefix: Prefix) -> GameProfile? { profiles.first { $0.id == prefix.metadata.profileID } }
     func isRunning(_ prefix: Prefix) -> Bool { !(running[prefix.id] ?? []).isEmpty || alive.contains(prefix.id) }
 
+    /// Whether MetalFX upscaling is on in a prefix's running programs, as far as FineWine
+    /// knows: what its menu last switched it to, else how the prefix starts programs. (A
+    /// program's own View menu can switch it too; that is not followed here.)
+    func isUpscalingOn(_ prefix: Prefix) -> Bool {
+        liveUpscaling[prefix.id] ?? prefix.metadata.settings.upscalesAtStart
+    }
+
+    /// Switches MetalFX upscaling in everything the prefix is running, without restarting it.
+    func toggleUpscaling(_ prefix: Prefix) {
+        let on = !isUpscalingOn(prefix)
+        liveUpscaling[prefix.id] = on
+        let service = UncheckedBox(service)
+        Task.detached(priority: .userInitiated) {
+            LiveUpscaling.set(on, processIDs: service.value.findProcesses(prefix.directory))
+        }
+    }
+
     /// Starts looking, every few seconds, for which prefixes have processes.
     func watchRunningPrefixes() {
         guard aliveTimer == nil else { return }
@@ -234,11 +254,21 @@ final class AppModel: ObservableObject {
         let all = prefixes
         let service = UncheckedBox(service)
         Task { @MainActor in
-            let found = await Task.detached(priority: .utility) {
-                Set(all.filter { !service.value.findProcesses($0.directory).isEmpty }.map(\.id))
+            let switched = liveUpscaling
+            let found = await Task.detached(priority: .utility) { () -> Set<UUID> in
+                var found: Set<UUID> = []
+                for prefix in all {
+                    let pids = service.value.findProcesses(prefix.directory)
+                    guard !pids.isEmpty else { continue }
+                    found.insert(prefix.id)
+                    // programs started since the switch was thrown are told as well
+                    if let on = switched[prefix.id] { LiveUpscaling.set(on, processIDs: pids) }
+                }
+                return found
             }.value
             aliveLookupUnderWay = false
             if found != alive { alive = found }
+            for id in liveUpscaling.keys where !found.contains(id) { liveUpscaling[id] = nil }
         }
     }
     var runningCount: Int { running.values.reduce(0) { $0 + $1.count } }

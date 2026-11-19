@@ -789,6 +789,55 @@ else
   echo "  - presence stand-in not checked: no finewine-presence in this runtime, or no llvm-mingw"
 fi
 
+# A Vulkan swap chain smaller than its window in display pixels is upscaled by MetalFX in
+# MoltenVK (patches/moltenvk/0006), the switch for it can be thrown while the program runs,
+# and a render size makes programs see a smaller screen (runtime patch 0040). The test
+# prefix has Wine's Retina mode off, so on a display with two pixels to the point the
+# program's 480x300 swap chain is half its window. A small window appears for a few seconds.
+UPVKH="$REPO/build/moltenvk-finewine-src/Package/Release/MoltenVK/include"
+if [ ! -x "$MINGW" ] || [ ! -f "$UPVKH/vulkan/vulkan_core.h" ]; then
+  echo "  - Vulkan upscaling not checked: no llvm-mingw, or no Vulkan headers from the MoltenVK build"
+elif ! "$MINGW" -O1 -I"$UPVKH" -o "$WORK/vulkan-upscale.exe" "$REPO/tests/runtime/vulkan-upscale.c" -luser32 -lgdi32 >"$WORK/upscale-build.log" 2>&1; then
+  fail "could not build tests/runtime/vulkan-upscale.c"; tail -n 3 "$WORK/upscale-build.log"
+else
+  up_run(){ # log seconds [env...] -> runs the program, its output and MoltenVK's log in the file
+    local log="$1" secs="$2"; shift 2
+    env FINEWINE_GAME_PRESENCE=0 "$@" "$RT/bin/wine" "$WORK/vulkan-upscale.exe" "$secs" >"$log" 2>&1 </dev/null
+  }
+  up_run "$WORK/up-on.log" 2
+  up_run "$WORK/up-off.log" 2 FINEWINE_METALFX_AUTO=0
+  # started switched off, switched on from outside as the FineWine app does it
+  up_run "$WORK/up-live.log" 6 FINEWINE_METALFX_AUTO=0 &
+  up_pid=$!; live_pid=""
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if grep -aq 'vulkan-upscale: ready' "$WORK/up-live.log" 2>/dev/null; then live_pid="$(pgrep -f 'vulkan-upscale.exe 6' | tail -n 1)"; break; fi
+    perl -e 'select(undef, undef, undef, 0.25)'
+  done
+  [ -n "$live_pid" ] && for p in $(pgrep -f 'vulkan-upscale.exe 6'); do notifyutil -s "finewine.metalfx.$p" 1 >/dev/null 2>&1; done
+  wait "$up_pid" 2>/dev/null
+  base="$(tr -d '\r' <"$WORK/up-on.log" | sed -n 's/.*vulkan-upscale: ok .* screen \([0-9]*\)x\([0-9]*\).*/\1 \2/p')"
+  # a render size: the display's modes are set up when Wine's server starts
+  "$RT/bin/wineserver" -k 2>/dev/null; "$RT/bin/wineserver" -w 2>/dev/null
+  up_run "$WORK/up-size.log" 2 FINEWINE_RENDER_SCALE=75
+  "$RT/bin/wineserver" -k 2>/dev/null; "$RT/bin/wineserver" -w 2>/dev/null
+  sized="$(tr -d '\r' <"$WORK/up-size.log" | sed -n 's/.*vulkan-upscale: ok .* screen \([0-9]*\)x\([0-9]*\).*/\1 \2/p')"
+  bad=""
+  if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] && system_profiler SPDisplaysDataType 2>/dev/null | grep -q Retina; then
+    grep -aq "MetalFX upscales the swapchain's 480 x 300 picture to 960 x 600" "$WORK/up-on.log" || bad="$bad not-upscaled"
+    grep -aq "MetalFX upscales" "$WORK/up-off.log" && bad="$bad upscaled-when-off"
+    grep -aq "upscaling of the swapchain switched on" "$WORK/up-live.log" || bad="$bad not-switched-live"
+  fi
+  for f in on off live size; do grep -aq 'vulkan-upscale: ok' "$WORK/up-$f.log" || bad="$bad program($f)"; done
+  # 75% of the screen in each direction, to within a few pixels of rounding
+  if [ -n "$base" ] && [ -n "$sized" ]; then
+    set -- $base $sized
+    [ $(( $3 * 100 - $1 * 75 )) -gt -1700 ] && [ $(( $3 * 100 - $1 * 75 )) -lt 1700 ] \
+      && [ $(( $4 * 100 - $2 * 75 )) -gt -1700 ] && [ $(( $4 * 100 - $2 * 75 )) -lt 1700 ] || bad="$bad render-size($sized of $base)"
+  else bad="$bad render-size(no sizes)"; fi
+  if [ -z "$bad" ]; then pass "a Vulkan picture smaller than its window is upscaled with MetalFX, switched while running, and a render size shrinks the screen programs see ($sized of $base)"
+  else fail "Vulkan upscaling:$bad"; grep -ah "FineWine\|vulkan-upscale" "$WORK"/up-*.log | tail -n 8; fi
+fi
+
 export WINEPREFIX="$WORK/pfx2" WINEMSYNC=1 WINEDEBUG=-all
 if "$RT/bin/wine" wineboot --init </dev/null >"$WORK/msync.log" 2>&1 && [ -f "$WINEPREFIX/.update-timestamp" ] \
    && [ "$("$RT/bin/wine" cmd /c echo msync-ok </dev/null 2>/dev/null | tr -d '\r')" = "msync-ok" ]; then

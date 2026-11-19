@@ -231,6 +231,11 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
   `finewine-presence` (`runtime-extras/presence-helper`) next to it under the Windows file
   name: no Dock icon, one clear pixel of window, gone when the program ends.
   `FINEWINE_GAME_PRESENCE=0` turns it off.
+- `0040-winemac-win32u-a-menu-switch-for-metalfx-upscaling-and-a-render-size.patch`: View >
+  MetalFX Upscaling (Control-Command-U) switches upscaling while a program runs.
+  `FINEWINE_RENDER_SCALE=<percent>` makes programs see a smaller screen through Wine's display
+  mode emulation, so games draw fewer pixels and MetalFX upscales; sizes are snapped to ones
+  Wine's 16-bit scaling fractions can hold.
 - `0033-winemac-read-the-displays-again-on-activation-only-when-they-changed.patch`: switching
   to a Wine program made Wine read every display again (modes, EDID, GPUs, registry keys) on the
   program's message thread, 2.4 seconds in a game. Now only when the displays differ from what
@@ -363,6 +368,11 @@ builds for the CrossOver payloads do not get these. Apache-2.0, like MoltenVK.
 - `0005-pipeline-cache-header-carries-the-reported-gpu-ids.patch`: with another GPU reported,
   the pipeline cache header still carried Apple's ids, so Unity (Endfield) dropped its cache and
   stopped saving it. The header now carries the reported ids.
+- `0006-upscale-a-swapchain-smaller-than-its-window-with-metalfx.patch`: a swapchain smaller than
+  its layer is in display pixels (a lower resolution in a game, a render size, Retina mode off)
+  is drawn off screen and upscaled into the drawable with MetalFX's spatial scaler at present:
+  what `patches/dxmt/0004` does for Direct3D 11, for Vulkan and Direct3D 12. Same switches as
+  DXMT (`FINEWINE_METALFX_AUTO`, `finewine.metalfx.<process id>`, `FINEWINE_METALFX_SWAPCHAIN=0`).
 
 The patches apply as a series on `0001`. Details and limits are in
 [`docs/project-information/21-metal4-and-ray-tracing.md`](../docs/project-information/21-metal4-and-ray-tracing.md).
@@ -443,5 +453,9 @@ FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`.
   Streamline 2.10 reads the folder of `nvngx.dll` from the value `NGXPath` (driver service key,
   then the global key), not `FullPath`. Both are now written. Without it every NGX call came
   back "not implemented" and Endfield offered no DLSS.
+- `0007-d3d11-winemetal-upscaling-follows-a-switch-that-can-be-thrown-while-running.patch`: the
+  Direct3D 11 upscaling of `0004` can be switched while a program runs. `FINEWINE_METALFX_AUTO=0`
+  only says it starts off; the notification state `finewine.metalfx.<process id>` (1 on, 2 off)
+  overrides it. `FINEWINE_METALFX_SWAPCHAIN=0` turns the mechanism off.
 - `build-arm64ec-finewine.txt` is the meson cross file `scripts/build-dxmt.sh` builds DXMT with.
   It is DXMT's own ARM64EC cross file plus one linker flag (see the comment in the file).

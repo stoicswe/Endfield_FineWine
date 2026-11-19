@@ -281,9 +281,26 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// Give windows that have no Mac title bar (launchers, games in a window) a Mac window's
     /// round corners.
     public var roundedWindows: Bool = true
-    /// Upscale a Direct3D 10 or 11 picture that is smaller than its window to the window's
-    /// display pixels with MetalFX, instead of leaving the stretch to the window server.
+    /// Upscale a picture that is smaller than its window to the window's display pixels with
+    /// MetalFX, instead of leaving the stretch to the window server: Direct3D 10 and 11
+    /// through DXMT, Vulkan and Direct3D 12 through MoltenVK. This is how upscaling starts;
+    /// it can be switched while a program runs (the program's View menu, FineWine's menu).
     public var metalFXUpscaling: Bool = true
+    /// Make programs see a smaller screen, `renderScale` percent of the real one in each
+    /// direction, and upscale what they draw with MetalFX. Only used while
+    /// `metalFXUpscaling` is off: the two are different ways to the same end, one following
+    /// the resolution a game is set to and one setting it from outside.
+    public var renderSizeEnabled: Bool = false
+    /// The render size in percent, 50 to 95.
+    public var renderScale: Int = 75
+    public static let renderScaleRange = 50...95
+    /// The render size as it is used: nil when it is not in effect.
+    public var effectiveRenderScale: Int? {
+        guard !metalFXUpscaling, renderSizeEnabled else { return nil }
+        return min(max(renderScale, Self.renderScaleRange.lowerBound), Self.renderScaleRange.upperBound)
+    }
+    /// Whether upscaling is on when a program starts.
+    public var upscalesAtStart: Bool { metalFXUpscaling || effectiveRenderScale != nil }
     /// Draw programs' icons in the Dock (and their shortcut apps' icons) as Mac app icons: a
     /// rounded square on Apple's icon grid. See `MacIconStyle`. On by default.
     public var macStyleIcons: Bool = true
@@ -340,6 +357,8 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         steamForHoYoverse = try c.decodeIfPresent(Bool.self, forKey: .steamForHoYoverse) ?? d.steamForHoYoverse
         roundedWindows = try c.decodeIfPresent(Bool.self, forKey: .roundedWindows) ?? d.roundedWindows
         metalFXUpscaling = try c.decodeIfPresent(Bool.self, forKey: .metalFXUpscaling) ?? d.metalFXUpscaling
+        renderSizeEnabled = try c.decodeIfPresent(Bool.self, forKey: .renderSizeEnabled) ?? d.renderSizeEnabled
+        renderScale = try c.decodeIfPresent(Int.self, forKey: .renderScale) ?? d.renderScale
         fullScreenMode = try c.decodeIfPresent(FullScreenMode.self, forKey: .fullScreenMode) ?? d.fullScreenMode
         macStyleIcons = try c.decodeIfPresent(Bool.self, forKey: .macStyleIcons) ?? d.macStyleIcons
         // An unknown value (from a newer FineWine) falls back to automatic.
@@ -461,7 +480,10 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         out.append(("FINEWINE_METAL_HUD", metalHUD ? "1" : "0"))
         out.append(("FINEWINE_FULLSCREEN", fullScreenMode.rawValue))
         if !roundedWindows { out.append(("FINEWINE_ROUNDED_WINDOWS", "0")) }
-        if !metalFXUpscaling { out.append(("FINEWINE_METALFX_AUTO", "0")) }
+        // Upscaling starts on with "automatic" or with a render size; a render size also makes
+        // the program see a smaller screen (runtime patch 0040).
+        if let scale = effectiveRenderScale { out.append(("FINEWINE_RENDER_SCALE", String(scale))) }
+        else if !metalFXUpscaling { out.append(("FINEWINE_METALFX_AUTO", "0")) }
         if !macStyleIcons { out.append(("FINEWINE_MAC_ICONS", "0")) }
         if hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
         if zeroPages { out.append(("FINEWINE_ZERO_PAGES", "1")) }

@@ -1,0 +1,81 @@
+d3d11, winemetal: upscaling follows a switch that can be thrown while running
+
+Whether a picture smaller than its window is upscaled with MetalFX (patch 0004) was decided
+when a swap chain was made, from FINEWINE_METALFX_AUTO. Every swap chain is now the kind that
+can upscale (FINEWINE_METALFX_SWAPCHAIN=0 asks for the plain kind), and the Metal bridge, which
+is asked for the layer's size every 30 frames anyway, reports no size while upscaling is off:
+FINEWINE_METALFX_AUTO=0 starts with it off, and the state of the notification
+"finewine.metalfx.<process id>" overrides that (1 on, 2 off). MoltenVK reads the same switch
+(patches/moltenvk/0006); the Mac driver's View menu and the FineWine app set it.
+
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -9,8 +9,41 @@
+ #include "objc/objc-runtime.h"
+ #include <bootstrap.h>
+ #include <mach/mach_port.h>
++#include <notify.h>
++#include <time.h>
+ #define WINEMETAL_API
+ #include "../winemetal_thunks.h"
++
++/* FineWine: whether a picture smaller than its window is to be upscaled by MetalFX. The
++ * switch can be thrown while the program runs: FINEWINE_METALFX_AUTO=0 starts with it off,
++ * and the state of the notification "finewine.metalfx.<process id>" overrides that (1 on,
++ * 2 off, 0 not said), which is what the Mac driver's View menu and the FineWine app set.
++ * MoltenVK reads the same switch for Vulkan swap chains. Looked up four times a second. */
++static int
++finewine_upscaling_wanted(void) {
++  static _Atomic int token = NOTIFY_TOKEN_INVALID, by_default = -1, last = 1;
++  static _Atomic uint64_t checked;
++  uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW), state = 0;
++  int t;
++
++  if (by_default < 0) {
++    const char *e = getenv("FINEWINE_METALFX_AUTO");
++    char name[64];
++    snprintf(name, sizeof(name), "finewine.metalfx.%d", getpid());
++    if (notify_register_check(name, &t) == NOTIFY_STATUS_OK)
++      token = t;
++    by_default = !(e && e[0] == '0');
++    last = by_default;
++  } else if (now - checked < 250000000ull) {
++    return last;
++  }
++  checked = now;
++  if (token != NOTIFY_TOKEN_INVALID && notify_get_state(token, &state) == NOTIFY_STATUS_OK && state)
++    last = state == 1;
++  else
++    last = by_default;
++  return last;
++}
+ #include "../airconv_thunks.h"
+ 
+ typedef int NTSTATUS;
+@@ -1680,6 +1713,10 @@
+       scale = 1;
+     props->native_width = size.width * scale;
+     props->native_height = size.height * scale;
++    /* FineWine: with upscaling switched off the layer is said to have no size of its own,
++     * and a swap chain then leaves its picture to the window server as it always did. */
++    if (!finewine_upscaling_wanted())
++      props->native_width = props->native_height = 0;
+   }
+   return STATUS_SUCCESS;
+ }
+diff --git a/src/d3d11/d3d11_swapchain.cpp b/src/d3d11/d3d11_swapchain.cpp
+--- a/src/d3d11/d3d11_swapchain.cpp
++++ b/src/d3d11/d3d11_swapchain.cpp
+@@ -1230,7 +1230,10 @@
+   }
+   /* FineWine: also when nothing asked for it, so that a picture smaller than its window is
+    * upscaled by MetalFX (ChooseUpscaledSize); such a swap chain costs nothing otherwise. */
+-  if (env::getEnvVar("DXMT_METALFX_SPATIAL_SWAPCHAIN") == "1" || env::getEnvVar("FINEWINE_METALFX_AUTO") != "0") {
++  /* FINEWINE_METALFX_AUTO=0 only says that upscaling starts switched off: the switch can be
++   * thrown while the program runs (the Metal bridge reads it, see getProps), so the swap
++   * chain is this kind either way. FINEWINE_METALFX_SWAPCHAIN=0 asks for the plain kind. */
++  if (env::getEnvVar("DXMT_METALFX_SPATIAL_SWAPCHAIN") == "1" || env::getEnvVar("FINEWINE_METALFX_SWAPCHAIN") != "0") {
+     if (pDevice->GetMTLDevice().supportsFXSpatialScaler()) {
+       *ppSwapChain = new MTLD3D11SwapChain<true>(
+           pFactory, pDevice, layer_factory.ptr(), hWnd, pDesc, pFullscreenDesc
