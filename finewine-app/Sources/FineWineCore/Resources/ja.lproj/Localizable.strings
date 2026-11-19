@@ -17,6 +17,7 @@
 "app.edit" = "編集…";
 "app.show_in_finder" = "Finder で表示";
 "app.running" = "実行中";
+"prefix.size_help" = "このプレフィックスが、インストールされたものすべてを含めてドライブ上で使用している容量です。";
 "app.none" = "なし";
 "app.default" = "デフォルト";
 "app.on" = "オン";

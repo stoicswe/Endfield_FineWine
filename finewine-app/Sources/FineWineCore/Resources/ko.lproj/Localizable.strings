@@ -17,6 +17,7 @@
 "app.edit" = "편집…";
 "app.show_in_finder" = "Finder에서 보기";
 "app.running" = "실행 중";
+"prefix.size_help" = "이 프리픽스가 설치된 모든 것을 포함해 드라이브에서 차지하는 공간입니다.";
 "app.none" = "없음";
 "app.default" = "기본값";
 "app.on" = "켜짐";

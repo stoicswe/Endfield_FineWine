@@ -17,6 +17,7 @@
 "app.edit" = "編輯…";
 "app.show_in_finder" = "在 Finder 中顯示";
 "app.running" = "執行中";
+"prefix.size_help" = "此前置環境連同其中安裝的所有內容在磁碟上佔用的空間。";
 "app.none" = "無";
 "app.default" = "預設";
 "app.on" = "開啟";

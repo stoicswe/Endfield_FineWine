@@ -17,6 +17,7 @@
 "app.edit" = "编辑…";
 "app.show_in_finder" = "在访达中显示";
 "app.running" = "运行中";
+"prefix.size_help" = "此前缀连同其中安装的所有内容在磁盘上占用的空间。";
 "app.none" = "无";
 "app.default" = "默认";
 "app.on" = "开启";

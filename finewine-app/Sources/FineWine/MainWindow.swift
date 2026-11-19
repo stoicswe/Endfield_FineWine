@@ -63,6 +63,18 @@ struct MainWindow: View {
                                 .help(l10n.tr("drive.stored_on", model.placeName(prefix.place)))
                         }
                         Spacer()
+                        if let size = model.sizeText(for: prefix) {
+                            // how much space the prefix takes on its drive
+                            Text(size)
+                                .font(.caption2.weight(.medium).monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .fixedSize()
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.quaternary, in: Capsule())
+                                .help(l10n.tr("prefix.size_help"))
+                        }
                         if model.busy[prefix.id] != nil {
                             ProgressView().controlSize(.small)
                         } else if model.isRunning(prefix) {

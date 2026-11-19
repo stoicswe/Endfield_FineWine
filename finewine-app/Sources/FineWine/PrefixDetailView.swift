@@ -72,6 +72,9 @@ struct PrefixDetailView: View {
                             Pill(text: l10n.tr("detail.no_runtime"), symbol: "exclamationmark.triangle", tint: .orange)
                         }
                         if let profile = model.profile(for: prefix) { Pill(text: profile.name, symbol: "gamecontroller") }
+                        if let size = model.sizeText(for: prefix) {
+                            Pill(text: size, symbol: "internaldrive").help(l10n.tr("prefix.size_help"))
+                        }
                         if model.isRunning(prefix) { Pill(text: l10n.tr("app.running"), symbol: "play.fill", tint: .green) }
                         if prefix.metadata.settings != prefix.metadata.appliedSettings {
                             Pill(text: l10n.tr("detail.settings_not_applied"), symbol: "clock.arrow.circlepath", tint: .orange)

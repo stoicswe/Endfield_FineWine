@@ -35,6 +35,12 @@ final class AppModel: ObservableObject {
     /// MetalFX upscaling as it was switched from FineWine's menu while a prefix runs; a
     /// prefix that is not here goes by its settings. Forgotten when the prefix stops.
     @Published var liveUpscaling: [UUID: Bool] = [:]
+    /// The space each prefix takes on its drive, in bytes, once it has been measured. Walking
+    /// a prefix with a large game in it takes a few seconds, so it is done in the background,
+    /// one prefix at a time, and again only after a while.
+    @Published var prefixSizes: [UUID: Int64] = [:]
+    private var sizesMeasuredAt: [UUID: Date] = [:]
+    private var sizeMeasuringUnderWay = false
     private var aliveTimer: Timer?
     private var aliveLookupUnderWay = false
     /// What a prefix is busy with ("Setting up…"), shown in place of its controls.
@@ -184,7 +190,7 @@ final class AppModel: ObservableObject {
     // MARK: State
 
     func reload() {
-        defer { watchRunningPrefixes() }
+        defer { watchRunningPrefixes(); measurePrefixSizes() }
         service.prefixes.refreshDrives()
         prefixes = service.prefixes.list()
         drives = service.prefixes.drives.drives
@@ -232,6 +238,38 @@ final class AppModel: ObservableObject {
         let service = UncheckedBox(service)
         Task.detached(priority: .userInitiated) {
             LiveUpscaling.set(on, processIDs: service.value.findProcesses(prefix.directory))
+        }
+    }
+
+    /// A prefix's size as text ("12.4 GB"), nil until it has been measured.
+    func sizeText(for prefix: Prefix) -> String? {
+        prefixSizes[prefix.id].map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+    }
+
+    /// Measures the prefixes that have not been measured in the last `maxAge` seconds (all of
+    /// them with 0). Links are not followed: a prefix's z: drive points at the whole Mac.
+    func measurePrefixSizes(maxAge: TimeInterval = 300) {
+        guard !sizeMeasuringUnderWay else { return }
+        let now = Date()
+        let due = prefixes.filter { prefix in
+            guard let last = sizesMeasuredAt[prefix.id] else { return true }
+            return now.timeIntervalSince(last) >= maxAge
+        }
+        for id in prefixSizes.keys where !prefixes.contains(where: { $0.id == id }) {
+            prefixSizes[id] = nil
+            sizesMeasuredAt[id] = nil
+        }
+        guard !due.isEmpty else { return }
+        sizeMeasuringUnderWay = true
+        Task { @MainActor in
+            for prefix in due {
+                let folder = prefix.directory
+                let bytes = await Task.detached(priority: .utility) { FolderCopy.measure(folder).allocated }.value
+                // a prefix that was deleted or unplugged meanwhile measures as nothing
+                if FileManager.default.fileExists(atPath: folder.path) { prefixSizes[prefix.id] = bytes }
+                sizesMeasuredAt[prefix.id] = Date()
+            }
+            sizeMeasuringUnderWay = false
         }
     }
 

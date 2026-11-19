@@ -17,6 +17,7 @@
 "app.edit" = "Edit…";
 "app.show_in_finder" = "Show in Finder";
 "app.running" = "Running";
+"prefix.size_help" = "The space this prefix takes on its drive, with everything installed in it.";
 "app.none" = "None";
 "app.default" = "Default";
 "app.on" = "On";
