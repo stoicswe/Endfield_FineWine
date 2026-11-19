@@ -270,6 +270,8 @@
 "config.env_footnote" = "Set for every program in this prefix.";
 "config.debug_card" = "Debugging";
 "config.debug_footnote" = "Wine debug channels (WINEDEBUG). “-all” is silent and fastest; “err+all” logs errors. Output goes to the prefix's logs.";
+"config.streamline_log_title" = "Log the DLSS layer (NVIDIA Streamline)";
+"config.streamline_log_desc" = "Games reach DLSS and frame generation through NVIDIA's Streamline, which can write down every check it makes and which one fails. With this on, a game that uses it writes “%@” at the top of this prefix's C: drive. For finding out why a game does not offer DLSS; leave off otherwise.";
 "config.msync_note" = "MSync needs a runtime built with it; FineWine's own runtime is. Every program in a prefix must use the same setting, so stop running programs before changing it.";
 "config.graphics_note" = "“%@” doesn't include %@, so programs will use WineD3D until a runtime that has it is chosen.";
 "config.changes_running" = "Changes apply to programs started after this. Running ones keep their old settings.";

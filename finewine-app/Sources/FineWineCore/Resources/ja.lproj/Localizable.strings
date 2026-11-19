@@ -270,6 +270,8 @@
 "config.env_footnote" = "このプレフィックス内の全プログラムに設定されます。";
 "config.debug_card" = "デバッグ";
 "config.debug_footnote" = "Wine デバッグチャンネル (WINEDEBUG)。「-all」は完全非表示で最速、「err+all」はエラーを記録します。";
+"config.streamline_log_title" = "DLSS レイヤー（NVIDIA Streamline）のログを記録";
+"config.streamline_log_desc" = "ゲームは NVIDIA の Streamline を通じて DLSS とフレーム生成を利用します。Streamline は、行ったすべての確認と失敗した項目を記録できます。オンにすると、Streamline を使うゲームがこのプレフィックスの C: ドライブ直下に「%@」を書き出します。ゲームが DLSS を表示しない原因を調べるためのもので、通常はオフのままにしてください。";
 "config.msync_note" = "MSync は対応ビルドのランタイム（FineWine 標準ランタイムに付属）が必要です。変更前に実行中のプログラムを停止してください。";
 "config.graphics_note" = "「%@」には %@ が含まれていないため、含まれるランタイムを選択するまで WineD3D が使用されます。";
 "config.changes_running" = "変更はこの後に起動するプログラムから適用されます。実行中のものは旧設定を維持します。";

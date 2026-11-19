@@ -439,5 +439,9 @@ FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`.
   `NvAPI_GetLogicalGPUFromPhysicalGPU`, where NVIDIA's Streamline stopped at startup in Endfield
   with the GPU reported as NVIDIA, and makes DXGI and NVAPI report Wine's adapter LUID so it
   agrees with `D3DKMTEnumAdapters2` and Vulkan. Whether the game then offers DLSS is untested.
+- `0006-dxgi-register-nvngx-under-the-name-newer-ngx-sdks-read.patch`: the NGX SDK inside
+  Streamline 2.10 reads the folder of `nvngx.dll` from the value `NGXPath` (driver service key,
+  then the global key), not `FullPath`. Both are now written. Without it every NGX call came
+  back "not implemented" and Endfield offered no DLSS.
 - `build-arm64ec-finewine.txt` is the meson cross file `scripts/build-dxmt.sh` builds DXMT with.
   It is DXMT's own ARM64EC cross file plus one linker flag (see the comment in the file).

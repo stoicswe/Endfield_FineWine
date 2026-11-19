@@ -201,6 +201,17 @@ final class PrefixSettingsTests: XCTestCase {
                              "DXMT_CONFIG": "dxgi.customVendorId=106b", "MY_FLAG": "1"])
     }
 
+    func testStreamlineLogSetsStreamlinesOwnVariables() throws {
+        var settings = PrefixSettings()
+        XCTAssertNil(Dictionary(uniqueKeysWithValues: settings.environmentVariables().map { ($0.name, $0.value) })["SL_LOG_LEVEL"])
+        settings.streamlineLog = true
+        let env = Dictionary(uniqueKeysWithValues: settings.environmentVariables().map { ($0.name, $0.value) })
+        XCTAssertEqual(env["SL_LOG_LEVEL"], "2")
+        XCTAssertEqual(env["SL_LOG_PATH"], #"C:\"#)
+        XCTAssertEqual(env["SL_LOG_NAME"], "streamline.log")
+        XCTAssertTrue(try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(settings)).streamlineLog)
+    }
+
     func testEmptyDebugChannelsFallBackToSilent() {
         var settings = PrefixSettings()
         settings.debugChannels = ""

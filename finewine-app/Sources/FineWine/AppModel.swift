@@ -28,6 +28,12 @@ final class AppModel: ObservableObject {
     @Published var selection: UUID?
     /// Live process ids started from FineWine, per prefix.
     @Published var running: [UUID: Set<Int32>] = [:]
+    /// The prefixes that have processes right now, however they were started: a launcher
+    /// FineWine started ends once it has started the game, and programs are also started from
+    /// their Mac apps or were running before FineWine was opened. Looked up every few seconds.
+    @Published var alive: Set<UUID> = []
+    private var aliveTimer: Timer?
+    private var aliveLookupUnderWay = false
     /// What a prefix is busy with ("Setting up…"), shown in place of its controls.
     @Published var busy: [UUID: String] = [:]
     /// Copies under way (a move, snapshot or restore), by prefix, so they can be cancelled.
@@ -175,6 +181,7 @@ final class AppModel: ObservableObject {
     // MARK: State
 
     func reload() {
+        defer { watchRunningPrefixes() }
         service.prefixes.refreshDrives()
         prefixes = service.prefixes.list()
         drives = service.prefixes.drives.drives
@@ -206,7 +213,34 @@ final class AppModel: ObservableObject {
     func prefix(_ id: UUID?) -> Prefix? { prefixes.first { $0.id == id } }
     func runtime(for prefix: Prefix) -> WineRuntime? { runtimes.first { $0.id == prefix.metadata.runtimeID } }
     func profile(for prefix: Prefix) -> GameProfile? { profiles.first { $0.id == prefix.metadata.profileID } }
-    func isRunning(_ prefix: Prefix) -> Bool { !(running[prefix.id] ?? []).isEmpty }
+    func isRunning(_ prefix: Prefix) -> Bool { !(running[prefix.id] ?? []).isEmpty || alive.contains(prefix.id) }
+
+    /// Starts looking, every few seconds, for which prefixes have processes.
+    func watchRunningPrefixes() {
+        guard aliveTimer == nil else { return }
+        let timer = Timer(timeInterval: 4, repeats: true) { _ in
+            Task { @MainActor in AppModel.shared.refreshAlive() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        aliveTimer = timer
+        refreshAlive()
+    }
+
+    /// Looks once for which prefixes have processes. The looking runs `lsof` and `ps`, so it
+    /// is done off the main thread, and never twice at the same time.
+    func refreshAlive() {
+        guard !aliveLookupUnderWay else { return }
+        aliveLookupUnderWay = true
+        let all = prefixes
+        let service = UncheckedBox(service)
+        Task { @MainActor in
+            let found = await Task.detached(priority: .utility) {
+                Set(all.filter { !service.value.findProcesses($0.directory).isEmpty }.map(\.id))
+            }.value
+            aliveLookupUnderWay = false
+            if found != alive { alive = found }
+        }
+    }
     var runningCount: Int { running.values.reduce(0) { $0 + $1.count } }
 
     private func replace(_ prefix: Prefix) {
@@ -295,6 +329,8 @@ final class AppModel: ObservableObject {
             try $0.deletePrefix(prefix)
         }
         running[prefix.id] = nil
+        alive.remove(prefix.id)
+        refreshAlive()
         reload()
     }
 
@@ -303,6 +339,8 @@ final class AppModel: ObservableObject {
             try $0.stopAll(in: prefix)
         }
         running[prefix.id] = nil
+        alive.remove(prefix.id)
+        refreshAlive()
     }
 
     /// Asks every program in the prefix to close, as shutting Windows down does.
@@ -311,6 +349,8 @@ final class AppModel: ObservableObject {
             try $0.shutDown(prefix)
         }
         running[prefix.id] = nil
+        alive.remove(prefix.id)
+        refreshAlive()
     }
 
     /// Ends everything in the prefix at once, frozen programs included.
@@ -319,6 +359,8 @@ final class AppModel: ObservableObject {
             try $0.forceShutDown(prefix)
         }
         running[prefix.id] = nil
+        alive.remove(prefix.id)
+        refreshAlive()
     }
 
     // MARK: Discord

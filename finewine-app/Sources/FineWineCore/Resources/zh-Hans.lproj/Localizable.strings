@@ -270,6 +270,8 @@
 "config.env_footnote" = "对该容器内的所有程序统一生效。";
 "config.debug_card" = "调试输出";
 "config.debug_footnote" = "Wine 调试输出通道 (WINEDEBUG)。“-all”完全静默且速度最快；“err+all”记录错误信息。";
+"config.streamline_log_title" = "记录 DLSS 层（NVIDIA Streamline）日志";
+"config.streamline_log_desc" = "游戏通过 NVIDIA 的 Streamline 使用 DLSS 和帧生成。Streamline 可以记录它所做的每一项检查以及哪一项失败。开启后，使用它的游戏会在此前缀 C: 盘的根目录写入“%@”。用于查明游戏为何不提供 DLSS；平时请保持关闭。";
 "config.msync_note" = "MSync 需要支持此特性的运行时编译版（FineWine 官方运行时已内置）。修改此项前请先关闭运行中的程序。";
 "config.graphics_note" = "“%@” 不包含 %@，在切换到包含它的运行时之前，程序将自动回退使用 WineD3D。";
 "config.changes_running" = "改动将在随后启动的程序中生效。当前运行中的程序保持原有设置。";

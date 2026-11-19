@@ -1,0 +1,64 @@
+dxgi: register nvngx.dll under the name newer NGX SDKs read
+
+With its NVIDIA stand-ins on, DXMT tells the NGX SDK inside a game where nvngx.dll is by
+writing "FullPath" under HKLM\SOFTWARE\NVIDIA Corporation\Global\NGXCore. The SDK built into
+Streamline 2.10 (NGX 3.10.5, in Arknights: Endfield) does not read that value: it looks for
+"NGXPath" under the driver's service key (...\Services\nvlddmkm\Parameters\NGXCore, then
+...\nvlddmkm\NGXCore) and then under the key above. It found nothing, every NGX call came back
+"not implemented" (Streamline's log: "getNGXFeatureRequirements ngxResult not implemented"),
+and the game offered no DLSS. "NGXPath" is now written to the service key and the global key,
+and removed with the rest when the stand-ins are off.
+
+diff --git a/src/dxgi/dxgi.cpp b/src/dxgi/dxgi.cpp
+--- a/src/dxgi/dxgi.cpp
++++ b/src/dxgi/dxgi.cpp
+@@ -17,9 +17,13 @@
+ #ifdef __i386__
+   return;
+ #endif
+-  HKEY key1 = nullptr, key2 = nullptr, key3 = nullptr;
++  HKEY key1 = nullptr, key2 = nullptr, key3 = nullptr, key4 = nullptr;
+   auto name1 = L"{41FCC608-8496-4DEF-B43E-7D9BD675A6FF}";
+   auto name2 = L"FullPath";
++  // FineWine: newer NGX SDKs (seen: 3.10.5 inside Streamline 2.10) look for the folder of
++  // nvngx.dll under the value "NGXPath", first in the driver's service key and then in the
++  // key above; they do not read "FullPath". Without it they find no NGX at all.
++  auto name4 = L"NGXPath";
+   WCHAR value3[] = L"C:\\Windows\\System32";
+   if (RegCreateKeyExW(HKEY_LOCAL_MACHINE,
+                       L"SOFTWARE\\NVIDIA Corporation\\Global", 0, nullptr, 0,
+@@ -29,18 +33,25 @@
+                       0, KEY_ALL_ACCESS, nullptr, &key2, nullptr) ||
+       RegCreateKeyExW(HKEY_LOCAL_MACHINE,
+                       L"SOFTWARE\\NVIDIA Corporation\\Global\\NGXCore", 0,
+-                      nullptr, 0, KEY_ALL_ACCESS, nullptr, &key3, nullptr)) {
++                      nullptr, 0, KEY_ALL_ACCESS, nullptr, &key3, nullptr) ||
++      RegCreateKeyExW(HKEY_LOCAL_MACHINE,
++                      L"SYSTEM\\ControlSet001\\Services\\nvlddmkm\\NGXCore", 0,
++                      nullptr, 0, KEY_ALL_ACCESS, nullptr, &key4, nullptr)) {
+     goto cleanup;
+   }
+   if (env::getEnvVar("DXMT_ENABLE_NVEXT") != "1") {
+     RegDeleteValueW(key1, name1);
+     RegDeleteValueW(key2, name1);
+     RegDeleteValueW(key3, name2);
++    RegDeleteValueW(key3, name4);
++    RegDeleteValueW(key4, name4);
+   } else {
+     DWORD _1 = 1;
+     RegSetValueExW(key1, name1, 0, REG_DWORD, (const BYTE *)&_1, sizeof(_1));
+     RegSetValueExW(key2, name1, 0, REG_DWORD, (const BYTE *)&_1, sizeof(_1));
+     RegSetValueExW(key3, name2, 0, REG_SZ, (const BYTE *)value3, sizeof(value3));
++    RegSetValueExW(key3, name4, 0, REG_SZ, (const BYTE *)value3, sizeof(value3));
++    RegSetValueExW(key4, name4, 0, REG_SZ, (const BYTE *)value3, sizeof(value3));
+     Logger::info("Vendor extension enabled: NVEXT");
+     g_extension_enabled = VendorExtension::Nvidia;
+   }
+@@ -48,6 +59,7 @@
+   if (key1) RegCloseKey(key1);
+   if (key2) RegCloseKey(key2);
+   if (key3) RegCloseKey(key3);
++  if (key4) RegCloseKey(key4);
+ };
+ 
+ static void InitializeMetalCachePath() {

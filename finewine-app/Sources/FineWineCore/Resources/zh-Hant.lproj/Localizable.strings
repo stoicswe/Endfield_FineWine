@@ -270,6 +270,8 @@
 "config.env_footnote" = "對該容器內的所有程式統一設定。";
 "config.debug_card" = "除錯輸出";
 "config.debug_footnote" = "Wine 除錯通道 (WINEDEBUG)。「-all」完全靜音且速度最快；「err+all」記錄錯誤資訊。";
+"config.streamline_log_title" = "記錄 DLSS 層（NVIDIA Streamline）日誌";
+"config.streamline_log_desc" = "遊戲透過 NVIDIA 的 Streamline 使用 DLSS 和畫格生成。Streamline 可以記錄它所做的每一項檢查以及哪一項失敗。開啟後，使用它的遊戲會在此前置環境 C: 磁碟的根目錄寫入「%@」。用於查明遊戲為何不提供 DLSS；平時請保持關閉。";
 "config.msync_note" = "MSync 需要支援此特性的執行階段組建（FineWine 官方執行階段已內建）。修改此項前請先停止執行中的程式。";
 "config.graphics_note" = "「%@」不包含 %@，在切換到包含它的執行階段之前，程式將自動改用 WineD3D。";
 "config.changes_running" = "變更將在隨後啟動的程式中生效。目前執行中的程式保持原有設定。";

@@ -300,6 +300,12 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     public var macAppearance: Bool = true
     /// Wine debug channels (`WINEDEBUG`). `-all` is silent and fastest.
     public var debugChannels: String = "-all"
+    /// Have NVIDIA's Streamline, the layer games reach DLSS and frame generation through, write
+    /// its detailed log: each check it makes for a feature and which one fails. The switch is
+    /// Streamline's own (`SL_LOG_LEVEL` and friends), so it works in any game that ships it.
+    public var streamlineLog: Bool = false
+    /// The log's file name, at the top of the prefix's C: drive.
+    public static let streamlineLogName = "streamline.log"
 
     public init() {}
 
@@ -326,6 +332,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         zeroPages = try c.decodeIfPresent(Bool.self, forKey: .zeroPages) ?? d.zeroPages
         compactBlockRecords = try c.decodeIfPresent(Bool.self, forKey: .compactBlockRecords) ?? d.compactBlockRecords
         debugChannels = try c.decodeIfPresent(String.self, forKey: .debugChannels) ?? d.debugChannels
+        streamlineLog = try c.decodeIfPresent(Bool.self, forKey: .streamlineLog) ?? d.streamlineLog
         macAppearance = try c.decodeIfPresent(Bool.self, forKey: .macAppearance) ?? d.macAppearance
         dlssThroughMetalFX = try c.decodeIfPresent(Bool.self, forKey: .dlssThroughMetalFX) ?? d.dlssThroughMetalFX
         reportNvidiaGPU = try c.decodeIfPresent(Bool.self, forKey: .reportNvidiaGPU) ?? d.reportNvidiaGPU
@@ -459,6 +466,11 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         if hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
         if zeroPages { out.append(("FINEWINE_ZERO_PAGES", "1")) }
         if compactBlockRecords { out.append(("FEX_COMPACTBLOCKRECORDS", "1")) }
+        if streamlineLog {
+            out.append(("SL_LOG_LEVEL", "2"))       // 2: verbose
+            out.append(("SL_LOG_PATH", "C:\\"))
+            out.append(("SL_LOG_NAME", Self.streamlineLogName))
+        }
         // Wine takes the ANSI code page from LC_CTYPE, and the interface language from
         // LC_MESSAGES or LANG (or, with neither, the Mac's language), which stay as they are.
         // LC_ALL would override LC_CTYPE, so the environment drops it (LaunchPlanner).
