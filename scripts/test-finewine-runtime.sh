@@ -777,13 +777,14 @@ if [ -x "$RT/lib/wine/aarch64-unix/finewine-presence" ] && [ -x "$MINGW" ] \
     perl -e 'select(undef, undef, undef, 0.1)'
   done
   wait "$presence_pid" 2>/dev/null
+  # The program's process can take a few seconds to finish after its launcher has returned.
   left=1
-  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
     case "$(ps -axww -o command)" in *"/.finewine-apps/presence/Presence Test/presence-game.exe "*) ;; *) left=0; break ;; esac
-    perl -e 'select(undef, undef, undef, 0.1)'
+    perl -e 'select(undef, undef, undef, 0.5)'
   done
   if [ "$seen" = 1 ] && [ "$left" = 0 ]; then pass "a program has a stand-in under its Windows file name while it runs (for Discord)"
-  else fail "presence stand-in: seen=$seen still-there=$left"; fi
+  else fail "presence stand-in: seen=$seen still-there=$left"; ps -axww -o pid,ppid,etime,command | grep -E "presence|Presence" | grep -v grep | cut -c1-260; fi
 else
   echo "  - presence stand-in not checked: no finewine-presence in this runtime, or no llvm-mingw"
 fi
