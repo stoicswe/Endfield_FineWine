@@ -1,0 +1,65 @@
+Pipeline cache header carries the reported GPU ids
+
+With FINEWINE_GPU_VENDOR_ID / FINEWINE_GPU_DEVICE_ID set, applications are told another
+vendor and device than the pipeline cache header carried. Unity checks the header against
+the device's properties: Endfield logged "Vulkan PSO: Incompatible header found
+[Vendor=106b]", dropped its whole cache and stopped saving it ("Invalid vulkan pipeline
+cache header, skipping save to disk"), so every start compiled all shaders again. The header
+is now written and checked with the reported ids. A cache saved under other ids is still
+rejected once, by the game, when the setting changes.
+
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h
+@@ -1325,6 +1325,12 @@
+ 
+ #pragma mark -
+ #pragma mark Support functions
++
++/**
++ * FineWine: replaces the vendor id, device id and name in the properties with the ones a
++ * prefix asks to have reported (FINEWINE_GPU_VENDOR_ID, FINEWINE_GPU_DEVICE_ID, FINEWINE_GPU_NAME).
++ */
++void mvkApplyReportedGPUIDs(VkPhysicalDeviceProperties* properties);
+ 
+ /**
+  * Returns an autoreleased array containing the MTLDevices available on this system,
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+@@ -830,7 +830,7 @@
+ // only offer DLSS on an NVIDIA adapter. FINEWINE_GPU_VENDOR_ID and FINEWINE_GPU_DEVICE_ID, in
+ // hexadecimal, and FINEWINE_GPU_NAME replace what applications are told. MoltenVK's own
+ // decisions keep using the real ids.
+-static void mvkApplyReportedGPUIDs(VkPhysicalDeviceProperties* properties) {
++void mvkApplyReportedGPUIDs(VkPhysicalDeviceProperties* properties) {
+ 	static uint32_t vendorID = 0, deviceID = 0;
+ 	static char name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE] = {};
+ 	static dispatch_once_t once;
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+@@ -2764,7 +2764,12 @@
+ 	cereal::BinaryOutputArchive writer(outstream);
+ 
+ 	// Write the data header...after ensuring correct byte-order.
+-	auto& devProps = getDeviceProperties();
++	// FineWine: the header carries the ids the application is told (a prefix can ask for
++	// another GPU to be reported). A program that checks the header against the device's
++	// properties, as Unity does, otherwise throws its whole pipeline cache away and stops
++	// saving it.
++	VkPhysicalDeviceProperties devProps = getDeviceProperties();
++	mvkApplyReportedGPUIDs(&devProps);
+ 	writer(NSSwapHostIntToLittle(kDataHeaderSize));
+ 	writer(NSSwapHostIntToLittle(VK_PIPELINE_CACHE_HEADER_VERSION_ONE));
+ 	writer(NSSwapHostIntToLittle(devProps.vendorID));
+@@ -2831,7 +2836,8 @@
+ 		// Read the data header...and ensure correct byte-order.
+ 		uint32_t hdrComponent;
+ 		uint8_t pcUUID[VK_UUID_SIZE];
+-		auto& dvcProps = getDeviceProperties();
++		VkPhysicalDeviceProperties dvcProps = getDeviceProperties();
++		mvkApplyReportedGPUIDs(&dvcProps);		// FineWine: see writeData()
+ 
+ 		reader(hdrComponent);	// Header size
+ 		if (NSSwapLittleIntToHost(hdrComponent) !=  kDataHeaderSize) { return; }

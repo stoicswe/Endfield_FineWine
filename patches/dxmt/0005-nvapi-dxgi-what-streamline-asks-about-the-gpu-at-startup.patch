@@ -1,0 +1,141 @@
+nvapi, dxgi: what Streamline asks about the GPU at startup
+
+Arknights: Endfield starts NVIDIA's Streamline, which decides at startup which adapters can
+run DLSS and frame generation. With the GPU reported as NVIDIA it stopped at
+NvAPI_GetLogicalGPUFromPhysicalGPU, which nvapi64.dll did not have, and the game then
+offered neither. The function is added: a logical GPU is its one physical GPU here.
+
+Streamline also matches the adapter between DXGI, NVAPI, D3DKMTEnumAdapters2 and Vulkan by
+its LUID. DXMT made its own from Metal's registry id while Wine (and Vulkan through Wine)
+report Wine's. DXGI and NVAPI now report Wine's when Wine has exactly one adapter, so all
+four agree (checked with a test program that asks all four).
+
+diff --git a/src/util/util_d3dkmt.h b/src/util/util_d3dkmt.h
+--- a/src/util/util_d3dkmt.h
++++ b/src/util/util_d3dkmt.h
+@@ -653,4 +653,51 @@
+   }
+ }
+ 
+-#endif
+\ No newline at end of file
++#endif
++
++// FineWine: the id Wine itself gives the display adapter (what D3DKMTEnumAdapters2 and
++// Vulkan's deviceLUID report). DXGI and NVAPI have to give the same one: a program that
++// asks several of these about its GPU, as NVIDIA's Streamline does, otherwise sees adapters
++// that do not belong together. Only taken when Wine has exactly one adapter.
++inline bool FineWineAdapterLuid(LUID *luid) {
++  struct AdapterInfo {
++    D3DKMT_HANDLE hAdapter;
++    LUID AdapterLuid;
++    ULONG NumOfSources;
++    BOOL bPrecisePresentRegionsPreferred;
++  };
++  struct EnumAdapters2 {
++    ULONG NumAdapters;
++    AdapterInfo *pAdapters;
++  };
++  static LUID cached = {};
++  static volatile LONG state = 0; // 0 not asked, 1 found, 2 none
++  if (!state) {
++    LONG result = 2;
++    HMODULE gdi32 = GetModuleHandleA("gdi32.dll");
++    if (!gdi32)
++      gdi32 = LoadLibraryA("gdi32.dll");
++    auto enum_adapters =
++        gdi32 ? (NTSTATUS(WINAPI *)(EnumAdapters2 *))(void *)GetProcAddress(gdi32, "D3DKMTEnumAdapters2") : nullptr;
++    auto close_adapter = gdi32
++                             ? (NTSTATUS(WINAPI *)(D3DKMT_CLOSEADAPTER *))(void *)GetProcAddress(gdi32, "D3DKMTCloseAdapter")
++                             : nullptr;
++    AdapterInfo adapters[8] = {};
++    EnumAdapters2 desc = {8, adapters};
++    if (enum_adapters && !enum_adapters(&desc)) {
++      if (desc.NumAdapters == 1) {
++        cached = adapters[0].AdapterLuid;
++        result = 1;
++      }
++      for (ULONG i = 0; close_adapter && i < desc.NumAdapters && i < 8; i++) {
++        D3DKMT_CLOSEADAPTER close = {adapters[i].hAdapter};
++        close_adapter(&close);
++      }
++    }
++    state = result;
++  }
++  if (state != 1)
++    return false;
++  *luid = cached;
++  return true;
++}
+diff --git a/src/nvapi/nvapi.cpp b/src/nvapi/nvapi.cpp
+--- a/src/nvapi/nvapi.cpp
++++ b/src/nvapi/nvapi.cpp
+@@ -6,6 +6,7 @@
+ #include "util_string.hpp"
+ #include "winemetal.h"
+ #include "wsi_monitor.hpp"
++#include "util_d3dkmt.h"
+ #include <string>
+ #define __NVAPI_EMPTY_SAL
+ #include "nvapi.h"
+@@ -293,7 +294,19 @@
+   for (unsigned i = 0; i < adapter_count; i++) {
+     nvGPUHandle[i] = (NvLogicalGpuHandle)devices.object(i).registryID();
+   }
++
++  return NVAPI_OK;
++}
++
++// FineWine: Streamline asks for this before anything else about a GPU and gives up on the
++// adapter without it. A logical GPU is its one physical GPU here, as NvAPI_EnumLogicalGPUs
++// already has it.
++NVAPI_INTERFACE
++NvAPI_GetLogicalGPUFromPhysicalGPU(NvPhysicalGpuHandle hPhysicalGPU, NvLogicalGpuHandle *pLogicalGPU) {
++  if (!hPhysicalGPU || !pLogicalGPU)
++    return NVAPI_INVALID_ARGUMENT;
+ 
++  *pLogicalGPU = (NvLogicalGpuHandle)hPhysicalGPU;
+   return NVAPI_OK;
+ }
+ 
+@@ -732,6 +745,9 @@
+   /**
+   TODO: duplicated impl in `dxgi_adapter.cpp`
+   */
++  LUID wine_luid;
++  if (FineWineAdapterLuid(&wine_luid))
++    return wine_luid;
+   return std::bit_cast<LUID>(__builtin_bswap64(device.registryID()));
+ }
+ 
+@@ -899,6 +915,8 @@
+     return (void *)&NvAPI_GPU_GetAdapterIdFromPhysicalGpu;
+   case 0x842b066e:
+     return (void *)&NvAPI_GPU_GetLogicalGpuInfo;
++  case 0xadd604d1:
++    return (void *)&NvAPI_GetLogicalGPUFromPhysicalGPU;
+   default:
+     break;
+   }
+diff --git a/src/dxgi/dxgi_adapter.cpp b/src/dxgi/dxgi_adapter.cpp
+--- a/src/dxgi/dxgi_adapter.cpp
++++ b/src/dxgi/dxgi_adapter.cpp
+@@ -8,6 +8,7 @@
+ #include "dxgi_object.hpp"
+ #include "d3d10_1.h"
+ #include "Metal.hpp"
++#include "util_d3dkmt.h"
+ 
+ namespace dxmt {
+ 
+@@ -19,6 +20,10 @@
+ Com<IDXGIOutput> CreateOutput(IMTLDXGIAdapter *pAadapter, HMONITOR monitor, DxgiOptions &options);
+ 
+ LUID GetAdapterLuid(WMT::Device device) {
++  // FineWine: Wine's own id for the adapter when it has one (see FineWineAdapterLuid)
++  LUID wine_luid;
++  if (FineWineAdapterLuid(&wine_luid))
++    return wine_luid;
+     // NOTE: use big-endian registryID, be consistent with MVK
+   return std::bit_cast<LUID>(__builtin_bswap64(device.registryID()));
+ }

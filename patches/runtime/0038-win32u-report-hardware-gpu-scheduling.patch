@@ -1,0 +1,30 @@
+win32u: report hardware GPU scheduling
+
+D3DKMTQueryAdapterInfo answers KMTQAITYPE_WDDM_2_7_CAPS with hardware GPU scheduling
+supported and enabled. NVIDIA's Streamline reads HwSchEnabled at startup and frame
+generation is not offered without it. Metal schedules the GPU itself, so nothing is
+promised that a program then does not get.
+
+diff --git a/dlls/win32u/d3dkmt.c b/dlls/win32u/d3dkmt.c
+--- a/dlls/win32u/d3dkmt.c
++++ b/dlls/win32u/d3dkmt.c
+@@ -838,6 +838,19 @@
+         *value = KMT_DRIVERVERSION_WDDM_3_1;
+         return STATUS_SUCCESS;
+     }
++    case KMTQAITYPE_WDDM_2_7_CAPS:
++    {
++        /* FineWine: hardware GPU scheduling, which frame generation asks for before it
++         * offers itself (NVIDIA's Streamline reads HwSchEnabled). Metal schedules the GPU
++         * itself, so there is nothing a program could be promised here and not get. */
++        UINT *value = desc->pPrivateDriverData; /* D3DKMT_WDDM_2_7_CAPS */
++
++        if (desc->PrivateDriverDataSize < sizeof(*value))
++            return STATUS_INVALID_PARAMETER;
++
++        *value = 0x7; /* HwSchSupported | HwSchEnabled | HwSchEnabledByDefault */
++        return STATUS_SUCCESS;
++    }
+     default:
+     {
+         FIXME( "type %d not handled.\n", desc->Type );
