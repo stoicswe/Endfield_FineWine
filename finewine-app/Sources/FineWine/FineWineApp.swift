@@ -14,10 +14,14 @@ struct FineWineApp: App {
             MenuBarView()
                 .environmentObject(model)
                 .environmentObject(l10n)
+                .environment(\.layoutDirection, l10n.layoutDirection)
+                .environment(\.locale, Locale(identifier: l10n.activeLanguageCode))
         } label: {
             MenuBarLabel()
                 .environmentObject(model)
                 .environmentObject(l10n)
+                .environment(\.layoutDirection, l10n.layoutDirection)
+                .environment(\.locale, Locale(identifier: l10n.activeLanguageCode))
         }
         .menuBarExtraStyle(.window)
 
@@ -25,6 +29,8 @@ struct FineWineApp: App {
             MainWindow()
                 .environmentObject(model)
                 .environmentObject(l10n)
+                .environment(\.layoutDirection, l10n.layoutDirection)
+                .environment(\.locale, Locale(identifier: l10n.activeLanguageCode))
         }
         .defaultSize(width: 980, height: 680)
         .windowToolbarStyle(.unified)
@@ -40,6 +46,8 @@ struct FineWineApp: App {
             SettingsView()
                 .environmentObject(model)
                 .environmentObject(l10n)
+                .environment(\.layoutDirection, l10n.layoutDirection)
+                .environment(\.locale, Locale(identifier: l10n.activeLanguageCode))
         }
     }
 }

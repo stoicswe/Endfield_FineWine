@@ -9,6 +9,7 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     case zhHant = "zh-Hant"
     case ja = "ja"
     case ko = "ko"
+    case ar = "ar"
 
     var id: String { rawValue }
 
@@ -26,6 +27,8 @@ enum AppLanguage: String, CaseIterable, Identifiable {
             return "日本語"
         case .ko:
             return "한국어"
+        case .ar:
+            return "العربية"
         }
     }
 }
@@ -71,6 +74,9 @@ final class LanguageManager: ObservableObject, @unchecked Sendable {
             }
             if lower.hasPrefix("ko") {
                 return "ko"
+            }
+            if lower.hasPrefix("ar") {
+                return "ar"
             }
             if lower.hasPrefix("en") {
                 return "en"
@@ -143,6 +149,32 @@ final class LanguageManager: ObservableObject, @unchecked Sendable {
 
     nonisolated func tr(_ key: String, _ args: CVarArg...) -> String {
         tr(key, args: args)
+    }
+
+    /// Whether the currently active language requires a Right-to-Left (RTL) layout direction (e.g. Arabic).
+    var isRTL: Bool {
+        let code = selectedLanguage == .system ? Self.detectSystemLanguageCode() : selectedLanguage.rawValue
+        return Self.isRightToLeft(languageCode: code)
+    }
+
+    /// SwiftUI LayoutDirection matching the active language's script direction per Apple HIG.
+    var layoutDirection: LayoutDirection {
+        isRTL ? .rightToLeft : .leftToRight
+    }
+
+    /// Determines whether a language code represents a Right-to-Left script direction.
+    static func isRightToLeft(languageCode: String) -> Bool {
+        if #available(macOS 13, iOS 16, tvOS 16, watchOS 9, *) {
+            return Locale.Language(identifier: languageCode).characterDirection == .rightToLeft
+        } else {
+            return Locale.characterDirection(forLanguage: languageCode) == .rightToLeft
+        }
+    }
+
+    /// Wraps intrinsically LTR text (paths, URLs, commands, code) in Unicode Left-to-Right Isolates (LRI...PDI)
+    /// to avoid bidirectional reordering artifacts in RTL text, per Apple HIG.
+    static func bidiIsolated(_ string: String) -> String {
+        "\u{2066}\(string)\u{2069}"
     }
 }
 
