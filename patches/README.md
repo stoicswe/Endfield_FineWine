@@ -225,6 +225,12 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0038-win32u-report-hardware-gpu-scheduling.patch`: `D3DKMTQueryAdapterInfo` answers
   `KMTQAITYPE_WDDM_2_7_CAPS` with hardware GPU scheduling on, which Streamline reads before
   frame generation is offered.
+- `0039-winemac-a-stand-in-under-the-windows-file-name-so-discord-finds-the-game.patch`: Discord
+  finds a game by the file name of a running app that is not in a bundle and has a window. A
+  program here runs from a bundle of its own name, so the Mac driver starts
+  `finewine-presence` (`runtime-extras/presence-helper`) next to it under the Windows file
+  name: no Dock icon, one clear pixel of window, gone when the program ends.
+  `FINEWINE_GAME_PRESENCE=0` turns it off.
 - `0033-winemac-read-the-displays-again-on-activation-only-when-they-changed.patch`: switching
   to a Wine program made Wine read every display again (modes, EDID, GPUs, registry keys) on the
   program's message thread, 2.4 seconds in a game. Now only when the displays differ from what
