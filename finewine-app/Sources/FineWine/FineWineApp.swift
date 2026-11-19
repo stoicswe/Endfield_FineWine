@@ -42,6 +42,18 @@ struct FineWineApp: App {
             FineWineCommands()
         }
 
+        // An update of FineWine itself: what is new, and the download and installation.
+        Window(l10n.tr("update.window_title"), id: "update") {
+            UpdateWindow()
+                .environmentObject(model)
+                .environmentObject(l10n)
+                .environment(\.layoutDirection, l10n.layoutDirection)
+                .environment(\.locale, Locale(identifier: l10n.activeLanguageCode))
+        }
+        .defaultSize(width: 640, height: 560)
+        .windowResizability(.contentMinSize)
+        .handlesExternalEvents(matching: [])
+
         Settings {
             SettingsView()
                 .environmentObject(model)
@@ -57,6 +69,11 @@ struct FineWineCommands: Commands {
     @ObservedObject private var l10n = LanguageManager.shared
 
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button(l10n.tr("update.check_menu")) {
+                Task { await UpdateModel.shared.check(manual: true) }
+            }
+        }
         CommandMenu(l10n.tr("menu.language")) {
             ForEach(AppLanguage.allCases) { lang in
                 Button {
@@ -89,6 +106,11 @@ struct MenuBarLabel: View {
                     openWindow(id: "main")
                     NSApp.activate()
                 }
+                UpdateModel.shared.openUpdateWindow = {
+                    openWindow(id: "update")
+                    NSApp.activate()
+                }
+                UpdateModel.shared.start()
                 // First run: nothing to launch yet, so start in the manager. Not when FineWine was
                 // started to open a file, though: that file is about to get a prefix by itself,
                 // and the manager would only be in the way. The check waits a moment because the

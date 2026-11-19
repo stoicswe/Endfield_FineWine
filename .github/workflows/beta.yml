@@ -150,6 +150,8 @@ jobs:
       # Blank on purpose: FineWine.app keeps the version its own build script gives it, and
       # the beta's number is in the release it is attached to.
       app_version: ""
+      # The app's update check starts on the Beta channel in a beta build.
+      channel: "beta"
 
   release:
     name: Beta pre-release

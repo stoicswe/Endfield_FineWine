@@ -273,6 +273,22 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Whether anything is running in any prefix, however it was started.
+    var hasRunningPrograms: Bool { !alive.isEmpty || runningCount > 0 }
+
+    /// Closes everything in every prefix, as quitting FineWine does, so that the app (and the
+    /// Wine runtime inside it, which the programs run from) can be replaced by an update.
+    func closeEverythingForUpdate() async {
+        let all = prefixes
+        let service = UncheckedBox(service)
+        await Task.detached(priority: .userInitiated) {
+            let running = all.filter { !service.value.findProcesses($0.directory).isEmpty }
+            if !running.isEmpty { service.value.closeEverything(in: running) }
+        }.value
+        running = [:]
+        alive = []
+    }
+
     /// Starts looking, every few seconds, for which prefixes have processes.
     func watchRunningPrefixes() {
         guard aliveTimer == nil else { return }

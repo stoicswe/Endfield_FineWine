@@ -1,10 +1,18 @@
 # release.yml — full releases cut from a `release/<version>` branch.
 #
 # Pushing to a branch such as `release/1.0.1` builds the complete artifact set
-# (patched Wine + MoltenVK + FineWine Patcher.app) and publishes a GitHub Release:
+# (patched Wine + MoltenVK + FineWine Patcher.app, and FineWine.app with its own Wine
+# runtime, built from source by build-finewine-full.yml, which takes hours) and publishes
+# a GitHub Release:
 #
 #   * tag/name:  1.0.1  /  "Endfield FineWine 1.0.1"
-#   * assets:    FineWine.Patcher.app.zip, endfield-wine-modules.tar.gz, SHA256SUMS.txt
+#   * assets:    FineWine-<version>-<commit>.zip (FineWine.app), FineWine.Patcher.app.zip,
+#                endfield-wine-modules.tar.gz, SHA256SUMS.txt
+#
+# FineWine.app's update check on the Release channel looks for a zip named `FineWine-…zip`
+# in the newest release, and compares the commit in that name with its own, so the name
+# build-finewine-full.yml gives the zip is kept as it is. A release is not published
+# without the app: if that build fails, nothing is published.
 #   * notes:     a human-readable summary (LLM via OpenRouter — the same backend the
 #                wiki generator uses) of the commits since the previous release tag,
 #                with a raw commit list as a collapsible fallback.
@@ -157,9 +165,20 @@ jobs:
       build_patcher_app: true
       app_version: ${{ needs.version.outputs.version }}
 
+  finewine:
+    name: Build FineWine.app
+    needs: version
+    uses: ./.github/workflows/build-finewine-full.yml
+    with:
+      runner: "xcode-27" # keep in step with the Wine build above
+      # The app reports the version it was released as, like the patcher.
+      app_version: ${{ needs.version.outputs.version }}
+      # The app's update check starts on the Release channel in a release build.
+      channel: "release"
+
   release:
     name: Publish full release
-    needs: [version, build]
+    needs: [version, build, finewine]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -188,6 +207,12 @@ jobs:
           pattern: 'endfield-wine-modules-cx*'
           path: dl/modules
           merge-multiple: true
+
+      - name: Download FineWine.app
+        uses: actions/download-artifact@v4
+        with:
+          name: finewine-app
+          path: dl/finewine
 
       # The release version is the source of truth: verify the artifact before publishing.
       - name: Verify the release version in FineWine Patcher.app
@@ -239,6 +264,12 @@ jobs:
           MOD="$(find dl/modules -name '*.tar.gz' | head -n1)"
           [ -n "$MOD" ] || { echo "::error::no modules tarball in the endfield-wine-modules artifact"; exit 1; }
           cp "$MOD" "release/endfield-wine-modules.tar.gz"
+          # FineWine.app keeps the name its build gave it (FineWine-<version>-<commit>.zip):
+          # the app's update check reads the commit from it.
+          FW="$(find dl/finewine -name 'FineWine-*.zip' | head -n1)"
+          [ -n "$FW" ] || { echo "::error::no FineWine.app zip in the finewine-app artifact"; exit 1; }
+          cp "$FW" release/
+          echo "FINEWINE_ZIP=$(basename "$FW")" >> "$GITHUB_ENV"
           ( cd release && sha256sum ./* > SHA256SUMS.txt && cat SHA256SUMS.txt )
           ls -lh release
 
@@ -255,6 +286,9 @@ jobs:
           NOTES_REPO: ${{ github.repository }}
           NOTES_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           NOTES_RUN_NUMBER: ${{ github.run_number }}
+          # FINEWINE_ZIP (set when the assets were assembled) names FineWine.app's zip for
+          # the "What's inside" table.
+          NOTES_FINEWINE_ZIP: ${{ env.FINEWINE_ZIP }}
         run: |
           set -euo pipefail
           # Reuse the wiki generator's configured OpenRouter model.
@@ -275,6 +309,7 @@ jobs:
         run: |
           set -euo pipefail
           ASSETS=(
+            "release/$FINEWINE_ZIP"
             release/FineWine.Patcher.app.zip
             release/endfield-wine-modules.tar.gz
             release/SHA256SUMS.txt
@@ -385,7 +420,7 @@ jobs:
             echo "|---|---|"
             echo "| Tag | \`$TAG\` |"
             echo "| Version | \`${{ needs.version.outputs.version }}\` |"
-            echo "| Assets | Patcher.app zip · modules tarball · SHA256SUMS.txt |"
+            echo "| Assets | FineWine.app zip · Patcher.app zip · modules tarball · SHA256SUMS.txt |"
             echo "| URL | ${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG |"
           } >> "$GITHUB_STEP_SUMMARY"
 

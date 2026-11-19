@@ -17,6 +17,7 @@ struct MenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
+            UpdateBanner()
             if let name = model.settingUpPrefixName {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
@@ -224,4 +225,33 @@ private struct MenuPrefixCard: View {
 private struct ListHeightKey: PreferenceKey {
     static let defaultValue: Double = 0
     static func reduce(value: inout Double, nextValue: () -> Double) { value = max(value, nextValue()) }
+}
+
+
+/// A line in the menu bar panel while an update is waiting to be installed.
+private struct UpdateBanner: View {
+    @ObservedObject private var updates = UpdateModel.shared
+    @ObservedObject private var l10n = LanguageManager.shared
+
+    var body: some View {
+        if updates.phase == .available, let offer = updates.offer {
+            Button {
+                updates.openUpdateWindow()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.down.circle.fill").foregroundStyle(Look.accent)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(l10n.tr("update.banner_title")).font(.callout.weight(.semibold))
+                        Text(offer.release.name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.forward").font(.caption).foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .glassCard(padding: 12)
+        }
+    }
 }

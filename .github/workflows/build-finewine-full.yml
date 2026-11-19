@@ -38,6 +38,11 @@ on:
         required: false
         default: ""
         type: string
+      channel:
+        description: Which kind of build this is, for the app's update check (release, beta, nightly; dev = offered every newer build)
+        required: false
+        default: "dev"
+        type: string
   workflow_call:
     inputs:
       runner:
@@ -49,6 +54,11 @@ on:
         description: CFBundleShortVersionString for FineWine.app (blank = build-app.sh default)
         required: false
         default: ""
+        type: string
+      channel:
+        description: Which kind of build this is, for the app's update check (release, beta, nightly; dev = offered every newer build)
+        required: false
+        default: "dev"
         type: string
 
 permissions:
@@ -175,6 +185,10 @@ jobs:
         shell: bash
         env:
           FINEWINE_VERSION: ${{ inputs.app_version }}
+          # Written into the app's Info.plist by finewine-app/scripts/build-app.sh: the app's
+          # update check compares releases with the commit and time it was built from.
+          FINEWINE_CHANNEL: ${{ inputs.channel }}
+          FINEWINE_COMMIT: ${{ github.sha }}
           SKIP_TESTS: "1"     # see the note at the top; the unit tests ran above
           SKIP_ARCHIVE: "1"   # the runtime ships inside the app here, not as its own archive
         run: |
