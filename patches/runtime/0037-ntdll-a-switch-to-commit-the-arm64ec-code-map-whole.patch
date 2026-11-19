@@ -1,0 +1,25 @@
+ntdll: a switch to commit the ARM64EC code map whole
+
+FINEWINE_EAGER_CODE_MAP=1 commits the whole map when it is created, as upstream does and as
+FineWine did before patch 0035. It costs up to 4 GB in a program that reads through its memory,
+so it is only for finding out whether committing the map as it is read is behind a problem.
+
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -2801,8 +2801,14 @@
+      * reading an untouched page gives the shared zero page. macOS has no such page: every page
+      * that is read becomes real memory, and a program that reads through its committed memory
+      * (anti-cheat does) pays the whole 4 GB. So it starts out reserved, and a page is committed
+-     * the first time something reads it, in virtual_handle_fault. */
+-    status = map_view( &arm64ec_view, NULL, size, MEM_TOP_DOWN, VPROT_READ, 0, 0, 0 );
++     * the first time something reads it, in virtual_handle_fault.
++     * FINEWINE_EAGER_CODE_MAP=1 commits it all as upstream does, to rule this in or out when
++     * something misbehaves. */
++    {
++        const char *env = getenv( "FINEWINE_EAGER_CODE_MAP" );
++        BOOL eager = env && atoi( env );
++        status = map_view( &arm64ec_view, NULL, size, MEM_TOP_DOWN, eager ? VPROT_READ | VPROT_COMMITTED : VPROT_READ, 0, 0, 0 );
++    }
+ #else
+     status = map_view( &arm64ec_view, NULL, size, MEM_TOP_DOWN, VPROT_READ | VPROT_COMMITTED, 0, 0, 0 );
+ #endif
