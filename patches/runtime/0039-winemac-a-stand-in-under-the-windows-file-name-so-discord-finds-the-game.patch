@@ -1,0 +1,192 @@
+winemac: a stand-in under the Windows file name, so Discord finds the game
+
+Discord recognises a game on the Mac by the file name of a running app ("endfield.exe",
+"zenlesszonezero game/zenlesszonezero.exe"). Found by trying with Discord: it only looks at
+processes macOS lists as apps, that are not inside an app bundle, and that have a window. A
+program under FineWine runs from a bundle of its own name (patch 0024, for the Dock and Game
+Mode), so its Windows file name was never seen and a game showed only as an entry added by
+hand.
+
+When a program first shows itself (becomes a regular app), the Mac driver now copies the
+runtime's finewine-presence (runtime-extras/presence-helper, built by `package`) to
+<prefix>/.finewine-apps/presence/<folder>/<file> and starts it with this process's id. That
+program is an app without a Dock icon that owns one clear pixel of window and ends when the
+process does. Windows' own programs get none. FINEWINE_GAME_PRESENCE=0 turns it off.
+
+diff --git a/dlls/winemac.drv/cocoa_app.m b/dlls/winemac.drv/cocoa_app.m
+--- a/dlls/winemac.drv/cocoa_app.m
++++ b/dlls/winemac.drv/cocoa_app.m
+@@ -21,6 +21,7 @@
+ #import "config.h"
+ #import "macdrv.h"
+ #include <dlfcn.h>
++#include <sys/wait.h>
+ #import <objc/runtime.h>
+ 
+ #import "cocoa_app.h"
+@@ -117,6 +118,74 @@
+ 
+ // FineWine: the program's own name, and making macOS use it.
+ static NSString* finewineApplicationName;
++
++// FineWine: the program's Windows file with its folder ("Arknights Endfield/Endfield.exe").
++static NSString* finewineProgramFile;
++
++// FineWine: Discord recognises a game on the Mac by the file name of a running app, and
++// only looks at processes that macOS lists as apps, are not inside an app bundle, and have a
++// window (found by trying; see runtime-extras/presence-helper/presence.m). This process runs
++// from a bundle of the program's name, for the Dock and Game Mode, so its Windows file name
++// is not seen. A small program is therefore started next to it under that file name:
++// <prefix>/.finewine-apps/presence/<folder>/<file>, a copy of the runtime's finewine-presence.
++// It has no Dock icon and ends when this process does. FINEWINE_GAME_PRESENCE=0 turns it off.
++static void finewine_start_presence(void)
++{
++    static BOOL started;
++    const char *off = getenv("FINEWINE_GAME_PRESENCE"), *prefix = getenv("WINEPREFIX");
++    NSFileManager* fm = [NSFileManager defaultManager];
++    NSString *source, *dest;
++    NSDictionary *have, *want;
++    const char *path;
++    char game[16];
++    Dl_info info;
++    pid_t child;
++    int status, fd;
++
++    if (started || ![finewineProgramFile length]) return;
++    started = TRUE;
++    if ((off && off[0] == '0') || !prefix || prefix[0] != '/') return;
++    if ([finewineProgramFile hasPrefix:@"."] || [finewineProgramFile rangeOfString:@"/."].length) return;
++    if (!dladdr((void*)finewine_start_presence, &info) || !info.dli_fname) return;
++
++    source = [[[NSString stringWithUTF8String:info.dli_fname] stringByDeletingLastPathComponent]
++                 stringByAppendingPathComponent:@"finewine-presence"];
++    dest = [[[NSString stringWithUTF8String:prefix] stringByAppendingPathComponent:@".finewine-apps/presence"]
++               stringByAppendingPathComponent:finewineProgramFile];
++    if (!(want = [fm attributesOfItemAtPath:source error:NULL])) return;
++
++    // The copy is made again when the runtime's program has changed.
++    have = [fm attributesOfItemAtPath:dest error:NULL];
++    if (!have || ![[have fileModificationDate] isEqual:[want fileModificationDate]] || [have fileSize] != [want fileSize])
++    {
++        NSString* temp = [dest stringByAppendingFormat:@".%d", getpid()];
++        [fm createDirectoryAtPath:[dest stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:NULL];
++        [fm removeItemAtPath:temp error:NULL];
++        if (![fm copyItemAtPath:source toPath:temp error:NULL]) return;
++        if (rename([temp fileSystemRepresentation], [dest fileSystemRepresentation]))
++        {
++            [fm removeItemAtPath:temp error:NULL];
++            return;
++        }
++    }
++
++    // Started through a process that ends at once, so that nothing is left for this one to
++    // wait for. Only calls that are safe after fork() are made in the new processes.
++    path = [dest fileSystemRepresentation];
++    snprintf(game, sizeof(game), "%d", getpid());
++    if ((child = fork()) == -1) return;
++    if (!child)
++    {
++        if (!fork())
++        {
++            char* const argv[] = { (char*)path, game, NULL };
++            for (fd = 3; fd < 1024; fd++) close(fd);
++            execv(path, argv);
++        }
++        _exit(0);
++    }
++    while (waitpid(child, &status, 0) == -1 && errno == EINTR) ;
++}
+ 
+ static void finewine_apply_application_name(void)
+ {
+@@ -496,6 +565,7 @@
+ 
+             // FineWine: the program goes by its own name (see macdrv_set_application_name).
+             finewine_apply_application_name();
++            finewine_start_presence();
+ 
+             // Application menu
+             submenu = [[[NSMenu alloc] initWithTitle:WineLocalizedString(STRING_MENU_WINE)] autorelease];
+@@ -3170,6 +3240,18 @@
+ }
+ 
+ /***********************************************************************
++ *              macdrv_set_program_file
++ *
++ * FineWine: the program's Windows file with its folder, for finewine_start_presence().
++ * Called once, before the Cocoa side is started, like macdrv_set_application_name().
++ */
++void macdrv_set_program_file(CFStringRef file)
++{
++    if (!finewineProgramFile)
++        finewineProgramFile = [(NSString*)file copy];
++}
++
++/***********************************************************************
+  *              macdrv_set_application_icon
+  *
+  * Set the application icon.  The images array contains CGImages.  If
+diff --git a/dlls/winemac.drv/macdrv_cocoa.h b/dlls/winemac.drv/macdrv_cocoa.h
+--- a/dlls/winemac.drv/macdrv_cocoa.h
++++ b/dlls/winemac.drv/macdrv_cocoa.h
+@@ -192,6 +192,7 @@
+ extern void macdrv_beep(void);
+ extern void macdrv_set_application_icon(CFArrayRef images);
+ extern void macdrv_set_application_name(CFStringRef name);
++extern void macdrv_set_program_file(CFStringRef file);
+ extern int macdrv_finewine_display_top_inset(CGDirectDisplayID display_id);
+ extern int macdrv_finewine_primary_top_inset(void);
+ extern void macdrv_finewine_displays_changed(void);
+diff --git a/dlls/winemac.drv/macdrv_main.c b/dlls/winemac.drv/macdrv_main.c
+--- a/dlls/winemac.drv/macdrv_main.c
++++ b/dlls/winemac.drv/macdrv_main.c
+@@ -570,6 +570,41 @@
+     if (string)
+     {
+         macdrv_set_application_name( string );
++        CFRelease( string );
++    }
++}
++
++
++/* FineWine: the program's file as an app that looks for running games by file name knows it:
++ * the file name with the folder it is in ("Arknights Endfield/Endfield.exe"). Windows' own
++ * programs are left out. See finewine_start_presence() in cocoa_app.m. */
++static void finewine_note_program_file(void)
++{
++    static const WCHAR windows[] = {'c',':','\\','w','i','n','d','o','w','s','\\'};
++    UNICODE_STRING *image = &NtCurrentTeb()->Peb->ProcessParameters->ImagePathName;
++    const WCHAR *path = image->Buffer, *end = path + image->Length / sizeof(WCHAR), *base, *folder, *p;
++    WCHAR file[520];
++    CFStringRef string;
++    UINT i, len;
++
++    if (!path || path == end) return;
++    if (end - path > ARRAY_SIZE(windows))
++    {
++        for (i = 0; i < ARRAY_SIZE(windows); i++)
++            if ((path[i] < 0x80 ? tolower( path[i] ) : path[i]) != windows[i]) break;
++        if (i == ARRAY_SIZE(windows)) return;
++    }
++    for (base = path, p = path; p < end; p++) if (*p == '\\' || *p == '/') base = p + 1;
++    if (base == end) return;
++    for (folder = path, p = path; p + 1 < base; p++) if (*p == '\\' || *p == '/') folder = p + 1;
++    /* a program in the root of a drive has no folder to go with it */
++    if (folder == path || base - folder < 2) folder = base;
++    len = end - folder;
++    if (len >= ARRAY_SIZE(file)) return;
++    for (i = 0; i < len; i++) file[i] = (folder[i] == '\\') ? '/' : folder[i];
++    if ((string = CFStringCreateWithCharacters( NULL, (const UniChar *)file, len )))
++    {
++        macdrv_set_program_file( string );
+         CFRelease( string );
+     }
+ }
+@@ -597,6 +632,7 @@
+     setup_options();
+     load_strings(params->strings);
+     finewine_name_application();
++    finewine_note_program_file();
+ 
+     if (macdrv_start_cocoa_app(NtGetTickCount()))
+     {

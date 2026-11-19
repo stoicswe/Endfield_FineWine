@@ -760,6 +760,34 @@ else
   echo "  - display reads on switching to a program not checked: it switches apps (FINEWINE_TEST_ACTIVATE=1 to run it)"
 fi
 
+# Discord finds a game by the file name of a running app that is not in a bundle and has a
+# window. A program runs from a bundle of its own name, so the Mac driver starts a small
+# program next to it under the Windows file name (patch 0039, runtime-extras/presence-helper):
+# it must be there with the program's folder and file name while the program shows a window,
+# and gone when the program ends.
+if [ -x "$RT/lib/wine/aarch64-unix/finewine-presence" ] && [ -x "$MINGW" ] \
+   && "$MINGW" -O1 -o "$WORK/presence-game.exe" "$REPO/tests/runtime/idle-window.c" -luser32 -lgdi32 >"$WORK/presence-build.log" 2>&1; then
+  mkdir -p "$WINEPREFIX/drive_c/Presence Test"
+  cp "$WORK/presence-game.exe" "$WINEPREFIX/drive_c/Presence Test/presence-game.exe"
+  "$RT/bin/wine" 'C:\Presence Test\presence-game.exe' 4 </dev/null >/dev/null 2>&1 &
+  presence_pid=$!; seen=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+    case "$(ps -axww -o command)" in *"/.finewine-apps/presence/Presence Test/presence-game.exe "*) seen=1; break ;; esac
+    kill -0 "$presence_pid" 2>/dev/null || break
+    perl -e 'select(undef, undef, undef, 0.1)'
+  done
+  wait "$presence_pid" 2>/dev/null
+  left=1
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    case "$(ps -axww -o command)" in *"/.finewine-apps/presence/Presence Test/presence-game.exe "*) ;; *) left=0; break ;; esac
+    perl -e 'select(undef, undef, undef, 0.1)'
+  done
+  if [ "$seen" = 1 ] && [ "$left" = 0 ]; then pass "a program has a stand-in under its Windows file name while it runs (for Discord)"
+  else fail "presence stand-in: seen=$seen still-there=$left"; fi
+else
+  echo "  - presence stand-in not checked: no finewine-presence in this runtime, or no llvm-mingw"
+fi
+
 export WINEPREFIX="$WORK/pfx2" WINEMSYNC=1 WINEDEBUG=-all
 if "$RT/bin/wine" wineboot --init </dev/null >"$WORK/msync.log" 2>&1 && [ -f "$WINEPREFIX/.update-timestamp" ] \
    && [ "$("$RT/bin/wine" cmd /c echo msync-ok </dev/null 2>/dev/null | tr -d '\r')" = "msync-ok" ]; then

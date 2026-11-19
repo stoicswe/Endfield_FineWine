@@ -313,6 +313,8 @@ JSON
   "$REPO/scripts/lib/make-game-loader.sh" "$OUT/lib/wine/aarch64-unix" || die "could not make the game loader"
   # The stand-in for the Steam client that some games need to find before they start.
   "$REPO/scripts/lib/build-steam-helper.sh" "$OUT" || die "could not build the Steam helper"
+  # The program that lets Discord find a Windows game by its file name (runtime patch 0039).
+  "$REPO/scripts/lib/build-presence-helper.sh" "$OUT" "$MACOS_MIN" || die "could not build the presence helper"
   # Packaging starts from an empty folder, so the two add-ons built by their own scripts are
   # put back when their builds exist: FEX (x64 programs) and DXMT (Direct3D 10 and 11 on Metal).
   if [ -f "$BUILD_DIR/fex-arm64ec/Bin/libarm64ecfex.dll" ]; then
