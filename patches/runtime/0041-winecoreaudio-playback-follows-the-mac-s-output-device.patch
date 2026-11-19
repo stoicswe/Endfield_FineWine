@@ -1,0 +1,248 @@
+winecoreaudio: playback follows the Mac's output device
+
+A stream's audio unit is tied to one device for good. A game started on the Mac's speakers
+kept playing through them after headphones were connected (Bluetooth ones in particular,
+which become the Mac's output when they connect), although every Mac app moves over, and a
+Windows program that opened "the default device" expects the same.
+
+Playback streams opened on the device that was the Mac's output at the time are now kept in a
+list, and Core Audio is asked to say when the output device changes. Each of those streams then
+gets a new audio unit on the new device, set up the way the first was: the mixer between the
+stream and the device is made again as well, because the new device can have another channel
+layout. The old unit is stopped before the stream is pointed at the new one and the new one is
+started after, so the callback never sees half of each. The stream's buffer, position and
+format are untouched; the program notices nothing but a gap of a few hundredths of a second.
+
+The work is done on a queue of its own, not in Core Audio's notification, and is tried again
+for about three seconds: a Bluetooth device is announced as the output a moment before it can
+be opened. A stream opened on a device that was not the output (one picked by name in a
+game's settings) stays where it is, as do capture streams. FINEWINE_AUDIO_FOLLOW_OUTPUT=0
+turns it off. FINEWINE_AUDIO_REOPEN_AFTER=<seconds> re-opens the streams' device once, for
+tests/runtime/audio-follow.c, which checks that playback carries on across the swap.
+
+diff --git a/dlls/winecoreaudio.drv/coreaudio.c b/dlls/winecoreaudio.drv/coreaudio.c
+--- a/dlls/winecoreaudio.drv/coreaudio.c
++++ b/dlls/winecoreaudio.drv/coreaudio.c
+@@ -48,6 +48,8 @@
+ #include <AudioToolbox/AudioConverter.h>
+ #include <AudioUnit/AudioUnit.h>
+ #include <os/lock.h>
++#include <pthread.h>
++#include <dispatch/dispatch.h>
+ 
+ #undef LoadResource
+ #undef CompareString
+@@ -102,6 +104,10 @@
+     INT32 getbuf_last;
+     WAVEFORMATEX *fmt;
+     BYTE *local_buffer, *cap_buffer, *wrap_buffer, *resamp_buffer, *tmp_buffer;
++
++    /* FineWine: a playback stream opened on the device that was the Mac's output at the time
++     * goes with the Mac's output when that changes. See move_following_streams(). */
++    struct coreaudio_stream *next_following;
+ };
+ 
+ static ULONG_PTR zero_bits = 0;
+@@ -1237,8 +1243,185 @@
+ 
+     *n_samples_per_sec = rate;
+     return S_OK;
++}
++
++/* FineWine: following the Mac's output device.
++ *
++ * A stream's audio unit is tied to one device for good, so a game that was started on the
++ * Mac's speakers kept playing through them after headphones were connected, although macOS
++ * had made the headphones its output: every Mac app follows that change, and a Windows
++ * program that opened "the default device" expects the same.
++ *
++ * Playback streams that were opened on the device that was the Mac's output at the time are
++ * kept in a list. When macOS changes its output device, each of them gets a new audio unit
++ * on the new device, set up the way the first one was (the new device can have another
++ * channel layout, so the mixer between the stream and the device is made again too). The
++ * stream's own buffer, position and format stay as they are: the program notices nothing.
++ * A stream opened on a device that was not the output then (one picked by name in a game's
++ * settings) is left where it is, as are capture streams.
++ *
++ * The change is made on a queue of its own, not in Core Audio's notification, and tried
++ * again a few times: a Bluetooth device is announced as the output a moment before it can
++ * be opened. FINEWINE_AUDIO_FOLLOW_OUTPUT=0 turns all of this off. */
++static pthread_mutex_t following_mutex = PTHREAD_MUTEX_INITIALIZER;
++static struct coreaudio_stream *following_streams;
++static dispatch_queue_t following_queue;
++
++static AudioDeviceID default_output_device(void)
++{
++    const AudioObjectPropertyAddress addr =
++    {
++        .mScope = kAudioObjectPropertyScopeGlobal,
++        .mElement = kAudioObjectPropertyElementMain,
++        .mSelector = kAudioHardwarePropertyDefaultOutputDevice,
++    };
++    AudioDeviceID id = kAudioObjectUnknown;
++    UInt32 size = sizeof(id);
++
++    if(AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr, 0, NULL, &size, &id) != noErr)
++        return kAudioObjectUnknown;
++    return id;
++}
++
++static OSStatus ca_render_cb(void *user, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *ts,
++                             UInt32 bus, UInt32 nframes, AudioBufferList *data);
++
++/* following_mutex must be held. Returns FALSE when the device could not be opened. */
++static BOOL move_stream_to_device(struct coreaudio_stream *stream, AudioDeviceID dev_id)
++{
++    AudioComponentInstance unit, mixer_unit = NULL, old_unit, old_mixer_unit;
++    AudioStreamBasicDescription dev_desc;
++    AudioConverterRef converter = NULL;
++    unsigned int min_frames, max_frames;
++    AURenderCallbackStruct input;
++
++    if(!(unit = get_audiounit(eRender, dev_id))) return FALSE;
++    if(FAILED(ca_setup_audiounit(dev_id, eRender, stream->share, unit, stream->fmt, &dev_desc,
++                                 &mixer_unit, &converter)))
++        goto failed;
++
++    input.inputProcRefCon = stream;
++    input.inputProc = ca_render_cb;
++    if(AudioUnitSetProperty(mixer_unit ? mixer_unit : unit, kAudioUnitProperty_SetRenderCallback,
++                            kAudioUnitScope_Input, 0, &input, sizeof(input)) != noErr)
++        goto failed;
++    if(AudioUnitInitialize(unit) != noErr) goto failed;
++
++    /* the size of the device's buffer, as when the stream was made; not every device takes it */
++    if(SUCCEEDED(get_device_period_frame_range(dev_id, eRender, &min_frames, &max_frames)))
++        set_device_period_frame_size(dev_id, eRender, max(min_frames, min(stream->period_frames, max_frames)));
++
++    /* The old unit stops asking for data before anything it looks at is changed; the new one
++     * starts after. Whether there is a mixer decides the layout the callback fills in. */
++    AudioOutputUnitStop(stream->unit);
++    os_unfair_lock_lock(&stream->lock);
++    old_unit = stream->unit;
++    old_mixer_unit = stream->mixer_unit;
++    stream->unit = unit;
++    stream->mixer_unit = mixer_unit;
++    stream->dev_desc = dev_desc;
++    stream->dev_id = dev_id;
++    os_unfair_lock_unlock(&stream->lock);
++
++    AudioOutputUnitStart(unit);
++
++    AudioComponentInstanceDispose(old_unit);
++    if(old_mixer_unit) AudioComponentInstanceDispose(old_mixer_unit);
++    return TRUE;
++
++failed:
++    if(mixer_unit) AudioComponentInstanceDispose(mixer_unit);
++    AudioComponentInstanceDispose(unit);
++    return FALSE;
++}
++
++static void move_following_streams(void *context)
++{
++    INT_PTR attempt = (INT_PTR)context;
++    AudioDeviceID dev_id = default_output_device();
++    struct coreaudio_stream *stream;
++    BOOL again = FALSE;
++
++    if(dev_id == kAudioObjectUnknown) return;
++
++    pthread_mutex_lock(&following_mutex);
++    for(stream = following_streams; stream; stream = stream->next_following)
++        if(stream->dev_id != dev_id && !move_stream_to_device(stream, dev_id)) again = TRUE;
++    pthread_mutex_unlock(&following_mutex);
++
++    if(again && attempt < 8)
++        dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 400 * NSEC_PER_MSEC), following_queue,
++                         (void *)(attempt + 1), move_following_streams);
++}
++
++/* For the runtime's own check (tests/runtime/audio-follow.c): FINEWINE_AUDIO_REOPEN_AFTER=<seconds>
++ * gives every following stream a new audio unit on the device it is already on, that long
++ * after the first one is made. It is the change of device without a second device to change to. */
++static void reopen_following_streams(void *context)
++{
++    struct coreaudio_stream *stream;
++
++    pthread_mutex_lock(&following_mutex);
++    for(stream = following_streams; stream; stream = stream->next_following)
++        move_stream_to_device(stream, stream->dev_id);
++    pthread_mutex_unlock(&following_mutex);
++}
++
++static OSStatus default_output_changed(AudioObjectID object, UInt32 count,
++                                       const AudioObjectPropertyAddress *addresses, void *user)
++{
++    dispatch_async_f(following_queue, NULL, move_following_streams);
++    return noErr;
++}
++
++static void watch_default_output(void)
++{
++    const AudioObjectPropertyAddress addr =
++    {
++        .mScope = kAudioObjectPropertyScopeGlobal,
++        .mElement = kAudioObjectPropertyElementMain,
++        .mSelector = kAudioHardwarePropertyDefaultOutputDevice,
++    };
++
++    const char *reopen = getenv("FINEWINE_AUDIO_REOPEN_AFTER");
++
++    following_queue = dispatch_queue_create("finewine.coreaudio.output", DISPATCH_QUEUE_SERIAL);
++    AudioObjectAddPropertyListener(kAudioObjectSystemObject, &addr, default_output_changed, NULL);
++    if(reopen && atof(reopen) > 0)
++        dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(reopen) * NSEC_PER_SEC)), following_queue,
++                         NULL, reopen_following_streams);
+ }
+ 
++static void follow_default_output(struct coreaudio_stream *stream)
++{
++    static pthread_once_t once = PTHREAD_ONCE_INIT;
++    const char *off = getenv("FINEWINE_AUDIO_FOLLOW_OUTPUT");
++
++    if(stream->flow != eRender || (off && off[0] == '0')) return;
++    if(stream->dev_id == kAudioObjectUnknown || stream->dev_id != default_output_device()) return;
++
++    pthread_once(&once, watch_default_output);
++    pthread_mutex_lock(&following_mutex);
++    stream->next_following = following_streams;
++    following_streams = stream;
++    pthread_mutex_unlock(&following_mutex);
++}
++
++/* After this returns the stream is not being moved and will not be. */
++static void unfollow_default_output(struct coreaudio_stream *stream)
++{
++    struct coreaudio_stream **link;
++
++    pthread_mutex_lock(&following_mutex);
++    for(link = &following_streams; *link; link = &(*link)->next_following)
++    {
++        if(*link != stream) continue;
++        *link = stream->next_following;
++        break;
++    }
++    pthread_mutex_unlock(&following_mutex);
++}
++
+ static NTSTATUS unix_create_stream(void *args)
+ {
+     struct create_stream_params *params = args;
+@@ -1354,6 +1537,7 @@
+     } else {
+         *params->channel_count = params->fmt->nChannels;
+         *params->stream = (stream_handle)(UINT_PTR)stream;
++        follow_default_output(stream);
+     }
+ 
+     return STATUS_SUCCESS;
+@@ -1364,6 +1548,8 @@
+     struct release_stream_params *params = args;
+     struct coreaudio_stream *stream = handle_get_stream(params->stream);
+     SIZE_T size;
++
++    unfollow_default_output(stream);
+ 
+     if(stream->timer_thread){
+         stream->please_quit = TRUE;
