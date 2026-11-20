@@ -285,7 +285,7 @@ jobs:
           print(f"FineWine.app version: {short}")
           PY
 
-
+      - name: Assemble release assets
         shell: bash
         run: |
           set -euo pipefail
