@@ -285,6 +285,18 @@ public struct PrefixService {
 
     // MARK: Shortcuts
 
+    /// A program's icon as `.icns` data: the one chosen for it or named by the installer's
+    /// shortcut (`iconPath`), else the executable's own; `nil` when neither has one. Drawn as
+    /// a Mac app icon when the prefix's programs are, so the shortcut and the program it
+    /// starts look alike in the Dock.
+    public static func iconData(for program: Program, in prefix: Prefix) -> Data? {
+        let macStyle = prefix.metadata.settings.macStyleIcons
+        return program.iconPath.flatMap { WindowsPath.macURL(for: $0, inPrefix: prefix.directory) }
+            .flatMap { ICNS.data(fromIconFile: $0, macStyle: macStyle) }
+            ?? WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory)
+            .flatMap { ICNS.data(fromExecutable: $0, macStyle: macStyle) }
+    }
+
     /// Makes the program's shortcut app, with the executable's own icon when it has one.
     @discardableResult
     public func createShortcut(for programID: UUID, in prefix: Prefix) throws -> Prefix {
@@ -292,14 +304,7 @@ public struct PrefixService {
             throw FineWineError("That program is no longer in “\(prefix.name)”.")
         }
         let program = prefix.metadata.programs[index]
-        // The icon the installer's shortcut named, if it named one; else the program's own.
-        // Drawn as a Mac app icon when the prefix's programs are, so the shortcut and the
-        // program it starts look alike in the Dock.
-        let macStyle = prefix.metadata.settings.macStyleIcons
-        let icon = program.iconPath.flatMap { WindowsPath.macURL(for: $0, inPrefix: prefix.directory) }
-            .flatMap { ICNS.data(fromIconFile: $0, macStyle: macStyle) }
-            ?? WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory)
-            .flatMap { ICNS.data(fromExecutable: $0, macStyle: macStyle) }
+        let icon = Self.iconData(for: program, in: prefix)
         let url = try shortcuts.build(for: program, in: prefix, icon: icon)
         var updated = prefix
         updated.metadata.programs[index].shortcutPath = url.path

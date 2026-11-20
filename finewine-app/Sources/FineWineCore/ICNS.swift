@@ -77,14 +77,14 @@ public enum ICNS {
         return rep.representation(using: .png, properties: [:])
     }
 
-    /// The icon in a file a Windows shortcut names: an `.ico`, or a program or library with
-    /// icons in it. `nil` if the file is missing or holds no icon. With `macStyle` it is drawn
-    /// as a Mac app icon (`MacIconStyle`).
+    /// The icon in a file: one a Windows shortcut names (an `.ico`, or a program or library
+    /// with icons in it) or a picture chosen by hand (`.icns`, `.png` and whatever else the Mac
+    /// reads). `nil` if the file is missing or holds no icon. With `macStyle` it is drawn as a
+    /// Mac app icon (`MacIconStyle`).
     public static func data(fromIconFile url: URL, macStyle: Bool = false) -> Data? {
-        if url.pathExtension.lowercased() == "ico" {
-            guard let ico = try? Data(contentsOf: url) else { return nil }
-            return data(fromICO: ico, macStyle: macStyle)
-        }
+        let programs = ["exe", "dll", "scr", "cpl", "ocx"]
+        if programs.contains(url.pathExtension.lowercased()) { return data(fromExecutable: url, macStyle: macStyle) }
+        if let picture = try? Data(contentsOf: url), let icon = data(fromICO: picture, macStyle: macStyle) { return icon }
         return data(fromExecutable: url, macStyle: macStyle)
     }
 

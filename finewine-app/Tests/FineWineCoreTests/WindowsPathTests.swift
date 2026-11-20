@@ -76,4 +76,22 @@ final class WindowsPathTests: XCTestCase {
         let windows = WindowsPath.windowsPath(for: file, inPrefix: prefix)
         XCTAssertEqual(WindowsPath.macURL(for: windows, inPrefix: prefix)?.path, file.resolvingSymlinksInPath().path)
     }
+
+    func testFolderToBrowseStartsWhereThePathPoints() throws {
+        let sandbox = Sandbox()
+        let prefix = sandbox.root.appendingPathComponent("pfx")
+        let folder = prefix.appendingPathComponent("drive_c/Program Files/Game")
+        sandbox.write("x", to: folder.appendingPathComponent("launcher.exe"))
+        let real = { (url: URL) in url.resolvingSymlinksInPath().path }
+        // the folder of the file it names
+        XCTAssertEqual(real(WindowsPath.folderToBrowse(from: #"C:\Program Files\Game\launcher.exe"#, inPrefix: prefix)), real(folder))
+        // a file that is gone: still its folder; a folder that is gone: the nearest one above
+        XCTAssertEqual(real(WindowsPath.folderToBrowse(from: #"C:\Program Files\Game\old.exe"#, inPrefix: prefix)), real(folder))
+        XCTAssertEqual(real(WindowsPath.folderToBrowse(from: #"C:\Program Files\Game\bin\x64\old.exe"#, inPrefix: prefix)), real(folder))
+        // nothing usable: drive_c
+        let driveC = real(prefix.appendingPathComponent("drive_c"))
+        XCTAssertEqual(real(WindowsPath.folderToBrowse(from: "", inPrefix: prefix)), driveC)
+        XCTAssertEqual(real(WindowsPath.folderToBrowse(from: "launcher.exe", inPrefix: prefix)), driveC)
+        XCTAssertEqual(real(WindowsPath.folderToBrowse(from: #"Q:\nowhere\x.exe"#, inPrefix: prefix)), driveC)
+    }
 }

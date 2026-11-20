@@ -165,6 +165,13 @@
 "editor.environment_footnote" = "프리픽스 기본 변수 위에 이 프로그램에만 추가로 적용할 변수입니다.";
 "editor.remove_variable" = "이 변수 제거";
 "editor.add_variable" = "변수 추가";
+"editor.choose_executable" = "선택…";
+"editor.icon_label" = "아이콘";
+"editor.icon_own" = "프로그램 자체 아이콘";
+"editor.icon_reset" = "프로그램 아이콘 사용";
+"editor.choose_icon_msg" = "아이콘으로 사용할 이미지, Windows 프로그램 또는 아이콘 파일을 선택하세요";
+"editor.no_icon_title" = "이 파일에 아이콘이 없습니다";
+"editor.no_icon_msg" = "“%@”에는 FineWine이 읽을 수 있는 아이콘이 없습니다.";
 
 /* Tools Tab */
 "tools.maintenance_card" = "유지 관리";

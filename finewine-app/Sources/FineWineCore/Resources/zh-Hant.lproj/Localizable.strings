@@ -165,6 +165,13 @@
 "editor.environment_footnote" = "僅對此程式生效的環境變數（疊加於容器環境變數之上）。";
 "editor.remove_variable" = "移除此變數";
 "editor.add_variable" = "加入變數";
+"editor.choose_executable" = "選擇…";
+"editor.icon_label" = "圖像";
+"editor.icon_own" = "程式本身的圖像";
+"editor.icon_reset" = "使用程式本身的圖像";
+"editor.choose_icon_msg" = "選擇用作圖像的圖片、Windows 程式或圖像檔";
+"editor.no_icon_title" = "該檔案中沒有圖像";
+"editor.no_icon_msg" = "「%@」中沒有 FineWine 能讀取的圖像。";
 
 /* Tools Tab */
 "tools.maintenance_card" = "維護與操作";

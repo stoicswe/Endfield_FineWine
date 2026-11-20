@@ -165,6 +165,13 @@
 "editor.environment_footnote" = "このプログラム専用の環境変数（プレフィックス自体の設定に追加されます）。";
 "editor.remove_variable" = "この変数を削除";
 "editor.add_variable" = "変数を追加";
+"editor.choose_executable" = "選択…";
+"editor.icon_label" = "アイコン";
+"editor.icon_own" = "プログラム自身のアイコン";
+"editor.icon_reset" = "プログラムのアイコンを使用";
+"editor.choose_icon_msg" = "アイコンに使う画像、Windows プログラム、またはアイコンファイルを選択してください";
+"editor.no_icon_title" = "このファイルにアイコンがありません";
+"editor.no_icon_msg" = "“%@”には FineWine が読み取れるアイコンがありません。";
 
 /* Tools Tab */
 "tools.maintenance_card" = "メンテナンス";

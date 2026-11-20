@@ -165,6 +165,13 @@
 "editor.environment_footnote" = "متغيرات لهذا البرنامج فقط، تضاف إلى متغيرات الحاوية نفسها.";
 "editor.remove_variable" = "إزالة هذا المتغير";
 "editor.add_variable" = "إضافة متغير";
+"editor.choose_executable" = "اختيار…";
+"editor.icon_label" = "الأيقونة";
+"editor.icon_own" = "أيقونة البرنامج نفسه";
+"editor.icon_reset" = "استخدام أيقونة البرنامج";
+"editor.choose_icon_msg" = "اختر صورة، أو برنامج Windows أو ملف أيقونة، لأخذ الأيقونة منه";
+"editor.no_icon_title" = "لا توجد أيقونة في هذا الملف";
+"editor.no_icon_msg" = "لا يحتوي «%@» على أيقونة يستطيع FineWine قراءتها.";
 
 /* Tools Tab */
 "tools.maintenance_card" = "الصيانة";

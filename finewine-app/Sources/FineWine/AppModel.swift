@@ -626,11 +626,15 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Goes up whenever a shortcut app is made again, so views showing its icon read it again.
+    @Published var iconRevision = 0
+
     func createShortcut(for programID: UUID, in prefix: Prefix) {
         do {
             let updated = try service.createShortcut(for: programID, in: prefix)
             replace(updated)
             // An ad-hoc signature keeps macOS from treating the generated app as damaged.
+            iconRevision += 1
             if let path = updated.program(id: programID)?.shortcutPath {
                 let sign = Process()
                 sign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
@@ -1128,6 +1132,17 @@ enum Panels {
         guard let id = popup.selectedItem?.representedObject as? UUID,
               let prefix = prefixes.first(where: { $0.id == id }) else { return .new }
         return .existing(prefix)
+    }
+
+    /// Asks for a file to take a program's icon from: a picture, or a Windows program,
+    /// library or `.ico` with an icon in it.
+    @MainActor static func chooseIcon(in directory: URL? = nil, message: String) -> URL? {
+        let panel = NSOpenPanel()
+        panel.message = message
+        panel.allowedContentTypes = [.image, .icns, .ico] + ["exe", "dll"].compactMap { .init(filenameExtension: $0) }
+        panel.canChooseDirectories = false
+        panel.directoryURL = directory
+        return panel.runModal() == .OK ? panel.url : nil
     }
 
     @MainActor static func chooseFolder(message: String) -> URL? {

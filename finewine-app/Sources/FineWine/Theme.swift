@@ -156,12 +156,15 @@ struct Pill: View {
 struct ProgramIcon: View {
     let shortcutPath: String?
     var size: CGFloat = 36
+    // Read so the icon is looked up again when a shortcut app is made again.
+    @ObservedObject private var model = AppModel.shared
 
     var body: some View {
         if let shortcutPath, FileManager.default.fileExists(atPath: shortcutPath) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: shortcutPath))
+            Image(nsImage: ProgramIcon.image(ofShortcut: shortcutPath))
                 .resizable()
                 .frame(width: size, height: size)
+                .id(model.iconRevision)
         } else {
             Image(systemName: "macwindow")
                 .font(.system(size: size * 0.5, weight: .medium))
@@ -169,6 +172,14 @@ struct ProgramIcon: View {
                 .frame(width: size, height: size)
                 .fwGlass(tint: Look.wine.opacity(0.2), in: RoundedRectangle(cornerRadius: size * 0.28, style: .continuous))
         }
+    }
+}
+
+extension ProgramIcon {
+    /// The shortcut app's own icon file when it has one: the system's icon for the app can
+    /// be a remembered one for a while after the app was made again.
+    static func image(ofShortcut path: String) -> NSImage {
+        NSImage(contentsOfFile: path + "/Contents/Resources/AppIcon.icns") ?? NSWorkspace.shared.icon(forFile: path)
     }
 }
 

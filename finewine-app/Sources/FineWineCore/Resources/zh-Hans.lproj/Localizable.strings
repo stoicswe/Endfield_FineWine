@@ -165,6 +165,13 @@
 "editor.environment_footnote" = "仅对此程序生效的环境变量（叠加在容器环境变量之上）。";
 "editor.remove_variable" = "移除此变量";
 "editor.add_variable" = "添加变量";
+"editor.choose_executable" = "选取…";
+"editor.icon_label" = "图标";
+"editor.icon_own" = "程序自带的图标";
+"editor.icon_reset" = "使用程序自带图标";
+"editor.choose_icon_msg" = "选取用作图标的图片、Windows 程序或图标文件";
+"editor.no_icon_title" = "该文件中没有图标";
+"editor.no_icon_msg" = "“%@”中没有 FineWine 能读取的图标。";
 
 /* Tools Tab */
 "tools.maintenance_card" = "维护与操作";

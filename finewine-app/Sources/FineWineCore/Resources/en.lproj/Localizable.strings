@@ -165,6 +165,13 @@
 "editor.environment_footnote" = "Variables for this program only, on top of the prefix's own.";
 "editor.remove_variable" = "Remove this variable";
 "editor.add_variable" = "Add Variable";
+"editor.choose_executable" = "Choose…";
+"editor.icon_label" = "Icon";
+"editor.icon_own" = "The program's own";
+"editor.icon_reset" = "Use Program's Own";
+"editor.choose_icon_msg" = "Choose a picture, or a Windows program or icon file, to take the icon from";
+"editor.no_icon_title" = "No icon in that file";
+"editor.no_icon_msg" = "“%@” has no icon FineWine can read.";
 
 /* Tools Tab */
 "tools.maintenance_card" = "Maintenance";
