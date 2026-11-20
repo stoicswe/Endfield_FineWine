@@ -172,6 +172,17 @@ This directory does not contain Wine itself — only diffs to be applied to a Wi
 Applied by `scripts/build-finewine-runtime.sh` on top of `patches/ARM` (minus the two x86-only
 kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21.
 
+- `0043-32-bit-programs-in-a-window-above-4-gb.patch` runs 32-bit Windows programs. macOS gives
+  an ARM64 process no memory below 4 GB, so a 32-bit process's 4 GB are a window at 1 TB
+  (`0x10000000000`, a multiple of 4 GB: a real address cut to 32 bits is the program's address).
+  The memory manager places a 32-bit process's memory inside it and maps the shared user data
+  page there a second time; `ULongToPtr`/`UlongToPtr` add the base in the 32-to-64 call layer
+  (`wow64`, `wow64win`) and, through `include/basetsd.h` and `__wine_wow_window_base` exported
+  by `ntdll.so`, in every library's Mac-side 32-bit thunks; pointer-carrying window messages
+  and `NtUserCall…Param` codes are converted. The base is zero in every other process. Needs
+  FEX patch 0011 and the i386 Windows side (`--enable-archs=arm64ec,aarch64,i386`). Write-up:
+  [25-32-bit-programs-and-installers.md](../docs/project-information/25-32-bit-programs-and-installers.md).
+
 - `0001-msync-mach-semaphore-synchronization.patch` adds MSync as the macOS implementation of
   Wine's in-process synchronisation interface. The code comes from the Wine tree CodeWeavers
   publishes for CrossOver 26.3 (LGPL-2.1-or-later), with this project's fixes, moved from Wine
@@ -324,12 +335,12 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
   files beside them (CEF, Electron) get `--in-process-gpu --disable-gpu --disable-gpu-compositing`: neither DXMT nor the Mac driver
   can draw into a window from a process that does not own it, which is what Chromium's GPU process does.
   `FINEWINE_CHROMIUM_FLAGS` names other switches, or `none`.
-- `0014-ntdll-run-a-do-nothing-program-in-place-of-32-bit-runtime-setup-programs.patch`: the
-  runtime cannot run 32-bit Windows programs (a native ARM64 Mac process has no memory below
-  4 GB). When a program starts the 32-bit setup program of the Visual C++ or DirectX runtime
+- `0014-ntdll-run-a-do-nothing-program-in-place-of-32-bit-runtime-setup-programs.patch`: written
+  when the runtime could not run 32-bit Windows programs, and kept because the runtime has those
+  libraries already. When a program starts the 32-bit setup program of the Visual C++ or DirectX runtime
   (`vc_redist*`, `vcredist*`, `dxsetup`, `dxwebsetup`, `directx_*`, `ue4prereqsetup*`,
   `ueprereqsetup*`), a built-in program that does nothing and succeeds runs in its place, so
-  the installer that started it carries on. Other 32-bit programs still fail to start.
+  the installer that started it carries on. Other 32-bit programs run (0043).
 - `0013-ntdll-keep-a-file-in-the-prefix-open-so-its-processes-can-be-found.patch` makes every
   Wine process hold `<prefix>/.finewine-alive` open, so that a frozen program can be traced to
   its prefix and ended (Force Shut Down). `ps` cannot do it: Wine overwrites a process's
@@ -384,7 +395,15 @@ The patches apply as a series on `0001`. Details and limits are in
 ## `fex/` — the x64 emulator
 
 Applied by `scripts/build-fex.sh` to FEX at the commit pinned in `finewine-sources.lock`.
-FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`.
+FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`, and its WOW64 build
+(for 32-bit programs) as `xtajit.dll`.
+
+- `0011-32-bit-guests-in-a-window-above-4-gb.patch`: the WOW64 build reaches all guest memory
+  through a base (`FEX_GUEST_BASE`, 1 TB; see runtime patch 0043). Generated code adds it on
+  every guest memory access, using x19 and x24, which are taken out of register allocation for
+  32-bit guests; the decoder, the syscall bridge and the invalidation tracker convert between
+  guest and host addresses (`FEXCore/Core/GuestBase.h`). The ARM64EC build has a base of zero
+  at compile time and generates the code it did before.
 
 - `0001-arm64ec-read-the-teb-from-thread-specific-data-on-macos.patch` replaces FEX's ten reads
   of the TEB through x18 with the thread-specific data lookup the runtime uses.

@@ -1,5 +1,9 @@
 # Spike: 32-bit Windows programs without low memory (2026-11-20)
 
+**Superseded** by `patches/runtime/0043` and `patches/fex/0011`, which the build scripts apply
+and which go much further (windows, the Mac-side thunks, prefix creation). Kept as the record of
+the experiment.
+
 Not applied by any build script. These two diffs are the whole of a time-boxed experiment that
 got a 32-bit x86 console program to run on FineWine's ARM64 runtime, with no Rosetta. Background
 and what is left: [docs/project-information/25-32-bit-programs-and-installers.md](../../docs/project-information/25-32-bit-programs-and-installers.md).

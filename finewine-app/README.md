@@ -8,9 +8,10 @@ It uses no CrossOver code or files and no Rosetta 2: it drives a Wine runtime bu
 repository. It sits beside **FineWine Patcher** ([`patcher-app/`](../patcher-app/README.md)),
 which patches a CrossOver install instead.
 
-> **Status: beta.** The runtime runs ARM64 and x64 Windows programs (x64 through FEX) with MSync,
-> Direct3D 10/11 on Metal (DXMT) and Vulkan and Direct3D 12 through MoltenVK. Games have been
-> run on it, with rough edges still. It cannot run 32-bit programs.
+> **Status: beta.** The runtime runs ARM64, x64 and 32-bit Windows programs (x64 and 32-bit
+> through FEX) with MSync, Direct3D 10/11 on Metal (DXMT) and Vulkan and Direct3D 12 through
+> MoltenVK. Games have been run on it, with rough edges still. 32-bit support is new: installers
+> and ordinary programs, not yet tried with a 32-bit game.
 
 Contents: [What it does](#what-it-does) · [Build](#build) ·
 [Technical architecture](#technical-architecture) · [Runtimes](#runtimes) ·
@@ -42,10 +43,10 @@ Contents: [What it does](#what-it-does) · [Build](#build) ·
   named after what it installs, or FineWine asks whether to make one or use an existing prefix:
   Settings > Windows files > "Auto create prefix" or "Ask Me". FineWine appears under Open With
   for these files, and a setting makes it their default app.
-- **32-bit installers.** The runtime cannot run 32-bit programs, and most installers are 32-bit.
-  One made with NSIS is installed by FineWine itself, from the script inside it; see
+- **32-bit programs and installers.** Most installers are 32-bit, whatever they install. One
+  made with NSIS is installed by FineWine itself, from the script inside it; other 32-bit
+  programs run in the runtime. See
   [25-32-bit-programs-and-installers.md](../docs/project-information/25-32-bit-programs-and-installers.md).
-  Other 32-bit programs are explained rather than failing silently.
 - **Right-click a prefix** in the manager's sidebar for its actions: run an installer, find
   programs, configure, Wine tools, show its files or logs, shut down, rename, duplicate, delete.
 - **External drives.** A prefix can live on any APFS or Mac OS Extended drive, in
@@ -165,8 +166,8 @@ A native ARM64 Wine with everything a game needs beside it, built by the scripts
 
 | Layer | What it does | Built by | Our changes |
 |---|---|---|---|
-| **Wine 11.21** | The Windows environment, as native ARM64 code | `build-finewine-runtime.sh` | [`patches/runtime`](../patches/runtime) (42 patches) |
-| **FEX** | Runs x64 Windows code inside Wine's ARM64 processes (`xtajit64.dll` and the ARM64EC library); no Rosetta | `build-fex.sh` | [`patches/fex`](../patches/fex) |
+| **Wine 11.21** | The Windows environment, as native ARM64 code | `build-finewine-runtime.sh` | [`patches/runtime`](../patches/runtime) (43 patches) |
+| **FEX** | Runs x64 and 32-bit Windows code inside Wine's ARM64 processes (`xtajit64.dll` and the ARM64EC library; `xtajit.dll` for 32-bit); no Rosetta | `build-fex.sh` | [`patches/fex`](../patches/fex) |
 | **DXMT** | Direct3D 10 and 11 on Metal, and NVIDIA's NGX (DLSS) as MetalFX | `build-dxmt.sh` | [`patches/dxmt`](../patches/dxmt) |
 | **MoltenVK** | Vulkan on Metal; Direct3D 12 reaches it through Wine's vkd3d | `MVK_FLAVOR=finewine build-moltenvk.sh` | [`patches/moltenvk`](../patches/moltenvk): ray tracing, MetalFX |
 | **GnuTLS, Nettle, GMP, FreeType** | TLS and fonts for Wine | `build-finewine-deps.sh` | none |
@@ -179,7 +180,9 @@ What the Wine patches are for:
   preserve the x18 register, both of which Windows ARM64 code relies on. Patches 0002 to 0005
   work around both without Apple's entitlement
   ([20-finewine-runtime-spike.md](../docs/project-information/20-finewine-runtime-spike.md)).
-  The lack of low memory is also why 32-bit programs cannot run.
+- **32-bit programs.** With no memory below 4 GB, a 32-bit program's 4 GB are a window at 1 TB:
+  Wine's memory manager and call layer and FEX's generated code add the window's base to every
+  32-bit address (patch 0043, FEX patch 0011).
 - **16K pages.** macOS uses 16K memory pages where Windows expects 4K; several Wine and FEX
   patches make partial pages behave, and keep the emulator from committing memory it never uses
   ([30-emulator-memory-on-macos.md](../docs/project-information/30-emulator-memory-on-macos.md)).

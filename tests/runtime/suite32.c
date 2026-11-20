@@ -279,6 +279,86 @@ static void test_window_messages(void)
     check( DestroyWindow( hwnd ), "window: destroy" );
 }
 
+/* ---- a window on screen, with standard controls: a small one appears for a moment ---- */
+static int painted, got_minmax, got_poschanged, got_command;
+static HWND shown_edit;
+
+static LRESULT CALLBACK shown_proc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+{
+    switch (msg)
+    {
+    case WM_GETMINMAXINFO:
+        if (((MINMAXINFO *)lp)->ptMaxTrackSize.x > 0) got_minmax = 1;
+        break;
+    case WM_WINDOWPOSCHANGED:
+        if (((WINDOWPOS *)lp)->hwnd == hwnd) got_poschanged = 1;
+        break;
+    case WM_COMMAND:
+        if ((HWND)lp == shown_edit && HIWORD(wp) == EN_CHANGE) got_command = 1;
+        return 0;
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint( hwnd, &ps );
+        if (dc) { TextOutA( dc, 4, 4, "32-bit", 6 ); painted++; }
+        EndPaint( hwnd, &ps );
+        return 0;
+    }
+    case WM_TIMER:
+        PostQuitMessage( 0 );
+        return 0;
+    }
+    return DefWindowProcA( hwnd, msg, wp, lp );
+}
+
+static void test_shown_window(void)
+{
+    WNDCLASSA cls = {0};
+    char text[32] = {0};
+    RECT rect = {0};
+    HWND hwnd, list;
+    MSG msg;
+
+    cls.lpfnWndProc = shown_proc;
+    cls.hInstance = GetModuleHandleA( NULL );
+    cls.hCursor = LoadCursorA( NULL, (const char *)IDC_ARROW );
+    cls.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    cls.lpszClassName = "FineWine32Shown";
+    RegisterClassA( &cls );
+    hwnd = CreateWindowExA( 0, "FineWine32Shown", "FineWine 32-bit check", WS_OVERLAPPEDWINDOW,
+                            60, 60, 260, 160, NULL, NULL, cls.hInstance, NULL );
+    check( hwnd != NULL, "shown window: create" );
+    if (!hwnd) return;
+    check( got_minmax, "shown window: WM_GETMINMAXINFO carried its structure" );
+
+    shown_edit = CreateWindowExA( WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | WS_VISIBLE, 8, 30, 120, 22, hwnd, (HMENU)10, cls.hInstance, NULL );
+    list = CreateWindowExA( WS_EX_CLIENTEDGE, "LISTBOX", "", WS_CHILD | WS_VISIBLE, 8, 60, 120, 50, hwnd, (HMENU)11, cls.hInstance, NULL );
+    check( shown_edit && list, "shown window: edit and list box controls" );
+
+    ShowWindow( hwnd, SW_SHOWNOACTIVATE );
+    UpdateWindow( hwnd );
+    check( painted > 0, "shown window: painted" );
+    check( IsWindowVisible( hwnd ) && GetClientRect( hwnd, &rect ) && rect.right > 100, "shown window: visible, with a client area" );
+
+    check( SetWindowTextA( shown_edit, "typed text" ) && GetWindowTextA( shown_edit, text, sizeof(text) ) == 10
+           && !strcmp( text, "typed text" ), "shown window: edit control keeps its text" );
+    check( got_command, "shown window: the edit control told its parent" );
+    SendMessageA( list, LB_ADDSTRING, 0, (LPARAM)"first" );
+    SendMessageA( list, LB_ADDSTRING, 0, (LPARAM)"second" );
+    text[0] = 0;
+    check( SendMessageA( list, LB_GETCOUNT, 0, 0 ) == 2 && SendMessageA( list, LB_GETTEXT, 1, (LPARAM)text ) == 6
+           && !strcmp( text, "second" ), "shown window: list box strings" );
+    check( SendMessageA( list, LB_GETITEMRECT, 0, (LPARAM)&rect ) != LB_ERR && rect.bottom > rect.top, "shown window: list box item rectangle" );
+
+    got_poschanged = 0;
+    SetWindowPos( hwnd, NULL, 80, 80, 280, 170, SWP_NOZORDER | SWP_NOACTIVATE );
+    check( got_poschanged && GetWindowRect( hwnd, &rect ) && rect.right - rect.left == 280, "shown window: moved and resized" );
+
+    SetTimer( hwnd, 1, 400, NULL );
+    while (GetMessageA( &msg, NULL, 0, 0 ) > 0) { TranslateMessage( &msg ); DispatchMessageA( &msg ); }
+    check( DestroyWindow( hwnd ), "shown window: destroy" );
+}
+
 /* ---- drawing, off screen ---- */
 static void test_gdi(void)
 {
@@ -337,7 +417,7 @@ int main( int argc, char **argv )
     test_exceptions();
     test_generated_code();
     if (argc > 1 && !strcmp( argv[1], "nogui" )) printf( "skip window and gdi checks\n" );
-    else { test_window_messages(); test_gdi(); }
+    else { test_window_messages(); test_shown_window(); test_gdi(); }
     test_child_process( argv[0] );
 
     printf( "%d failure(s)\n", failures );
