@@ -31,7 +31,7 @@ A minimal macOS app that turns a copy of **CrossOver 26.3** into the patched bui
 4. Re-seals the whole bundle with an ad-hoc signature and removes quarantine. (Just stripping
    the seal gets the copy reported as *damaged* and its binaries killed, because a copy made by
    a downloaded app carries `com.apple.provenance` — see
-   [docs/05](../docs/05-swapping-into-crossover.md#code-signing-after-modification-apple-silicon-specifics).)
+   [docs/05](../docs/project-information/05-swapping-into-crossover.md#code-signing-after-modification-apple-silicon-specifics).)
 5. Verifies the swap (sizes, `ntdll.so` signature, the `lib64` rpath D3DMetal needs, the
    installed GPTK4 files if selected, and the bundle signature).
 6. Moves the patched app into place; an existing copy macOS won't let it delete goes to the Trash.
@@ -45,7 +45,119 @@ MoltenVK **is** bundled (it is Apache-2.0), since the game's Vulkan/DXVK/vkd3d p
 **End users need no developer tools** — the `lib64` rpath is baked into the payload at app-build
 time, so at patch time the app only uses `codesign`, `ditto` and `xattr`, which ship with macOS.
 
-## CrossOver variants: x64 and ARM (experimental)
+Contents: [Building the app](#building-the-app) · [Technical architecture](#technical-architecture) ·
+[Automated Setup](#automated-setup) · [Usage statistics](#per-run-anonymous-usage-statistics) ·
+[Tools menu](#tools-menu) · [Licences](#licences) · [Credits](#credits)
+
+## Building the app
+
+Requires the Xcode Command Line Tools only (no Xcode):
+
+```bash
+# 1. Build the patched Wine first (once) — produces build/wine-build64
+./scripts/build-wine.sh all
+
+# 2. Build the patched MoltenVK (once) — produces build/moltenvk-out
+./scripts/build-moltenvk.sh all
+
+# 3. Build the app around them
+./patcher-app/scripts/build-app.sh
+open "patcher-app/build/FineWine Patcher.app"
+```
+
+For a complete local build of either variant in one step, use `scripts/build-local.sh`:
+
+```bash
+./scripts/build-local.sh        # both variants (default)
+./scripts/build-local.sh x64    # x64 only
+./scripts/build-local.sh arm    # ARM only, reusing the x64 payload already in build/
+```
+
+It runs the commands below as needed, skips any stage whose output is up to date (`FORCE=1`
+rebuilds), and verifies the finished app. By hand: to also bundle the ARM payload, as CI does,
+build it with the separate pipeline first; `build-app.sh` stages `build/wine-arm-payload`
+automatically when it exists (`ARM_PAYLOAD_DIR` overrides the path):
+
+```bash
+# the arm64 MoltenVK first: the ARM payload includes it
+MVK_ARCH=aarch64 ./scripts/build-moltenvk.sh all
+# the ARM Wine modules (upstream Wine at ARM_WINE_TAG, default wine-11.21) + launcher-alpha library
+./scripts/build-wine-arm.sh all
+./patcher-app/scripts/build-app.sh
+```
+
+`PAYLOAD_DIR` overrides where the Wine modules come from (the `build/wine-build64` tree layout or
+a flat directory with the three files); `MOLTENVK_DIR` overrides where `libMoltenVK.dylib` comes
+from (default `build/moltenvk-out`, or a copy inside `PAYLOAD_DIR`). `CODESIGN_ID` sets a real
+signing identity (default: ad-hoc). `ALLOW_MISSING_PAYLOAD=1` produces a payload-less smoke-test
+build that refuses to patch.
+
+### App icon
+
+`build-app.sh` bakes in `Resources/AppIcon.icns` (a committed file). To regenerate it after
+changing the source art, run `scripts/make-appicon.sh` — it renders the full macOS size set from
+`Resources/appicon/appicon-source.png` with Apple tools only (`swift` + `iconutil`, no
+third-party image libraries), centering the artwork on a transparent square with a 6% margin
+(`MARGIN=…` to change). If `AppIcon.icns` is absent, the app simply builds without a custom icon.
+
+## Technical architecture
+
+The patcher is a SwiftUI app with the patched modules inside it. It does not build anything on
+the user's Mac: it copies CrossOver, swaps modules in the copy, signs it again and checks the
+result (the six steps at the top of this page).
+
+**Where the modules come from.** [`scripts/build-wine.sh`](../scripts/build-wine.sh) builds
+CodeWeavers' published CrossOver 26.3 Wine source with [`patches/x64`](../patches/x64) applied:
+
+- `stage1-macos` — our fixes for macOS: two Rosetta 2 signal-handling bugs (a multi-byte
+  `0F 1F` NOP that Rosetta rejects, and a privileged `mov cr3` it mis-reports), MSync fixes, a
+  hidden `rundll32` window, and the launcher's black margin.
+- `stage2-dwproton` — the anti-cheat support ported from dw-proton: `ntoskrnl.exe` backports,
+  the `KiUser*Dispatcher` handling and the timing changes, plus `ace-core/`: the imports the
+  ACE-CORE driver asks for and an `lsass.exe` stub.
+- `moltenvk` — changes to MoltenVK, built by [`scripts/build-moltenvk.sh`](../scripts/build-moltenvk.sh).
+
+Only the modules those patches touch are swapped; everything else in the copy is CrossOver's
+own. `wineserver` goes with `ntdll.so` because their protocol must match, and `ntdll.so` gets an
+rpath to `lib64` so D3DMetal can load. The full account is in
+[docs/technical.md](../docs/technical.md), each patch is described in
+[patches/README.md](../patches/README.md), and the history is in
+[docs/project-information/](../docs/project-information/).
+
+### Source layout
+
+```
+Package.swift                     SwiftPM manifest (macOS 13+)
+Sources/FineWinePatcher/
+  FineWinePatcherApp.swift        app entry: main window + Tools menu + Mod Framework / Metal HUD windows
+  ContentView.swift               the main window UI (the patch flow only)
+  MetalHUDView.swift              the Metal HUD window: per-bottle enable/disable of Apple's overlay
+  MetalHUD.swift                  bottle `MTL_HUD_ENABLED`, related Endfield/Games/GRYPHLINK discovery
+  ModChainView.swift              the Mod Framework window: bottle + EFMI discovery, apply/revert chain
+  PatchProgressViews.swift        the shared step-checklist and error views
+  PatchTelemetryPromptView.swift  the post-patch send/skip dialog with the exact payload preview
+  TelemetryThankYouView.swift     the post-send thank-you dialog with confetti
+  UsageTelemetry.swift            per-run report schema, allowlists, and the one send action
+  PatcherEngine.swift             the patch steps (mirrors swap-into-crossover.sh) + the mod-chain phase
+  ModChain.swift                  the mod (EFMI) chain support: backend/bottle/EFMI discovery,
+                                  the d3dx.ini [System] proxy_d3d11 edit, verify, revert, state file
+  LicensesView.swift              the Licenses window + component metadata
+Tests/FineWinePatcherTests/
+  ModChainTests.swift             the mod-chain ini-editing rules (swift test)
+  VariantTests.swift              x64-vs-ARM detection + the per-variant path table (swift test)
+  MetalHUDTests.swift             bottle env editing, related-app discovery, apply/revert
+  UsageTelemetryTests.swift       per-run prompt schema + metadata allowlist checks (swift test)
+Resources/licenses/               license texts bundled into the app
+Resources/AppIcon.icns            the app icon (committed; regenerate with make-appicon.sh)
+Resources/appicon/                the icon source art
+scripts/build-app.sh              compile + assemble + payload staging (Wine + MoltenVK) + signing
+scripts/check-telemetry-privacy.py  build-time privacy gate for user-confirmed telemetry
+scripts/make-appicon.sh           regenerate AppIcon.icns from the source art
+scripts/make-appicon.swift        the icon renderer (ImageIO/Core Graphics)
+build/                            (gitignored) the assembled .app
+```
+
+### CrossOver variants: x64 and ARM (experimental)
 
 One patcher handles both CrossOver products. It **detects the variant from the selected app's
 layout** and installs the matching payload — the x64 path is never affected by the ARM payload
@@ -365,114 +477,58 @@ Under the menu bar **Tools → Sikarugir Engine…**, the patcher integrates wit
 - **1-Click Uninstallation**: Safely removes the engine if no longer needed.
 - **CrossOver-free & Steam Support**: Allows running Arknights: Endfield (including the Steam version) inside Sikarugir wrappers without needing a CrossOver licence.
 
-## Building the app
-
-Requires the Xcode Command Line Tools only (no Xcode):
-
-```bash
-# 1. Build the patched Wine first (once) — produces build/wine-build64
-./scripts/build-wine.sh all
-
-# 2. Build the patched MoltenVK (once) — produces build/moltenvk-out
-./scripts/build-moltenvk.sh all
-
-# 3. Build the app around them
-./patcher-app/scripts/build-app.sh
-open "patcher-app/build/FineWine Patcher.app"
-```
-
-For a complete local build of either variant in one step, use `scripts/build-local.sh`:
-
-```bash
-./scripts/build-local.sh        # both variants (default)
-./scripts/build-local.sh x64    # x64 only
-./scripts/build-local.sh arm    # ARM only, reusing the x64 payload already in build/
-```
-
-It runs the commands below as needed, skips any stage whose output is up to date (`FORCE=1`
-rebuilds), and verifies the finished app. By hand: to also bundle the ARM payload, as CI does,
-build it with the separate pipeline first; `build-app.sh` stages `build/wine-arm-payload`
-automatically when it exists (`ARM_PAYLOAD_DIR` overrides the path):
-
-```bash
-# the arm64 MoltenVK first: the ARM payload includes it
-MVK_ARCH=aarch64 ./scripts/build-moltenvk.sh all
-# the ARM Wine modules (upstream Wine at ARM_WINE_TAG, default wine-11.21) + launcher-alpha library
-./scripts/build-wine-arm.sh all
-./patcher-app/scripts/build-app.sh
-```
-
-`PAYLOAD_DIR` overrides where the Wine modules come from (the `build/wine-build64` tree layout or
-a flat directory with the three files); `MOLTENVK_DIR` overrides where `libMoltenVK.dylib` comes
-from (default `build/moltenvk-out`, or a copy inside `PAYLOAD_DIR`). `CODESIGN_ID` sets a real
-signing identity (default: ad-hoc). `ALLOW_MISSING_PAYLOAD=1` produces a payload-less smoke-test
-build that refuses to patch.
-
-### App icon
-
-`build-app.sh` bakes in `Resources/AppIcon.icns` (a committed file). To regenerate it after
-changing the source art, run `scripts/make-appicon.sh` — it renders the full macOS size set from
-`Resources/appicon/appicon-source.png` with Apple tools only (`swift` + `iconutil`, no
-third-party image libraries), centering the artwork on a transparent square with a 6% margin
-(`MARGIN=…` to change). If `AppIcon.icns` is absent, the app simply builds without a custom icon.
-
-## Licensing (important if you distribute the built app)
+## Licences
 
 - **The app itself** (Swift sources, UI, this directory): [GNU GPL-3.0-or-later](../LICENSE).
-- **The bundled Wine modules** (`ntdll.so`, `winemac.so`, `dwmapi.dll`, `kernel32.dll`, `ntoskrnl.exe`, `lsass.exe`, `wineboot.exe`, `rundll32.exe`, `wineserver`): **LGPL-2.1-or-later** —
-  they are Wine, built from CodeWeavers' freely published
-  [CrossOver 26.3 Wine source](https://www.codeweavers.com/crossover/source) with this repo's
-  [patches](../patches/) applied (which include the
-  [dw-proton](https://dawn.wine/) anti-cheat patches — see [patches/README.md](../patches/README.md)
-  for authorship).
-- **The bundled `libMoltenVK.dylib`**: **Apache-2.0** — MoltenVK, built from the Khronos Group
-  [MoltenVK](https://github.com/KhronosGroup/MoltenVK) sources with this repo's
+- **The bundled Wine modules** (`ntdll.so`, `winemac.so`, `dwmapi.dll`, `kernel32.dll`,
+  `ntoskrnl.exe`, `lsass.exe`, `wineboot.exe`, `rundll32.exe`, `wdfldr.sys`, `wineserver`):
+  **LGPL-2.1-or-later**. They are Wine. The x64 ones are built from CodeWeavers' published
+  [CrossOver 26.3 Wine source](https://www.codeweavers.com/crossover/source), the ARM ones from
+  [Wine 11.21](https://gitlab.winehq.org/wine/wine), with this repository's
+  [patches](../patches/) applied.
+- **The patches** are changes to Wine and MoltenVK, so they stay under those projects' licences
+  and cannot be relicensed here. The `stage2-dwproton` patches come from the
+  [dw-proton](https://dawn.wine/) project and keep their authors' rights; see
+  [patches/README.md](../patches/README.md) for authorship.
+- **The bundled `libMoltenVK.dylib`**: **Apache-2.0**. MoltenVK, built from the Khronos Group's
+  [sources](https://github.com/KhronosGroup/MoltenVK) with
   [patches/x64/moltenvk](../patches/x64/moltenvk/) applied.
-- The app's **Licenses…** window shows all of this, with the full license texts, offline.
+- The app's **Licenses…** window shows all of this, with the full licence texts, offline.
 
-If you publish a built `FineWine Patcher.app` (e.g. a GitHub Release), LGPL-2.1 requires you to
-make the **complete corresponding source** of the Wine modules available: this repository's
-patches + the exact `crossover-sources-26.3.0` archive from
+**If you distribute a built `FineWine Patcher.app`** (for example in a GitHub release),
+LGPL-2.1 requires the complete corresponding source of the Wine modules to be available: this
+repository's patches plus the exact `crossover-sources-26.3.0` archive from
 [media.codeweavers.com/pub/crossover/source](https://media.codeweavers.com/pub/crossover/source/).
-Apache-2.0 requires the MoltenVK license/notice to travel with the binary (the app bundles it)
-and the corresponding source to be offered (this repo's MoltenVK patches + the pinned upstream
-revision recorded by `scripts/build-moltenvk.sh`).
-Best practice: attach (or mirror in a release) the exact source tarballs you built from, so your
-source offer doesn't depend on a third-party URL staying alive.
+Apache-2.0 requires MoltenVK's licence and notice to travel with the binary (the app bundles
+them) and the source to be offered (the MoltenVK patches plus the upstream revision recorded by
+`scripts/build-moltenvk.sh`). Attach or mirror the exact source archives you built from, so the
+offer does not depend on someone else's URL staying alive.
 
-The app never contains or redistributes CrossOver itself, Apple's Game Porting Toolkit, or the
-game. It requires the user's own licensed CrossOver install as input, and links to
-[codeweavers.com/store](https://www.codeweavers.com/store) for buying one.
+**Never included:** CrossOver itself, Apple's Game Porting Toolkit, or the game. The app needs
+the user's own licensed CrossOver as input and links to
+[codeweavers.com/store](https://www.codeweavers.com/store) for buying one. GPTK is evaluation
+software under Apple's licence and is only ever read from a copy the user supplies.
 
-## Layout
+## Credits
 
-```
-Package.swift                     SwiftPM manifest (macOS 13+)
-Sources/FineWinePatcher/
-  FineWinePatcherApp.swift        app entry: main window + Tools menu + Mod Framework / Metal HUD windows
-  ContentView.swift               the main window UI (the patch flow only)
-  MetalHUDView.swift              the Metal HUD window: per-bottle enable/disable of Apple's overlay
-  MetalHUD.swift                  bottle `MTL_HUD_ENABLED`, related Endfield/Games/GRYPHLINK discovery
-  ModChainView.swift              the Mod Framework window: bottle + EFMI discovery, apply/revert chain
-  PatchProgressViews.swift        the shared step-checklist and error views
-  PatchTelemetryPromptView.swift  the post-patch send/skip dialog with the exact payload preview
-  TelemetryThankYouView.swift     the post-send thank-you dialog with confetti
-  UsageTelemetry.swift            per-run report schema, allowlists, and the one send action
-  PatcherEngine.swift             the patch steps (mirrors swap-into-crossover.sh) + the mod-chain phase
-  ModChain.swift                  the mod (EFMI) chain support: backend/bottle/EFMI discovery,
-                                  the d3dx.ini [System] proxy_d3d11 edit, verify, revert, state file
-  LicensesView.swift              the Licenses window + component metadata
-Tests/FineWinePatcherTests/
-  ModChainTests.swift             the mod-chain ini-editing rules (swift test)
-  VariantTests.swift              x64-vs-ARM detection + the per-variant path table (swift test)
-  MetalHUDTests.swift             bottle env editing, related-app discovery, apply/revert
-  UsageTelemetryTests.swift       per-run prompt schema + metadata allowlist checks (swift test)
-Resources/licenses/               license texts bundled into the app
-Resources/AppIcon.icns            the app icon (committed; regenerate with make-appicon.sh)
-Resources/appicon/                the icon source art
-scripts/build-app.sh              compile + assemble + payload staging (Wine + MoltenVK) + signing
-scripts/check-telemetry-privacy.py  build-time privacy gate for user-confirmed telemetry
-scripts/make-appicon.sh           regenerate AppIcon.icns from the source art
-scripts/make-appicon.swift        the icon renderer (ImageIO/Core Graphics)
-build/                            (gitignored) the assembled .app
-```
+The patcher exists because of these projects:
+
+- **[dw-proton / Dawn Winery](https://dawn.wine/)** — the Linux ACE and Endfield patches that
+  stage 2 ports.
+- **[CodeWeavers CrossOver](https://www.codeweavers.com/crossover)** — the app being patched,
+  and the [published source](https://www.codeweavers.com/crossover/source) the modules are built
+  from.
+- **[Wine](https://www.winehq.org/)** — the foundation under all of it.
+- **[MoltenVK](https://github.com/KhronosGroup/MoltenVK)** by the Khronos Group — Vulkan on
+  Metal.
+- **[Apple Game Porting Toolkit](https://developer.apple.com/games/game-porting-toolkit/)** —
+  D3DMetal.
+- **[DXMT](https://github.com/3Shain/dxmt)** by Feifan He — the Direct3D 11 path CrossOver
+  ships and the game runs best on.
+- **[FEX-Emu](https://fex-emu.com/)** — the x64 emulation inside CrossOver ARM.
+- **[XXMI Launcher / EFMI](https://github.com/SpectrumQT/XXMI-Launcher)**,
+  **[NotProton](https://github.com/NotProtonNot/NotProton)** and
+  **[Sikarugir](https://github.com/Sikarugir-App/Sikarugir)** — the projects the Tools menu
+  works with.
+- **WineHQ bug 45083** reporters — the prior art that framed the Rosetta and VMProtect problem.
+

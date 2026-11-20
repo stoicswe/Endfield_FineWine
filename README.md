@@ -2,36 +2,58 @@
 
 # Endfield_FineWine — Arknights: Endfield on Apple Silicon
 
-⚠️ These patches for Crossover are provided as-is. While the patches do allow for the Endfield anti-cheat to operate on macOS like it does on windows, it is your choice to use this tool and you therefore take on the risks associated with that.
-
 [![Watch on YouTube](./docs/screenshot_2026.09.28.png)](https://www.youtube.com/watch?v=baokvOArBKc)
 
-Run **Arknights: Endfield** on an Apple Silicon Mac through a **custom-patched CrossOver Wine**. This project aims to provide the necessary compatibility edits needed to bring Arknights: Endfiled to a near-native macOS gaming experience. Patches by the `DW-Proton` project have been used as the basis for getting the game's VMProtect/TenProtect armor, the **ACE anti-cheat**, and rendering commands to run properly on macOS. This project does **NOT** bypass anticheat, but rather adjusts the crossover env to allow for Endfield's anticheat services to run uninterupted. Additiionally, we aim optimize the translated calls from DX11/Vulkan to Apple's **D3DMetal**.
+Run **Arknights: Endfield** and other Windows games on an Apple Silicon Mac. This repository holds two projects that share that goal:
+
+- **[FineWine](#finewine-standalone)** — a standalone menu bar app with its own Wine. It needs no CrossOver and no Rosetta 2.
+- **[FineWine Patcher](#finewine-patcher)** — an app that patches a copy of your licensed CrossOver so the game's protection and the **ACE anti-cheat** run on macOS as they do on Windows.
 
 Project website: **[endfield-finewine.web.app](https://endfield-finewine.web.app)**
 
-CodeWeavers rated Endfield *"Installs, Will Not Run"* and the community consensus was that CrossOver + Endfield was impossible; this repository is the first known working setup, plus the full engineering write-up of how it was found.
+⚠️ Both are provided as-is. Neither bypasses anti-cheat: they change the Wine environment so that the game's own anti-cheat services run uninterrupted. Using them is your choice and the risk is yours.
 
-> **What this is:** a set of **patches** to CrossOver's (LGPL) Wine, plus **scripts** and **documentation** to build and deploy them. It does **not** contain or redistribute CrossOver, Wine, Apple's Game Porting Toolkit, or the game — you bring your own licensed copies of each.
->
-> **Scope & ethics:** own the game; this is compatibility work (the same category as Valve's Proton on Linux) — no in-game advantage, no modified game logic, no DRM circumvention. Running the game in an unsupported configuration may violate its Terms of Service; that risk is yours (see [LICENSE](LICENSE)). Not affiliated with Gryphline/Hypergryph, Tencent, CodeWeavers, or Apple.
+> **Scope & ethics:** own the game; this is compatibility work (the same category as Valve's Proton on Linux) — no in-game advantage, no modified game logic, no DRM circumvention. Running a game in an unsupported configuration may violate its Terms of Service. Not affiliated with Gryphline/Hypergryph, Tencent, CodeWeavers, or Apple. The repository does not contain or redistribute CrossOver, Apple's Game Porting Toolkit, or any game.
 
----
-
-## Hardware Specs & Real-World Performance
-
-Tested on an Apple **M4 Pro** (MacBook Pro 12-core, 24 GB), macOS 27.0, CrossOver 26.2/26.3 — **120 FPS on Max settings** using **DXMT + `-force-d3d11`**, ~8–12 GB RAM. ⚠️ **MacBook Air is OFF-LIMITS** (no active cooling). Expect ~90 °C thermals; performance is CPU + RAM bound, not GPU.
-
-> [!IMPORTANT]
-> **GPTK4 is not a DXMT dependency.** DXMT has its own D3D11→Metal implementation and does not load D3DMetal. GPTK4 only changes the separate D3DMetal path; keep it optional when using `CX_GRAPHICS_BACKEND=dxmt`.
->
-> **DLSS on DXMT depends on the installed DXMT build.** CrossOver 26.3's bundled DXMT 0.80 has an NGX resource-parameter bug that causes a black screen in Endfield; use **TAAU** or **AMD FSR3** with that build. DXMT with the fix proposed in [3Shain/dxmt#235](https://github.com/3Shain/dxmt/pull/235) can run DLSS upscaling through MetalFX. FineWine 1.2.3 does not ship that DXMT fix. See [DLSS compatibility](docs/technical.md#dlss-under-dxmt-stock-and-patched-builds).
-
-➜ See **[docs/performance.md](docs/performance.md)** for the full breakdown: per-chip FPS targets, thermal behaviour, swap pressure, and optimisation tips.
+| | FineWine (standalone) | FineWine Patcher |
+|---|---|---|
+| What it is | Its own app and Wine runtime | Patches for a CrossOver you own |
+| Needs CrossOver | No | Yes, 26.3 (or the ARM preview), licensed |
+| Needs Rosetta 2 | No (x64 code runs through FEX) | Yes for the x64 variant |
+| macOS | 26 or newer | 15 or newer |
+| State | Beta | The established way to play Endfield |
+| Details | **[finewine-app/README.md](finewine-app/README.md)** | **[patcher-app/README.md](patcher-app/README.md)** |
 
 ---
 
-## Quick Start
+## FineWine (standalone)
+
+A menu bar app that manages Wine prefixes, runs the programs installed in them and makes a Mac app for each one. Its Wine runtime is built from this repository: native ARM64 Wine, FEX for x64 programs, DXMT for Direct3D 10/11 on Metal and MoltenVK for Vulkan and Direct3D 12.
+
+How to build it, how it is put together, and the licences and upstream projects of everything inside it: **[finewine-app/README.md](finewine-app/README.md)**.
+
+### Quick start
+
+1. Download the newest **FineWine** zip from the [releases page](https://github.com/stoicswe/Endfield_FineWine/releases), unzip it and move `FineWine.app` to `/Applications`.
+2. Open it. FineWine lives in the menu bar; its manager window opens from there.
+3. Choose **New Prefix**, pick a profile (Standard, or Arknights: Endfield) and give it a name.
+4. Right-click the prefix, choose **Run Installer…** and select the game's Windows installer. The programs it installs appear in the prefix's list.
+5. Start a program from the list or from the menu bar. **Make Shortcut App** puts it in `~/Applications/FineWine` for Finder, Launchpad and the Dock.
+
+Already have the game in a CrossOver bottle? **Import CrossOver Bottle…** makes a FineWine prefix from a copy of it; the bottle itself is not changed.
+
+> [!NOTE]
+> FineWine cannot run 32-bit Windows programs. It installs the common 32-bit installers itself and says so for the rest; see the [detailed readme](finewine-app/README.md).
+
+---
+
+## FineWine Patcher
+
+An app that turns a copy of **CrossOver 26.3** into a patched build that runs Arknights: Endfield. Your original CrossOver is never changed.
+
+How to build it, how the patches work, and the licences and upstream projects of everything inside it: **[patcher-app/README.md](patcher-app/README.md)**.
+
+### Quick start
 
 > [!IMPORTANT]
 > **Fresh installs: order matters.** Patch CrossOver **first**, then create the bottle and install
@@ -40,86 +62,51 @@ Tested on an Apple **M4 Pro** (MacBook Pro 12-core, 24 GB), macOS 27.0, CrossOve
 > stock app keeps opening the **stock** CrossOver. Delete launchers the stock app created
 > (`~/Applications/CrossOver/…`) and re-create them from the patched copy.
 
-### Using the Patcher.app
-Use the latest available release patcher found on the [releases page](https://github.com/stoicswe/Endfield_FineWine/releases).
+1. Install [CrossOver 26.3](https://www.codeweavers.com/crossover) (licensed) and Rosetta 2: `softwareupdate --install-rosetta --agree-to-license`.
+2. Download the newest **FineWine Patcher** from the [releases page](https://github.com/stoicswe/Endfield_FineWine/releases) and open it.
+3. Choose **Automated Setup…**. It creates the patched copy (`/Applications/CrossOver_Endfield_Patch.app`), optionally installs Apple's GPTK4 / D3DMetal 4 from a copy you download yourself, asks for the Gryphline installer, creates the bottle in the patched app and starts the installer. **Create Patched Copy…** does only the first of these.
+4. Start the game from the Gryphline launcher in the **patched** app with **Launch with DirectX 11** ([docs/installation.md](docs/installation.md#5-run-the-game)).
 
-**Create Patched Copy…** produces the patched CrossOver on its own (with a progress window).
-**Automated Setup…** does the whole fresh install from the CrossOver selected on the main page: it
-creates the patched copy, optionally installs **Apple's GPTK4 / D3DMetal 4** (with a link to
-Apple's download page — it is never bundled), asks you to download the Gryphline installer, lets
-you review the bottle settings (Windows 11 64-bit, D3DMetal, MetalFX/DLSS, MSync by default),
-creates the bottle in the patched app and starts the installer.
+Building and deploying from the shell instead, without the app:
 
-The patcher can also install **Apple's GPTK4 / D3DMetal** if you mount the *"Evaluation environment for Windows games …"* DMG first — it is never bundled or redistributed, only read from the copy you supply.
-
-Once the game is installed, start it from the Gryphline launcher with **Launch with DirectX 11** ([docs/installation.md](docs/installation.md#5-run-the-game)). Starting `Endfield.exe` directly with `scripts/launch-endfield.sh` is not a supported way to use FineWine; it stays available for reference and can stop at a black window on recent game builds.
-
-### Manual Build and Installation
-
-#### Dependancies
-| | |
-|---|---|
-| **Mac** | Apple Silicon (M-series); **Intel not supported** |
-| **macOS** | 15 (Sequoia) or newer — tested on 27.0 / 26.5 |
-| **Rosetta 2** | required: `softwareupdate --install-rosetta --agree-to-license` |
-| **CrossOver** | **26.3**, licensed, from [codeweavers.com](https://www.codeweavers.com/crossover) |
-| **Xcode CLT / Homebrew** | `xcode-select --install` · [brew.sh](https://brew.sh) |
-| **Disk / time** | ~5 GB for the build tree; build ~10 min on a 10-core M4, longer on fewer cores (1.5–2.5 h cold on the 3-vCPU CI runner) |
-
-
-#### Cloning and Building Locally
 ```bash
-git clone <your-fork-url> Endfield_FineWine && cd Endfield_FineWine
-
-./scripts/build-wine.sh all          # 1. build the patched Wine (deps -> fetch -> patch -> configure -> build)
-
-./scripts/swap-into-crossover.sh     # 2. deploy into a copy of CrossOver -> /Applications/CrossOver_Endfield_Patch.app
-
-./scripts/create-bottle.sh           # 3. create the "Arknights Endfield" bottle (Win11 64-bit, D3DMetal + DLSS + MSync)
-                                     #    …then install the Gryphline launcher into it via CrossOver's GUI
-
-open /Applications/CrossOver_Endfield_Patch.app   # 4. run the game — NOT the stock CrossOver app
-                                                 #    GPTK4 is optional for DXMT; it upgrades the separate D3DMetal backend
-                                                 #    Set bottle backend to DXMT (CX_GRAPHICS_BACKEND=dxmt)
-                                                 #    in the launcher: dropdown next to Start -> "Launch with DirectX 11"
-                                                 #    or add -force-d3d11 flag. Stock DXMT: use TAAU or FSR3.
-                                                 #    DLSS needs the DXMT NGX fix; see the compatibility note above.
+./scripts/build-wine.sh all          # 1. build the patched Wine
+./scripts/swap-into-crossover.sh     # 2. deploy into a copy of CrossOver
+./scripts/create-bottle.sh           # 3. create the "Arknights Endfield" bottle, then install the launcher into it
+open /Applications/CrossOver_Endfield_Patch.app   # 4. run the game from the patched app
 ```
 
-Full requirements, a manual (auditable) deployment, the bottle/Gryphline setup, and launch options: **[docs/installation.md](docs/installation.md)**.
-
-> The build scripts render a live dashboard in the terminal (step checklist, progress bars, a
-> scrolling tail of each step's log; full logs land in `build/*.log`). Piped output / CI gets the
-> plain log instead — set `NO_UI=1` to force it. Full output of every step is always written to
-> `build/<step>.log`.
+Full requirements, a manual (auditable) deployment, the bottle setup and launch options: **[docs/installation.md](docs/installation.md)**. Problems: **[docs/troubleshooting.md](docs/troubleshooting.md)**.
 
 ---
 
-## Technical Architecture (Under The Hood)
+## Performance
 
-Curious about how this works under the hood without cluttering up the setup guide? Read **[docs/technical.md](docs/technical.md)** for the full architectural deep dive, including:
-- **Two novel Rosetta 2 CPU bug fixes:** skipping multi-byte `0F 1F` NOP exception loops and fixing privileged `mov cr3` opcode classification in `signal_x86_64.c`.
-- **dw-proton anti-cheat port:** 17 `ntoskrnl.exe` kernel backports, `KiUser*Dispatcher` int3 spoofer, and high-resolution QPC timing loops. A further `ace-core/` set adds the 7 new `ntoskrnl.exe` imports the late-2026 `ACE-CORE*.sys` driver requests, **calls `DriverInit` with kernel return-address bits so ACE-CORE's entry check passes**, and ships an `lsass.exe` stub (see [docs/14](docs/project-information/14-ace-core-regression.md)).
-- **Surgical module swap & dynamic linking:** why only 3 Wine modules are swapped and how `@loader_path/../../../lib64` rpath is injected so D3DMetal can load.
-- **Graphics translation mechanics:** DXMT (`-force-d3d11`) is its own D3D11→Metal path; GPTK4/D3DMetal changes do not alter DXMT rendering.
-- Complete subsystem research and milestone reports in [docs/](docs/).
+**Patched CrossOver.** Tested on an Apple **M4 Pro** (MacBook Pro 12-core, 24 GB), macOS 27.0, CrossOver 26.2/26.3: **120 FPS on Max settings** with **DXMT + `-force-d3d11`**, about 8–12 GB of RAM. A base M1–M4 with 16 GB reaches about 45–60 FPS on Medium/Low. ⚠️ A **MacBook Air is not recommended** (no active cooling). Expect about 90 °C; performance is bound by CPU and RAM more than by the GPU.
+
+> [!IMPORTANT]
+> **GPTK4 is not a DXMT dependency.** DXMT has its own D3D11→Metal implementation and does not load D3DMetal; GPTK4 only changes the separate D3DMetal path.
+>
+> **DLSS on DXMT depends on the DXMT build.** CrossOver 26.3's bundled DXMT 0.80 has an NGX bug that gives a black screen in Endfield; use **TAAU** or **AMD FSR3** with it. See [DLSS compatibility](docs/technical.md#dlss-under-dxmt-stock-and-patched-builds).
+
+**FineWine standalone.** Measured layer by layer, not yet as game frame rates: on an Apple M3, x64 code under FEX runs integer and memory work at about native speed, and a Direct3D 11 frame of 10,000 draws takes 6.0 ms as ARM64 and 8.3 ms as x64. MSync, automatic MetalFX upscaling and Game Mode are on by default.
+
+More:
+
+- [docs/performance.md](docs/performance.md) — FPS targets per chip, thermals, swap pressure and tuning for the patched CrossOver.
+- [docs/14-performance-on-16gb-macs.md](docs/14-performance-on-16gb-macs.md) — 16 GB machines.
+- [docs/project-information/22-performance.md](docs/project-information/22-performance.md) and [29-performance-analysis.md](docs/project-information/29-performance-analysis.md) — the FineWine runtime's measurements.
 
 ---
 
-## License
+## Documentation
 
-- **Original project tooling, scripts, documentation, and patcher UI:** [GNU GPL-3.0-or-later](LICENSE).
-- **Patches (`patches/`):** these are modifications to **Wine**, so they remain **LGPL-2.1-or-later** (Wine's license) and cannot be relicensed by this project. The `stage2-dwproton/` patches originate from the **dw-proton (Dawn Winery)** project and retain their upstream authors' rights. See [patches/README.md](patches/README.md).
-- This repo's **source** does not include Wine, CrossOver, Apple's GPTK, or the game. Built artifacts (e.g. `FineWine Patcher.app`) bundle the patched Wine modules (**LGPL-2.1-or-later**) and MoltenVK (**Apache-2.0**) — see [patcher-app/README.md](patcher-app/README.md) for the corresponding-source offer. Get CrossOver, GPTK and the game from their own sources, under their own licenses.
+- [docs/installation.md](docs/installation.md), [docs/troubleshooting.md](docs/troubleshooting.md) — setting up and fixing the patched CrossOver.
+- [docs/technical.md](docs/technical.md) — how the CrossOver patches work: the two Rosetta 2 fixes, the anti-cheat port, the module swap, the graphics paths.
+- [docs/finewine-runtime-format.md](docs/finewine-runtime-format.md) — describing another Wine build so FineWine can use it.
+- [docs/project-information/](docs/project-information/) — the engineering write-ups, in the order the work was done.
+- [patches/README.md](patches/README.md) — every patch and where it came from.
 
-## Credits
+## Contributing
 
-- **[dw-proton / Dawn Winery](https://dawn.wine/)** — the Linux ACE/Endfield patches that stage 2 ports.
-- **[CodeWeavers CrossOver](https://www.codeweavers.com/crossover)** and the **[Wine](https://www.winehq.org/)** project — the foundation this builds on.
-- **[Apple Game Porting Toolkit](https://developer.apple.com/games/game-porting-toolkit/)** — D3DMetal.
-- **[Khronos Group MoltenVK](https://github.com/KhronosGroup/MoltenVK)** — the Vulkan-on-Metal layer (Apache-2.0); bundled patched in the patcher app.
-- **WineHQ Bug 45083** reporters — the prior art that framed the Rosetta VMProtect problem.
-
-## Contributing / upstreaming
-
-The two Rosetta signal-handling fixes are general CrossOver-on-Apple-Silicon bugs and are worth reporting to **CodeWeavers** (with Bug 45083 as reference). PRs to improve the build/deploy scripts, packaging (e.g. a CXPatcher-style overlay), and testing on more chips/macOS versions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+PRs that improve the build and deploy scripts, the apps, and testing on more chips and macOS versions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). The two Rosetta signal-handling fixes are general CrossOver-on-Apple-Silicon bugs and are worth reporting to CodeWeavers (WineHQ bug 45083 is the reference).
