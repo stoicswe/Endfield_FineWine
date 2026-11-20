@@ -625,3 +625,23 @@
 "bottle.stage_measuring" = "正在计算容器大小";
 "bottle.stage_copying" = "正在拷贝容器";
 "bottle.stage_updating" = "正在更新 Windows 文件";
+
+/* Steam */
+"steam.card" = "Steam";
+"steam.footnote" = "将 FineWine 添加到 Mac 版 Steam 客户端的兼容工具列表，这样 Steam 库中的 Windows 游戏点“开始游戏”即可启动。只有在 NotProton 或 Bridgeplay 开启该列表后，Steam 才会显示它；FineWine 与它们并存，不改动 Steam 本身。每个游戏在这里都有自己的容器，并使用 FineWine 的设置。安装或移除工具后请重新启动 Steam。仅支持 64 位游戏；Steam 界面叠加层不可用。";
+"steam.tool_label" = "Steam 工具";
+"steam.install" = "安装到 Steam";
+"steam.install_again" = "重新安装";
+"steam.status_no_steam" = "这台 Mac 上没有安装 Steam。";
+"steam.status_no_bridge" = "这里没有带 Steam 桥接的运行时。";
+"steam.status_no_enabler" = "Steam 还不会列出工具：请先安装 NotProton 或 Bridgeplay。";
+"steam.status_ready" = "未安装。Steam Play 由 %@ 开启。";
+"steam.status_installed" = "已作为“FineWine”安装到 Steam 的兼容性列表（Steam Play 由 %@ 开启）。";
+"steam.err_install_title" = "无法安装 Steam 工具";
+"steam.err_remove_title" = "无法移除 Steam 工具";
+"steam.alert_title" = "FineWine 无法启动此游戏";
+"steam.err_no_program" = "Steam 没有说明要启动哪个程序。";
+"steam.err_no_app_id" = "Steam 没有说明这是哪个游戏。";
+"steam.err_no_runtime" = "FineWine 的运行时都不带 Steam 桥接。请更新 FineWine 后重试。";
+"steam.err_valve_download" = "无法从 Valve 下载 Steam 的 Windows 客户端文件（%@）。请检查网络连接后重试。";
+"steam.err_valve_checksum" = "来自 Valve 的“%@”不是 FineWine 预期的文件，因此未使用。";

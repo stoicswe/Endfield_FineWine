@@ -26,6 +26,9 @@
 # output is added by `package` whenever it exists:
 #   scripts/build-fex.sh all    x64 programs, through the FEX emulator
 #   scripts/build-dxmt.sh all   Direct3D 10 and 11, through DXMT on Metal
+# The bridge to the Mac's Steam client (scripts/build-steam-bridge.sh) is built with the runtime:
+# `apply` places its sources in the Wine tree, `build` builds it, `package` installs it.
+# STEAM_BRIDGE=0 leaves it out.
 # scripts/test-finewine-runtime.sh checks the result.
 #
 # The runtime is always built the same way: compiled with debug information, then stripped, with
@@ -124,6 +127,12 @@ cmd_apply(){
   # The server protocol changed (MSync adds a reply field): regenerate the files derived from it.
   ( cd "$SRC" && perl tools/make_requests )
   echo "applied $n patches"
+  # The bridge to the Mac's Steam is two more modules in the Wine tree (see
+  # scripts/build-steam-bridge.sh). They go in before configure, which lists what is built.
+  if [ "${STEAM_BRIDGE:-1}" != 0 ]; then
+    "$REPO/scripts/build-steam-bridge.sh" fetch
+    "$REPO/scripts/build-steam-bridge.sh" place
+  fi
 }
 
 cmd_configure(){
@@ -173,6 +182,7 @@ cmd_build(){
   make -C "$OBJ" -j"$JOBS" > "$BUILD_DIR/build-runtime.log" 2>&1 \
     || { grep -n ' error: \|Error [0-9]' "$BUILD_DIR/build-runtime.log" | tail -5; die "build failed, see $BUILD_DIR/build-runtime.log"; }
   [ -x "$OBJ/loader/wine" ] && [ -x "$OBJ/server/wineserver" ] || die "the build produced no wine or wineserver"
+  if [ -d "$SRC/dlls/lsteamclient" ]; then "$REPO/scripts/build-steam-bridge.sh" build; fi
 }
 
 # Copies a Homebrew dylib and the Homebrew dylibs it needs into the runtime's lib folder, and
@@ -326,6 +336,14 @@ JSON
     "$REPO/scripts/build-dxmt.sh" install | tail -n 1
   else
     echo "note: no DXMT build; Direct3D 10 and 11 will not work (scripts/build-dxmt.sh all)"
+  fi
+  # Always run when the bridge was placed: it also takes its two modules out of Wine's own.
+  if [ -f "$OBJ/programs/steam.exe/arm64ec-windows/steam.exe" ]; then
+    "$REPO/scripts/build-steam-bridge.sh" install | tail -n 1
+  else
+    rm -f "$OUT/lib/wine/aarch64-windows/steam.exe" "$OUT/lib/wine/aarch64-windows/lsteamclient.dll" \
+          "$OUT/lib/wine/aarch64-unix/lsteamclient.so"
+    echo "note: no Steam bridge; games started from Steam will not reach it (scripts/build-steam-bridge.sh all)"
   fi
   echo "runtime: $OUT ($id, $(du -sh "$OUT" | cut -f1))"
   # Every Mac binary in the runtime must run on macOS $MACOS_MIN.

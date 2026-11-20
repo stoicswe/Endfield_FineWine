@@ -33,6 +33,11 @@ Contents: [What it does](#what-it-does) · [Build](#build) ·
   bottle (a clone on the same drive, so it takes no extra room). The bottle is only read. The
   C: drive and registry come over, the Windows user folder is renamed, and FineWine's Wine then
   updates the system files. 32-bit bottles and bottles with programs running are refused.
+- **Steam.** "Install in Steam" (Settings > Steam) adds FineWine to the Mac Steam client's
+  compatibility tools, beside NotProton's or Bridgeplay's, which are what switch that list on;
+  FineWine does not patch Steam. A Windows game started with Play then runs on FineWine's
+  runtime in a prefix of its own, with Steam sign-in and the Steamworks API through the
+  runtime's bridge. See [runtime-extras/steam-bridge](../runtime-extras/steam-bridge/README.md).
 - **Opening programs from Finder.** A `.exe` or `.msi` from outside any prefix gets a new prefix
   named after what it installs, or FineWine asks whether to make one or use an existing prefix:
   Settings > Windows files > "Auto create prefix" or "Ask Me". FineWine appears under Open With
@@ -160,12 +165,13 @@ A native ARM64 Wine with everything a game needs beside it, built by the scripts
 
 | Layer | What it does | Built by | Our changes |
 |---|---|---|---|
-| **Wine 11.21** | The Windows environment, as native ARM64 code | `build-finewine-runtime.sh` | [`patches/runtime`](../patches/runtime) (41 patches) |
+| **Wine 11.21** | The Windows environment, as native ARM64 code | `build-finewine-runtime.sh` | [`patches/runtime`](../patches/runtime) (42 patches) |
 | **FEX** | Runs x64 Windows code inside Wine's ARM64 processes (`xtajit64.dll` and the ARM64EC library); no Rosetta | `build-fex.sh` | [`patches/fex`](../patches/fex) |
 | **DXMT** | Direct3D 10 and 11 on Metal, and NVIDIA's NGX (DLSS) as MetalFX | `build-dxmt.sh` | [`patches/dxmt`](../patches/dxmt) |
 | **MoltenVK** | Vulkan on Metal; Direct3D 12 reaches it through Wine's vkd3d | `MVK_FLAVOR=finewine build-moltenvk.sh` | [`patches/moltenvk`](../patches/moltenvk): ray tracing, MetalFX |
 | **GnuTLS, Nettle, GMP, FreeType** | TLS and fonts for Wine | `build-finewine-deps.sh` | none |
 | **Steam stand-in, presence helper** | Small programs of our own | [`runtime-extras`](../runtime-extras) | |
+| **Steam bridge** | Valve's `lsteamclient`, the `steam.exe` helper and the overlay helper, for games started from the Mac Steam client | `build-steam-bridge.sh` | [`runtime-extras/steam-bridge`](../runtime-extras/steam-bridge), runtime patch 0042 |
 
 What the Wine patches are for:
 
@@ -257,6 +263,8 @@ changes.
 | Nettle | LGPL-3.0-or-later or GPL-2.0-or-later | [lysator.liu.se/~nisse/nettle](https://www.lysator.liu.se/~nisse/nettle/) |
 | GMP | LGPL-3.0-or-later or GPL-2.0-or-later | [gmplib.org](https://gmplib.org/) |
 | FreeType | FreeType License or GPL-2.0 | [freetype.org](https://freetype.org/) |
+| lsteamclient (Steam bridge) | Steamworks SDK licence | [ValveSoftware/Proton](https://github.com/ValveSoftware/Proton) |
+| steam.exe helper (Steam bridge) | BSD 3-Clause | [ValveSoftware/Proton](https://github.com/ValveSoftware/Proton), macOS port from [NotProton](https://github.com/NotProtonNot/NotProton) |
 
 Windows-side code is compiled with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw), whose
 runtime libraries (mingw-w64, compiler-rt, libc++) are linked into those modules under their own
@@ -293,5 +301,9 @@ FineWine exists because of these projects:
   and for publishing the sources CrossOver is built from.
 - **[GnuTLS](https://www.gnutls.org/)**, **[Nettle](https://www.lysator.liu.se/~nisse/nettle/)**,
   **[GMP](https://gmplib.org/)** and **[FreeType](https://freetype.org/)**.
+- **[Valve](https://github.com/ValveSoftware/Proton)** — `lsteamclient` and the Steam helper,
+  from Proton — and **[NotProton](https://github.com/NotProtonNot/NotProton)** and
+  **[Bridgeplay](https://github.com/raymondchins/Bridgeplay)**, whose macOS ports of them the
+  Steam bridge uses and whose Steam Play support it relies on.
 - **[dw-proton / Dawn Winery](https://dawn.wine/)** — the Linux work on these games that showed
   what they need.
