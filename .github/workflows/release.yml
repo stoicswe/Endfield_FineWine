@@ -253,7 +253,39 @@ jobs:
           print(f"FineWine Patcher version: {short}")
           PY
 
-      - name: Assemble release assets
+      - name: Verify the release version in FineWine.app
+        env:
+          EXPECTED_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import plistlib
+          import sys
+          import zipfile
+
+          expected = os.environ["EXPECTED_VERSION"]
+          zips = sorted(pathlib.Path("dl/finewine").rglob("FineWine-*.zip"))
+          if not zips:
+              print("::error::no FineWine.app zip in the finewine-app artifact", file=sys.stderr)
+              sys.exit(1)
+          with zipfile.ZipFile(zips[0]) as bundle:
+              plist = plistlib.loads(bundle.read("FineWine.app/Contents/Info.plist"))
+
+          short = plist.get("CFBundleShortVersionString")
+          build = plist.get("CFBundleVersion")
+          if short != expected or build != expected:
+              print(
+                  f"::error::FineWine.app version mismatch — expected {expected}, "
+                  f"got CFBundleShortVersionString={short} and CFBundleVersion={build}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          print(f"FineWine.app version: {short}")
+          PY
+
+
         shell: bash
         run: |
           set -euo pipefail

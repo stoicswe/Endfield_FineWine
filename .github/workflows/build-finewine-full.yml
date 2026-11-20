@@ -237,10 +237,16 @@ jobs:
 
       - name: Zip
         shell: bash
+        env:
+          WANTED_VERSION: ${{ inputs.app_version }}
         run: |
           set -euo pipefail
           mkdir -p dist
           VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' finewine-app/build/FineWine.app/Contents/Info.plist)"
+          # The version that was asked for is the one the app must report.
+          if [ -n "$WANTED_VERSION" ] && [ "$VER" != "$WANTED_VERSION" ]; then
+            echo "::error::FineWine.app reports version '$VER', not '$WANTED_VERSION'"; exit 1
+          fi
           echo "APP_VER=$VER" >> "$GITHUB_ENV"
           # ditto keeps the code signature and the symbolic links inside the bundle intact
           ditto -c -k --keepParent finewine-app/build/FineWine.app "dist/FineWine-$VER-$SHORT_SHA.zip"
