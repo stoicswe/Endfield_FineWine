@@ -278,6 +278,9 @@ final class AppModel: ObservableObject {
 
     /// Closes everything in every prefix, as quitting FineWine does, so that the app (and the
     /// Wine runtime inside it, which the programs run from) can be replaced by an update.
+    /// Set when the updater quits the app to start the new version: nothing is asked then.
+    var quittingForUpdate = false
+
     func closeEverythingForUpdate() async {
         let all = prefixes
         let service = UncheckedBox(service)

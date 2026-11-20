@@ -242,7 +242,11 @@ final class UpdateModel: ObservableObject {
             try UpdateInstaller.relaunch(installed, afterExitOf: ProcessInfo.processInfo.processIdentifier)
             // long enough for the last lines to be read
             try? await Task.sleep(nanoseconds: 1_200_000_000)
-            NSApp.terminate(nil)
+            // Not from here: this code is a job on the main queue, and a quit that waits for an
+            // answer (see applicationShouldTerminate) would wait for another job on that queue,
+            // which cannot start before this one ends. The run loop calls it instead.
+            AppModel.shared.quittingForUpdate = true
+            RunLoop.main.perform(inModes: [.common]) { NSApp.terminate(nil) }
         } catch {
             download = nil
             let cancelled = (error as? URLError)?.code == .cancelled
