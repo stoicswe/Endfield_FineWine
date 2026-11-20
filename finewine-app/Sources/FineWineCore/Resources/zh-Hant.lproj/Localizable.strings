@@ -341,7 +341,7 @@
 "dialog.err_prog_start" = "無法啟動「%@」";
 "dialog.err_appearance_update" = "更新外觀失敗";
 "dialog.32bit_title" = "「%@」為 32 位元程式";
-"dialog.32bit_msg" = "FineWine 僅支援執行 64 位元 Windows 程式：Apple 晶片 Mac 不會向 32 位元程式分配所需記憶體。使用 NSIS 封裝的 32 位元安裝程式可由 FineWine 原生解析執行；該程式屬於其他類型。請尋找 64 位元版本或可攜版 (zip)。";
+"dialog.32bit_msg" = "此前置環境的 Wine 執行環境僅支援執行 64 位元 Windows 程式。使用 NSIS 封裝的 32 位元安裝程式可由 FineWine 自行安裝；該程式屬於其他類型。請改用採用 FineWine 目前內建執行環境的前置環境，或尋找 64 位元版本或可攜版 (zip)。";
 "dialog.32bit_install_failed_title" = "「%@」安裝失敗";
 "dialog.32bit_install_failed_msg" = "該安裝程式為 32 位元程式，FineWine 嘗試自動執行其內嵌安裝指令檔時發生錯誤：\n\n%@";
 "dialog.dead_shortcut_title" = "該捷徑已失效";

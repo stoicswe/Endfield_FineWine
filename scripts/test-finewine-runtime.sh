@@ -859,6 +859,34 @@ else
   echo "  - audio following the output device not checked: no llvm-mingw, or the test did not build"
 fi
 
+# 32-bit programs. macOS gives an arm64 process no memory below 4 GB, so a 32-bit program's
+# 4 GB are a window higher up (patches/runtime/0043, patches/fex/0011). The suite covers what
+# that touches: memory, threads, exceptions, code written at run time, window messages and
+# drawing (nothing on screen), and starting another 32-bit program.
+MINGW32="$REPO/build/llvm-mingw/bin/i686-w64-mingw32-clang"
+export WINEPREFIX="$WORK/pfx1"
+if [ ! -f "$RT/lib/wine/aarch64-windows/xtajit.dll" ] || [ ! -f "$RT/lib/wine/i386-windows/ntdll.dll" ]; then
+  echo "  - 32-bit checks skipped: this runtime has no 32-bit side (scripts/build-fex.sh and build-finewine-runtime.sh)"
+elif [ ! -x "$MINGW32" ]; then
+  echo "  - 32-bit checks skipped: no llvm-mingw in build/ (scripts/build-fex.sh toolchain)"
+elif "$MINGW32" -O1 -o "$WORK/suite32.exe" "$REPO/tests/runtime/suite32.c" -luser32 -lgdi32 -ladvapi32 >"$WORK/suite32-build.log" 2>&1; then
+  if [ -f "$WINEPREFIX/drive_c/windows/syswow64/kernel32.dll" ]; then
+    pass "a new prefix gets its 32-bit system folder ($(ls "$WINEPREFIX/drive_c/windows/syswow64" | wc -l | tr -d ' ') files)"
+  else fail "a new prefix has no 32-bit system folder (syswow64)"; fi
+  out="$(WINEMSYNC=0 "$RT/bin/wine" "$WORK/suite32.exe" </dev/null 2>/dev/null | tr -d '\r')"
+  case "$out" in *"
+0 failure(s)") pass "32-bit programs: $(echo "$out" | grep -c '^ok ') checks of memory, threads, exceptions, generated code, window messages, drawing, child processes" ;;
+    *) fail "32-bit suite:"; echo "$out" | grep -v '^ok ' | tail -n 8 ;; esac
+  out="$(WINEMSYNC=1 "$RT/bin/wine" "$WORK/suite32.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+  case "$out" in "0 failure(s)") pass "32-bit programs: the same with MSync on" ;;
+    *) fail "32-bit suite with MSync on: $out" ;; esac
+  out="$("$RT/bin/wine" 'C:\windows\syswow64\cmd.exe' /c 'echo %PROCESSOR_ARCHITECTURE%' </dev/null 2>/dev/null | tr -d '\r')"
+  case "$out" in x86) pass "the 32-bit command prompt runs and sees an x86 processor" ;;
+    *) fail "32-bit cmd.exe printed: $out" ;; esac
+else
+  fail "could not build tests/runtime/suite32.c"; tail -n 3 "$WORK/suite32-build.log"
+fi
+
 export WINEPREFIX="$WORK/pfx2" WINEMSYNC=1 WINEDEBUG=-all
 if "$RT/bin/wine" wineboot --init </dev/null >"$WORK/msync.log" 2>&1 && [ -f "$WINEPREFIX/.update-timestamp" ] \
    && [ "$("$RT/bin/wine" cmd /c echo msync-ok </dev/null 2>/dev/null | tr -d '\r')" = "msync-ok" ]; then

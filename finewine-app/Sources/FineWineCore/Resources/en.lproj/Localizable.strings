@@ -341,9 +341,9 @@
 "dialog.err_prog_start" = "“%@” couldn't be started";
 "dialog.err_appearance_update" = "The appearance couldn't be updated";
 "dialog.32bit_title" = "“%@” is a 32-bit program";
-"dialog.32bit_msg" = "FineWine can run 64-bit Windows programs only: an Apple silicon Mac gives a program no memory where a 32-bit one needs it. 32-bit installers made with NSIS are installed by FineWine itself; this one is of another kind. Look for a 64-bit installer or a portable (zip) download of the program.";
+"dialog.32bit_msg" = "The Wine runtime of this prefix can run 64-bit Windows programs only. 32-bit installers made with NSIS are installed by FineWine itself; this one is of another kind. Use a prefix with FineWine's own current runtime, or look for a 64-bit installer or a portable (zip) download of the program.";
 "dialog.32bit_install_failed_title" = "“%@” couldn't be installed";
-"dialog.32bit_install_failed_msg" = "This installer is a 32-bit program, which FineWine cannot run, so FineWine tried to carry out its install script itself.\n\n%@";
+"dialog.32bit_install_failed_msg" = "FineWine tried to carry out this 32-bit installer's script itself, and the Wine runtime of this prefix cannot run 32-bit programs.\n\n%@";
 "dialog.dead_shortcut_title" = "That shortcut no longer works";
 "dialog.dead_shortcut_msg" = "The program it starts has been removed from FineWine. You can delete the shortcut.";
 "dialog.err_runtime_add" = "The runtime couldn't be added";

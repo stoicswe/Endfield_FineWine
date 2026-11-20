@@ -11,6 +11,8 @@
 #   build    native arm64 Mac side; Windows side as ARM64X (--enable-archs=arm64ec,aarch64),
 #            the same shape CrossOver ARM uses, so x64 programs can load the DLLs once an
 #            x64 emulator is present
+#            and as 32-bit x86 (i386) for 32-bit programs, which run in a window above 4 GB
+#            (patches/runtime/0043) through FEX's 32-bit front end
 #
 # Usage:
 #   scripts/build-finewine-runtime.sh deps       # Homebrew build dependencies
@@ -154,18 +156,19 @@ cmd_configure(){
   # Wine's exception-handling code with it ("Failed to evaluate function length in SEH unwind info").
   local PE_CFLAGS="-g -O2 -march=armv8.4-a"
   ( cd "$OBJ" && "$SRC/configure" --build=aarch64-apple-darwin --host=aarch64-apple-darwin \
-        x86_64_CC=clang \
+        x86_64_CC=clang i386_CC=clang \
         aarch64_CFLAGS="$PE_CFLAGS" arm64ec_CFLAGS="$PE_CFLAGS" \
         CC="/usr/bin/clang -arch arm64" CXX="/usr/bin/clang++ -arch arm64" OBJC="/usr/bin/clang -arch arm64" \
         PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$hb/lib/pkgconfig" CPPFLAGS="-I$DEPS/include -I$hb/include" \
         LDFLAGS="-L$DEPS/lib -L$hb/lib" --without-sdl \
-        --enable-archs=arm64ec,aarch64 --prefix=/ --disable-tests \
+        --enable-archs=arm64ec,aarch64,i386 --prefix=/ --disable-tests \
         --without-x --without-krb5 --without-gstreamer --without-gphoto --without-sane --without-pcap \
         --without-usb --without-cups --without-opencl --without-pcsclite --without-dbus --without-netapi
   ) > "$BUILD_DIR/configure-runtime.log" 2>&1 || die "configure failed, see $BUILD_DIR/configure-runtime.log"
   # configure looks for libvulkan; on macOS Vulkan is MoltenVK, which the runtime bundles.
   sed -i '' 's|/\* #undef SONAME_LIBMOLTENVK \*/|#define SONAME_LIBMOLTENVK "libMoltenVK.dylib"|' "$OBJ/include/config.h"
   grep -q '^x86_64_CC = clang' "$OBJ/Makefile" || die "configure did not take clang as the x86_64 compiler"
+  grep -q '^i386_CC = clang' "$OBJ/Makefile" || die "configure did not take clang as the 32-bit compiler: 32-bit programs would not be built"
   grep -q '^aarch64_CFLAGS = .*-march=armv8.4-a' "$OBJ/Makefile" || die "configure did not take the Windows-side compiler flags"
   echo "configured: $OBJ"
 }
@@ -220,10 +223,10 @@ strip_runtime(){
     rel="${f#$OUT/}"
     mkdir -p "$symbols/$(dirname "$rel")"; cp -p "$f" "$symbols/$rel"
     case "$f" in
-      */aarch64-windows/*) llvm-strip --strip-debug "$f" 2>/dev/null || true ;;
+      */aarch64-windows/*|*/i386-windows/*) llvm-strip --strip-debug "$f" 2>/dev/null || true ;;
       *) strip -S -x "$f" 2>/dev/null || true ;;
     esac
-  done < <(find "$OUT/lib/wine/aarch64-windows" "$OUT/lib/wine/aarch64-unix" "$OUT/bin" -type f \
+  done < <(find "$OUT/lib/wine/aarch64-windows" "$OUT/lib/wine/i386-windows" "$OUT/lib/wine/aarch64-unix" "$OUT/bin" -type f \
              \( -name '*.dll' -o -name '*.exe' -o -name '*.sys' -o -name '*.drv' -o -name '*.ocx' -o -name '*.cpl' \
                 -o -name '*.acm' -o -name '*.ax' -o -name '*.tlb' -o -name '*.so' -o -name '*.com' -o -name '*.ds' \
                 -o -name '*.msstyles' -o -perm -u+x \) ! -name '*.a' ! -name '*.pl')

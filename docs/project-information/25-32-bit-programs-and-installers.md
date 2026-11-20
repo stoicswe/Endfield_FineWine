@@ -84,7 +84,18 @@ small installers in memory and checks the interpreter against them.
 
 ## Real 32-bit support: an address-translating 32-bit mode ("route B")
 
-Not started. Written down so that the size of it is known before anyone begins.
+**Spike, 2026-11-20: the idea works.** A 32-bit console program, and one using the C runtime,
+ran on the ARM64 runtime with no Rosetta. The changes, what ran and what is left are in
+[patches/spike-32bit](../../patches/spike-32bit/README.md); they are not part of any build. Two
+things turned out differently from the plan below:
+
+- The window's base is a multiple of 4 GB, so a real address cut to 32 bits is already the
+  program's address. Point 3 below shrinks to one direction: only "32-bit value to pointer"
+  needs the base, and Wine's call layer does that through two macros.
+- The window cannot be anywhere convenient. macOS keeps 6 GB to 63 GB for its shared library
+  region and 63 GB to 448 GB as a guard; the spike uses 1 TB.
+
+What follows is the plan as written before the spike.
 
 **The idea.** Give a 32-bit program its 4 GB somewhere else: reserve a 4 GB window at a fixed
 place high in the process, and have every address the program uses mean "this far into the

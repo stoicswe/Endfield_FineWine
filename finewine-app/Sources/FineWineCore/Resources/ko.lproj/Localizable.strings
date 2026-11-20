@@ -341,7 +341,7 @@
 "dialog.err_prog_start" = "“%@”을(를) 시작할 수 없습니다";
 "dialog.err_appearance_update" = "스타일을 갱신할 수 없습니다";
 "dialog.32bit_title" = "“%@”은(는) 32비트 프로그램입니다";
-"dialog.32bit_msg" = "FineWine은 64비트 Windows 프로그램만 지원합니다. Apple silicon Mac은 32비트 프로그램이 요구하는 메모리 구조를 지원하지 않습니다. NSIS로 제작된 32비트 설치 프로그램은 FineWine이 자체 스크립트로 설치하지만, 이 프로그램은 다른 방식입니다. 64비트 설치 프로그램이나 포터블(zip) 버전을 확인하십시오.";
+"dialog.32bit_msg" = "이 프리픽스의 Wine 런타임은 64비트 Windows 프로그램만 실행할 수 있습니다. NSIS로 제작된 32비트 설치 프로그램은 FineWine이 직접 설치하지만, 이 프로그램은 다른 방식입니다. FineWine의 최신 기본 런타임을 사용하는 프리픽스에서 시도하거나 64비트 설치 프로그램 또는 포터블(zip) 버전을 확인하십시오.";
 "dialog.32bit_install_failed_title" = "“%@” 설치 실패";
 "dialog.32bit_install_failed_msg" = "이 설치 프로그램은 32비트 프로그램이며 FineWine이 자체 스크립트로 실행하는 도중 오류가 발생했습니다:\n\n%@";
 "dialog.dead_shortcut_title" = "더 이상 작동하지 않는 바로가기";
