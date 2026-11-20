@@ -2,7 +2,6 @@ import SwiftUI
 import AppKit
 import FineWineCore
 
-@main
 struct FineWineApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel.shared

@@ -625,3 +625,23 @@
 "bottle.stage_measuring" = "Measuring the bottle";
 "bottle.stage_copying" = "Copying the bottle";
 "bottle.stage_updating" = "Updating Windows files";
+
+/* Steam */
+"steam.card" = "Steam";
+"steam.footnote" = "Adds FineWine to the Mac Steam client's list of compatibility tools, so Windows games in your Steam library start with Play. Steam only shows that list once NotProton or Bridgeplay has switched it on; FineWine sits beside them and changes nothing in Steam itself. Each game gets a prefix of its own here, with FineWine's settings. Restart Steam after installing or removing the tool. 64-bit games only; the Steam overlay is not available.";
+"steam.tool_label" = "Steam tool";
+"steam.install" = "Install in Steam";
+"steam.install_again" = "Install Again";
+"steam.status_no_steam" = "Steam isn't installed on this Mac.";
+"steam.status_no_bridge" = "No runtime here has the Steam bridge.";
+"steam.status_no_enabler" = "Steam won't list tools yet: install NotProton or Bridgeplay first.";
+"steam.status_ready" = "Not installed. Steam Play is switched on by %@.";
+"steam.status_installed" = "Installed as “FineWine” in Steam's Compatibility list (Steam Play is switched on by %@).";
+"steam.err_install_title" = "The Steam tool couldn't be installed";
+"steam.err_remove_title" = "The Steam tool couldn't be removed";
+"steam.alert_title" = "FineWine couldn't start this game";
+"steam.err_no_program" = "Steam didn't say which program to start.";
+"steam.err_no_app_id" = "Steam didn't say which game this is.";
+"steam.err_no_runtime" = "None of FineWine's runtimes has the Steam bridge. Update FineWine, then try again.";
+"steam.err_valve_download" = "Steam's Windows client files couldn't be downloaded from Valve (%@). Check the internet connection and try again.";
+"steam.err_valve_checksum" = "“%@” from Valve isn't the file FineWine expects, so it wasn't used.";

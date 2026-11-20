@@ -625,3 +625,23 @@
 "bottle.stage_measuring" = "ボトルのサイズを確認中";
 "bottle.stage_copying" = "ボトルをコピー中";
 "bottle.stage_updating" = "Windows のファイルをアップデート中";
+
+/* Steam */
+"steam.card" = "Steam";
+"steam.footnote" = "Mac の Steam クライアントの互換ツール一覧に FineWine を追加し、Steam ライブラリの Windows ゲームを「プレイ」で起動できるようにします。Steam がこの一覧を表示するのは、NotProton または Bridgeplay が有効にした後だけです。FineWine はそれらと並んで動作し、Steam 自体には何も変更を加えません。ゲームごとに専用のプレフィックスが作られ、FineWine の設定が使われます。ツールのインストールまたは削除後は Steam を再起動してください。64 ビットのゲームのみ対応で、Steam オーバーレイは使用できません。";
+"steam.tool_label" = "Steam ツール";
+"steam.install" = "Steam にインストール";
+"steam.install_again" = "再インストール";
+"steam.status_no_steam" = "この Mac に Steam がインストールされていません。";
+"steam.status_no_bridge" = "Steam ブリッジを含むランタイムがありません。";
+"steam.status_no_enabler" = "Steam はまだツールを表示しません。先に NotProton または Bridgeplay をインストールしてください。";
+"steam.status_ready" = "未インストール。Steam Play は %@ によって有効になっています。";
+"steam.status_installed" = "Steam の互換性一覧に“FineWine”としてインストール済み（Steam Play は %@ によって有効）。";
+"steam.err_install_title" = "Steam ツールをインストールできませんでした";
+"steam.err_remove_title" = "Steam ツールを削除できませんでした";
+"steam.alert_title" = "FineWine はこのゲームを起動できませんでした";
+"steam.err_no_program" = "Steam から起動するプログラムが指定されませんでした。";
+"steam.err_no_app_id" = "Steam からどのゲームかが伝えられませんでした。";
+"steam.err_no_runtime" = "FineWine のランタイムに Steam ブリッジがありません。FineWine をアップデートしてからもう一度お試しください。";
+"steam.err_valve_download" = "Steam の Windows クライアントファイルを Valve からダウンロードできませんでした（%@）。インターネット接続を確認してもう一度お試しください。";
+"steam.err_valve_checksum" = "Valve から取得した“%@”は FineWine が想定するファイルではないため、使用しませんでした。";

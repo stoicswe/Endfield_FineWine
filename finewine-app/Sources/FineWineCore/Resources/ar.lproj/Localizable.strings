@@ -625,3 +625,23 @@
 "bottle.stage_measuring" = "جارٍ قياس القارورة";
 "bottle.stage_copying" = "جارٍ نسخ القارورة";
 "bottle.stage_updating" = "جارٍ تحديث ملفات Windows";
+
+/* Steam */
+"steam.card" = "Steam";
+"steam.footnote" = "يضيف FineWine إلى قائمة أدوات التوافق في تطبيق Steam على الـ Mac، فتبدأ ألعاب Windows في مكتبتك بزر «تشغيل». لا يعرض Steam هذه القائمة إلا بعد أن يفعّلها NotProton أو Bridgeplay؛ يعمل FineWine بجانبهما ولا يغيّر شيئًا في Steam نفسه. تحصل كل لعبة على حاوية خاصة بها هنا بإعدادات FineWine. أعد تشغيل Steam بعد تثبيت الأداة أو إزالتها. للألعاب 64 بت فقط؛ واجهة Steam داخل اللعبة غير متاحة.";
+"steam.tool_label" = "أداة Steam";
+"steam.install" = "التثبيت في Steam";
+"steam.install_again" = "التثبيت من جديد";
+"steam.status_no_steam" = "Steam غير مثبّت على هذا الـ Mac.";
+"steam.status_no_bridge" = "لا تحتوي أي بيئة تشغيل هنا على جسر Steam.";
+"steam.status_no_enabler" = "لن يعرض Steam الأدوات بعد: ثبّت NotProton أو Bridgeplay أولًا.";
+"steam.status_ready" = "غير مثبّتة. Steam Play مفعّل بواسطة %@.";
+"steam.status_installed" = "مثبّتة باسم «FineWine» في قائمة التوافق في Steam (‏Steam Play مفعّل بواسطة %@).";
+"steam.err_install_title" = "تعذّر تثبيت أداة Steam";
+"steam.err_remove_title" = "تعذّرت إزالة أداة Steam";
+"steam.alert_title" = "تعذّر على FineWine تشغيل هذه اللعبة";
+"steam.err_no_program" = "لم يحدّد Steam البرنامج المطلوب تشغيله.";
+"steam.err_no_app_id" = "لم يحدّد Steam أي لعبة هذه.";
+"steam.err_no_runtime" = "لا تحتوي أي من بيئات تشغيل FineWine على جسر Steam. حدّث FineWine ثم حاول مرة أخرى.";
+"steam.err_valve_download" = "تعذّر تنزيل ملفات عميل Steam لنظام Windows من Valve (%@). تحقق من اتصال الإنترنت وحاول مرة أخرى.";
+"steam.err_valve_checksum" = "الملف «%@» من Valve ليس الملف الذي يتوقعه FineWine، لذلك لم يُستخدم.";

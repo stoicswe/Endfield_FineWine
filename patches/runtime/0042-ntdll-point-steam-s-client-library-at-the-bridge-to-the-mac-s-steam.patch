@@ -1,0 +1,142 @@
+ntdll: point Steam's client library at the bridge to the Mac's Steam
+
+A game on Steam reaches Steam through steam_api64.dll, which loads Steam's client library for
+Windows, steamclient64.dll, from the Steam folder in the prefix. There is no Windows Steam
+behind it on a Mac. Valve's bridge for this, lsteamclient (from Proton), implements the same
+interfaces on top of the Mac's own Steam client library, and Proton's Wine sends
+steamclient64.dll's exports to it when that library is loaded.
+
+This does the same in the loader. When a 64-bit steamclient64.dll that is not a Wine module is
+loaded and FINEWINE_STEAM_BRIDGE is set, lsteamclient.dll is loaded (through the usual search,
+so it comes from WINEDLLPATH with its Mac half beside it), every export of steamclient64.dll
+that lsteamclient.dll has under the same name is overwritten with a jump to it, and the entry
+point is made to return success. The library's own imports are then not resolved and its entry
+point is never run: it is a table of names from then on. If the bridge cannot be loaded,
+steamclient64.dll loads as it always did.
+
+Nothing changes without FINEWINE_STEAM_BRIDGE, which only FineWine's Steam tool sets. The
+jumps are x64 code written into an x64 library, so they are the same under the emulator.
+
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -2256,6 +2256,110 @@
+ done:
+     RtlFreeHeap( GetProcessHeap(), 0, protect_old );
+     return status;
++}
++
++
++/*************************************************************************
++ *		steam_bridge_redirect
++ *
++ * FineWine: Steam's client library for Windows, steamclient64.dll, is what a game's
++ * steam_api64.dll loads to reach Steam. On a Mac there is no Windows Steam to reach, so its
++ * exports are pointed at lsteamclient.dll, the bridge to the Mac's Steam client (Valve's, from
++ * Proton), and its own imports and entry point are left alone: it is only a table of names
++ * then. Proton does the same in its Wine. Only with FINEWINE_STEAM_BRIDGE set, which
++ * FineWine's Steam tool does, and only when the bridge can be loaded.
++ *
++ * Returns TRUE when the module was redirected and must not have its imports resolved.
++ */
++static BOOL steam_bridge_redirect( WINE_MODREF *wm, const IMAGE_NT_HEADERS *nt, LPCWSTR load_path )
++{
++#ifdef _WIN64
++    static const WCHAR bridgeW[] = L"lsteamclient.dll";
++    UNICODE_STRING env_name = RTL_CONSTANT_STRING( L"FINEWINE_STEAM_BRIDGE" );
++    UNICODE_STRING bridge_name = RTL_CONSTANT_STRING( bridgeW );
++    UNICODE_STRING env_value;
++    WCHAR env_buffer[8];
++    const IMAGE_EXPORT_DIRECTORY *exports, *bridge_exports;
++    const DWORD *names, *funcs, *bridge_names, *bridge_funcs;
++    const WORD *ordinals, *bridge_ordinals;
++    BYTE *module = wm->ldr.DllBase, *bridge;
++    HMODULE bridge_module = 0;
++    void *base = module;
++    SIZE_T size = nt->OptionalHeader.SizeOfImage;
++    ULONG exp_size, old_prot;
++    unsigned int i, j, count = 0;
++    NTSTATUS status;
++
++    if (nt->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64) return FALSE;
++    if (wcsicmp( wm->ldr.BaseDllName.Buffer, L"steamclient64.dll" )) return FALSE;
++
++    env_value.Buffer = env_buffer;
++    env_value.Length = 0;
++    env_value.MaximumLength = sizeof(env_buffer);
++    status = RtlQueryEnvironmentVariable_U( NULL, &env_name, &env_value );
++    if (status && status != STATUS_BUFFER_TOO_SMALL) return FALSE;
++    if (!status && (!env_value.Length || env_buffer[0] == '0')) return FALSE;
++
++    if (!(exports = RtlImageDirectoryEntryToData( wm->ldr.DllBase, TRUE, IMAGE_DIRECTORY_ENTRY_EXPORT, &exp_size )))
++        return FALSE;
++
++    if (LdrGetDllHandle( load_path, 0, &bridge_name, &bridge_module ) || !bridge_module)
++    {
++        if ((status = LdrLoadDll( load_path, 0, &bridge_name, &bridge_module )) || !bridge_module)
++        {
++            WARN( "steam bridge: %s is not there (%lx), %s loads as it is\n", debugstr_w(bridgeW),
++                  (long)status, debugstr_w(wm->ldr.BaseDllName.Buffer) );
++            return FALSE;
++        }
++    }
++    bridge = (BYTE *)bridge_module;
++    if (!(bridge_exports = RtlImageDirectoryEntryToData( bridge_module, TRUE,
++                                                         IMAGE_DIRECTORY_ENTRY_EXPORT, &exp_size )))
++        return FALSE;
++
++    if ((status = NtProtectVirtualMemory( NtCurrentProcess(), &base, &size, PAGE_EXECUTE_READWRITE, &old_prot )))
++    {
++        WARN( "steam bridge: cannot make %p writable (%lx)\n", module, (long)status );
++        return FALSE;
++    }
++
++    names    = (const DWORD *)(module + exports->AddressOfNames);
++    funcs    = (const DWORD *)(module + exports->AddressOfFunctions);
++    ordinals = (const WORD *)(module + exports->AddressOfNameOrdinals);
++    bridge_names    = (const DWORD *)(bridge + bridge_exports->AddressOfNames);
++    bridge_funcs    = (const DWORD *)(bridge + bridge_exports->AddressOfFunctions);
++    bridge_ordinals = (const WORD *)(bridge + bridge_exports->AddressOfNameOrdinals);
++
++    for (i = 0; i < exports->NumberOfNames; i++)
++    {
++        const char *name = (const char *)module + names[i];
++        BYTE *from = module + funcs[ordinals[i]];
++
++        for (j = 0; j < bridge_exports->NumberOfNames; j++)
++            if (!strcmp( name, (const char *)bridge + bridge_names[j] )) break;
++        if (j == bridge_exports->NumberOfNames) continue;
++
++        /* movabs $target,%rax; jmp *%rax */
++        from[0] = 0x48; from[1] = 0xb8;
++        *(ULONG_PTR *)(from + 2) = (ULONG_PTR)(bridge + bridge_funcs[bridge_ordinals[j]]);
++        from[10] = 0xff; from[11] = 0xe0;
++        count++;
++    }
++
++    if (nt->OptionalHeader.AddressOfEntryPoint)
++    {
++        /* mov $1,%eax; ret: the bridge's own entry point is what runs, when the bridge loads */
++        static const BYTE ret_true[] = { 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3 };
++        memcpy( module + nt->OptionalHeader.AddressOfEntryPoint, ret_true, sizeof(ret_true) );
++    }
++    NtFlushInstructionCache( NtCurrentProcess(), module, nt->OptionalHeader.SizeOfImage );
++
++    TRACE_(loaddll)( "steam bridge: %u exports of %s go to %s at %p\n", count,
++                     debugstr_w(wm->ldr.BaseDllName.Buffer), debugstr_w(bridgeW), bridge );
++    return TRUE;
++#else
++    return FALSE;
++#endif
+ }
+ 
+ 
+@@ -2298,6 +2402,8 @@
+ 
+     /* fixup imports */
+ 
++    if (!is_builtin && steam_bridge_redirect( wm, nt, load_path )) flags |= LDR_DONT_RESOLVE_REFS;
++
+     if (!(flags & LDR_DONT_RESOLVE_REFS) &&
+         ((nt->FileHeader.Characteristics & IMAGE_FILE_DLL) ||
+          nt->OptionalHeader.Subsystem == IMAGE_SUBSYSTEM_NATIVE))

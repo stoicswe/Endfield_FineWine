@@ -586,6 +586,43 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: Steam
+
+    /// Goes up when the Steam tool is installed or removed, so the settings read it again.
+    @Published var steamRevision = 0
+    @Published var steamBusy = false
+
+    var steamClient: SteamClient { .standard() }
+    var steamTool: SteamTool { SteamTool(client: steamClient) }
+    var steamRuntime: WineRuntime? { service.steamRuntime() }
+
+    /// Installs the tool in Steam's tools folder and gets Valve's client files ready, so the
+    /// first game does not have to wait for them.
+    func installSteamTool() {
+        let tool = steamTool, client = steamClient
+        let valve = ValveClientFiles(directory: service.paths.valveClientFiles)
+        let app = Bundle.main.bundleURL
+        steamBusy = true
+        Task {
+            let failure: String? = await Task.detached(priority: .userInitiated) {
+                do {
+                    try tool.install(app: app)
+                    try valve.ensure(adoptingFrom: client.valveFileSources)
+                    return nil
+                } catch { return error.localizedDescription }
+            }.value
+            steamBusy = false
+            steamRevision += 1
+            if let failure { alert = AppAlert(title: tr("steam.err_install_title"), message: failure) }
+        }
+    }
+
+    func removeSteamTool() {
+        do { try steamTool.remove() }
+        catch { show(error, title: tr("steam.err_remove_title")) }
+        steamRevision += 1
+    }
+
     // MARK: Programs and shortcuts
 
     func addProgram(_ program: Program, to prefix: Prefix) {

@@ -341,6 +341,8 @@ struct SettingsView: View {
                 DrivesCard()
                 SnapshotsSettingsCard()
 
+                SteamCard()
+
                 Card(title: l10n.tr("settings.discord_card"), symbol: "bubble.left.and.bubble.right",
                      footnote: l10n.tr("settings.discord_footnote")) {
                     Toggle(isOn: Binding(get: { model.showsDiscordPresence }, set: { model.showsDiscordPresence = $0 })) {
@@ -635,6 +637,40 @@ struct DrivesCard: View {
                 Button(l10n.tr("drive.forget")) { model.forgetDrive(drive.uuid) }
                     .fwButton()
                     .help(l10n.tr("drive.forget_help", drive.name))
+            }
+        }
+    }
+}
+
+
+/// Steam: FineWine as a compatibility tool in the Mac Steam client.
+struct SteamCard: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var l10n = LanguageManager.shared
+
+    private var status: String {
+        _ = model.steamRevision
+        let client = model.steamClient
+        if !client.isInstalled { return l10n.tr("steam.status_no_steam") }
+        if model.steamRuntime == nil { return l10n.tr("steam.status_no_bridge") }
+        let enablers = client.steamPlayEnablers
+        if enablers.isEmpty { return l10n.tr("steam.status_no_enabler") }
+        if model.steamTool.isInstalled { return l10n.tr("steam.status_installed", enablers.joined(separator: ", ")) }
+        return l10n.tr("steam.status_ready", enablers.joined(separator: ", "))
+    }
+
+    var body: some View {
+        let installed = model.steamTool.isInstalled
+        Card(title: l10n.tr("steam.card"), symbol: "gamecontroller", footnote: l10n.tr("steam.footnote")) {
+            Row(label: l10n.tr("steam.tool_label"), detail: status) {
+                if model.steamBusy { ProgressView().controlSize(.small) }
+                if installed {
+                    Button(l10n.tr("steam.install_again")) { model.installSteamTool() }.fwButton().disabled(model.steamBusy)
+                    Button(l10n.tr("app.remove"), role: .destructive) { model.removeSteamTool() }.fwButton().disabled(model.steamBusy)
+                } else {
+                    Button(l10n.tr("steam.install")) { model.installSteamTool() }.fwButton()
+                        .disabled(model.steamBusy || !model.steamClient.isInstalled || model.steamRuntime == nil)
+                }
             }
         }
     }

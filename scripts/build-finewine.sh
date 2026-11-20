@@ -4,6 +4,7 @@
 #   1. MoltenVK, FineWine flavour (ray tracing, MetalFX)     scripts/build-moltenvk.sh
 #   2. the Windows compiler for x64 parts (llvm-mingw)       scripts/build-fex.sh toolchain
 #   3. the Wine runtime, from a fresh source tree            scripts/build-finewine-runtime.sh all
+#      (with the bridge to the Mac's Steam client           scripts/build-steam-bridge.sh)
 #   4. FEX (x64 programs)                                    scripts/build-fex.sh all
 #   5. DXMT (Direct3D 10 and 11 on Metal)                    scripts/build-dxmt.sh all
 #   6. the runtime checks                                    scripts/test-finewine-runtime.sh

@@ -47,6 +47,9 @@ public struct PrefixMetadata: Codable, Equatable, Sendable {
     /// Mac switches between light and dark or its accent colour changes.
     public var appliedAppearance: MacAppearance?
     public var programs: [Program]
+    /// The Steam app this prefix was made for, when the Mac Steam client started the game
+    /// through FineWine's Steam tool. Each Steam game gets a prefix of its own.
+    public var steamAppID: String?
 
     public init(id: UUID = UUID(), name: String, runtimeID: String? = nil, profileID: String? = nil,
                 createdAt: Date = Date(), settings: PrefixSettings = PrefixSettings(),
