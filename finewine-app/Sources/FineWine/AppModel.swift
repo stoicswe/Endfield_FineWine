@@ -950,6 +950,20 @@ final class AppModel: ObservableObject {
         prefixes.filter { $0.metadata.runtimeID == runtime.id }
     }
 
+    /// The name of the drive or disk where a file or folder is stored ("This Mac", or the drive's name).
+    func volumeName(for url: URL) -> String {
+        guard let volume = service.prefixes.drives.volumes.volume(containing: url) else {
+            return tr("drive.this_mac")
+        }
+        return volume.isInternal ? tr("drive.this_mac") : volume.name
+    }
+
+    /// Whether a URL is located on an external drive.
+    func isExternalVolume(url: URL) -> Bool {
+        guard let volume = service.prefixes.drives.volumes.volume(containing: url) else { return false }
+        return !volume.isInternal
+    }
+
     /// Whether the status window is shown while prefixes are set up and programs start.
     var showsStatusWindow: Bool {
         get { StatusSplash.shared.isEnabled }

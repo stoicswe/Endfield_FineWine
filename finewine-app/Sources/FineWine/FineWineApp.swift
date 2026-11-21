@@ -6,6 +6,7 @@ struct FineWineApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel.shared
     @StateObject private var l10n = LanguageManager.shared
+    @AppStorage(AccentPalette.defaultsKey) private var accentPalette = AccentPalette.wine.rawValue
 
     var body: some Scene {
         // FineWine lives in the menu bar; the window below is opened from it when needed.
@@ -15,6 +16,7 @@ struct FineWineApp: App {
                 .environmentObject(l10n)
                 .environment(\.layoutDirection, l10n.layoutDirection)
                 .environment(\.locale, Locale(identifier: l10n.activeLanguageCode))
+                .tint(Look.accent)
         } label: {
             MenuBarLabel()
                 .environmentObject(model)
@@ -30,6 +32,7 @@ struct FineWineApp: App {
                 .environmentObject(l10n)
                 .environment(\.layoutDirection, l10n.layoutDirection)
                 .environment(\.locale, Locale(identifier: l10n.activeLanguageCode))
+                .tint(Look.accent)
         }
         .defaultSize(width: 980, height: 680)
         .windowToolbarStyle(.unified)
@@ -48,10 +51,35 @@ struct FineWineApp: App {
                 .environmentObject(l10n)
                 .environment(\.layoutDirection, l10n.layoutDirection)
                 .environment(\.locale, Locale(identifier: l10n.activeLanguageCode))
+                .tint(Look.accent)
         }
         .defaultSize(width: 640, height: 560)
         .windowResizability(.contentMinSize)
         .handlesExternalEvents(matching: [])
+
+        Window("Bottle Settings", id: "bottle-settings") {
+            CrossOverToolsView(tool: .bottleSettings).tint(Look.accent)
+        }
+        .defaultSize(width: 640, height: 570)
+        .windowResizability(.contentMinSize)
+
+        Window("Mod Framework (EFMI)", id: "efmi-tools") {
+            CrossOverToolsView(tool: .efmi).tint(Look.accent)
+        }
+        .defaultSize(width: 640, height: 570)
+        .windowResizability(.contentMinSize)
+
+        Window("Steam / NotProton", id: "notproton-tools") {
+            CrossOverToolsView(tool: .notProton).tint(Look.accent)
+        }
+        .defaultSize(width: 640, height: 510)
+        .windowResizability(.contentMinSize)
+
+        Window("Metal HUD", id: "metal-hud") {
+            CrossOverToolsView(tool: .metalHUD).tint(Look.accent)
+        }
+        .defaultSize(width: 640, height: 460)
+        .windowResizability(.contentMinSize)
 
         Settings {
             SettingsView()
@@ -59,6 +87,7 @@ struct FineWineApp: App {
                 .environmentObject(l10n)
                 .environment(\.layoutDirection, l10n.layoutDirection)
                 .environment(\.locale, Locale(identifier: l10n.activeLanguageCode))
+                .tint(Look.accent)
         }
     }
 }

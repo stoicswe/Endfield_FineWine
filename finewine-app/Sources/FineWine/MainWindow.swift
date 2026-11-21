@@ -9,6 +9,7 @@ struct MainWindow: View {
     @Environment(\.openSettings) private var openSettings
     @State private var showingNewPrefix = false
     @State private var showingBottleImport = false
+    @State private var showingRegenerateRuntime = false
 
     var body: some View {
         NavigationSplitView {
@@ -38,6 +39,9 @@ struct MainWindow: View {
         }
         .sheet(isPresented: $showingNewPrefix) {
             NewPrefixSheet().environmentObject(model)
+        }
+        .sheet(isPresented: $showingRegenerateRuntime) {
+            RegenerateRuntimeSheet().environmentObject(model)
         }
         .alert(item: $model.alert) { alert in
             Alert(title: Text(alert.title), message: Text(alert.message), dismissButton: .default(Text(l10n.tr("app.ok"))))
@@ -162,11 +166,15 @@ struct MainWindow: View {
         } else if model.usableRuntimes.isEmpty {
             EmptyState(symbol: "wineglass", title: l10n.tr("main.add_runtime_title"),
                        message: l10n.tr("main.add_runtime_desc")) {
-                Button(l10n.tr("main.add_runtime_btn")) {
-                    if let folder = Panels.chooseFolder(message: l10n.tr("dialog.choose_runtime_folder")) { model.addRuntime(from: folder) }
+                Button(l10n.tr("runtime_regen.action_btn")) {
+                    showingRegenerateRuntime = true
                 }
                 .fwProminentButton().tint(Look.wine)
                 .controlSize(.large)
+                Button(l10n.tr("main.add_runtime_btn")) {
+                    if let folder = Panels.chooseFolder(message: l10n.tr("dialog.choose_runtime_folder")) { model.addRuntime(from: folder) }
+                }
+                .fwButton()
             }
         } else {
             EmptyState(symbol: "shippingbox", title: l10n.tr("main.first_prefix_title"),
@@ -348,6 +356,8 @@ struct NewPrefixSheet: View {
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject private var l10n = LanguageManager.shared
+    @AppStorage(AccentPalette.defaultsKey) private var accentPalette = AccentPalette.wine.rawValue
+    @State private var showingRegenerateRuntime = false
 
     private var discordStatus: String {
         if !model.showsDiscordPresence { return l10n.tr("settings.discord_status_off") }
@@ -374,6 +384,36 @@ struct SettingsView: View {
                     }
                 }
 
+                Card(title: "Appearance", symbol: "paintpalette",
+                     footnote: "Changes FineWine's background glow, glass tint and prominent buttons. It does not change your macOS accent colour.") {
+                    Row(label: "Accent color") {
+                        Picker("Accent color", selection: $accentPalette) {
+                            ForEach(AccentPalette.allCases) { palette in
+                                Label {
+                                    Text(palette.name)
+                                } icon: {
+                                    Circle().fill(palette.primary).frame(width: 12, height: 12)
+                                }
+                                .tag(palette.rawValue)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                    }
+                    HStack(spacing: 8) {
+                        Circle().fill(Look.wine).frame(width: 18, height: 18)
+                        Text("Preview")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Prominent button") { }
+                            .fwProminentButton()
+                            .tint(Look.wine)
+                            .controlSize(.small)
+                    }
+                }
+
                 Card(title: l10n.tr("settings.runtimes_card"), symbol: "cpu",
                      footnote: l10n.tr("settings.runtimes_footnote")) {
                     if model.runtimes.isEmpty {
@@ -383,10 +423,16 @@ struct SettingsView: View {
                         RuntimeRow(runtime: runtime)
                         if runtime.id != model.runtimes.last?.id { Divider() }
                     }
-                    Button(l10n.tr("main.add_runtime_btn")) {
-                        if let folder = Panels.chooseFolder(message: l10n.tr("dialog.choose_runtime_folder")) { model.addRuntime(from: folder) }
+                    HStack(spacing: 8) {
+                        Button(l10n.tr("runtime_regen.action_btn")) {
+                            showingRegenerateRuntime = true
+                        }
+                        .fwButton()
+                        Button(l10n.tr("main.add_runtime_btn")) {
+                            if let folder = Panels.chooseFolder(message: l10n.tr("dialog.choose_runtime_folder")) { model.addRuntime(from: folder) }
+                        }
+                        .fwButton()
                     }
-                    .fwButton()
                 }
 
                 UpdatesCard()
@@ -468,6 +514,9 @@ struct SettingsView: View {
         .alert(item: $model.alert) { alert in
             Alert(title: Text(alert.title), message: Text(alert.message), dismissButton: .default(Text(l10n.tr("app.ok"))))
         }
+        .sheet(isPresented: $showingRegenerateRuntime) {
+            RegenerateRuntimeSheet().environmentObject(model)
+        }
     }
 
     private func reveal(_ url: URL) {
@@ -481,6 +530,8 @@ private struct RuntimeRow: View {
     @ObservedObject private var l10n = LanguageManager.shared
     let runtime: WineRuntime
     @State private var confirmingRemoval = false
+    @State private var showingMoveSheet = false
+    @State private var showingRegenSheet = false
 
     var body: some View {
         let problems = runtime.problems()
@@ -492,6 +543,8 @@ private struct RuntimeRow: View {
                     if !runtime.manifest.wineVersion.isEmpty { Pill(text: "Wine \(runtime.manifest.wineVersion)") }
                     if runtime.kind == .external { Pill(text: l10n.tr("settings.external"), symbol: "folder") }
                     if runtime.kind == .bundled { Pill(text: l10n.tr("settings.builtin"), symbol: "shippingbox") }
+                    Pill(text: model.volumeName(for: runtime.root),
+                         symbol: model.isExternalVolume(url: runtime.root) ? "externaldrive" : "desktopcomputer")
                 }
                 Text(runtime.root.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 ForEach(problems, id: \.self) { problem in
@@ -500,10 +553,22 @@ private struct RuntimeRow: View {
             }
             Spacer()
             if runtime.kind != .bundled {
+                Button(l10n.tr("runtime_move.button")) { showingMoveSheet = true }
+                    .fwButton()
+                    .controlSize(.small)
+                Button(l10n.tr("runtime_regen.row_button")) { showingRegenSheet = true }
+                    .fwButton()
+                    .controlSize(.small)
                 Button(l10n.tr("app.remove")) { confirmingRemoval = true }
                     .fwButton()
                     .controlSize(.small)
             }
+        }
+        .sheet(isPresented: $showingMoveSheet) {
+            MoveRuntimeSheet(runtime: runtime).environmentObject(model)
+        }
+        .sheet(isPresented: $showingRegenSheet) {
+            RegenerateRuntimeSheet(initialPlace: runtime.kind == .managed ? .thisMac : (model.service.prefixes.drives.volumes.volume(containing: runtime.root)?.uuid.map { RuntimePlace.drive($0) } ?? .customFolder(runtime.root))).environmentObject(model)
         }
         .confirmationDialog(l10n.tr("settings.remove_runtime_confirm_title", runtime.name), isPresented: $confirmingRemoval) {
             Button(l10n.tr("app.remove"), role: .destructive) { model.remove(runtime) }

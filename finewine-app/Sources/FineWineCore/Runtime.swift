@@ -306,14 +306,17 @@ public struct RuntimeStore {
     public let paths: FineWinePaths
     /// Where the built-in runtime is, if the app has one.
     public let bundledRoot: URL?
+    public let volumes: VolumeProviding
     private let fm = FileManager.default
 
     /// `bundledRoot` defaults to the running app's own; a development build run outside an app
     /// bundle, and the tests, have none.
     public init(paths: FineWinePaths,
-                bundledRoot: URL? = Bundle.main.resourceURL?.appendingPathComponent(RuntimeStore.bundledFolderName, isDirectory: true)) {
+                bundledRoot: URL? = Bundle.main.resourceURL?.appendingPathComponent(RuntimeStore.bundledFolderName, isDirectory: true),
+                volumes: VolumeProviding = SystemVolumes()) {
         self.paths = paths
         self.bundledRoot = bundledRoot
+        self.volumes = volumes
     }
 
     /// The runtime built into the app.
@@ -333,20 +336,43 @@ public struct RuntimeStore {
 
     private func listInstalled() -> [WineRuntime] {
         var managed: [WineRuntime] = []
+        var seenPaths = Set<String>()
         let dirs = (try? fm.contentsOfDirectory(at: paths.runtimes, includingPropertiesForKeys: nil)) ?? []
         for dir in dirs {
             guard let manifest = Self.readManifest(in: dir) else { continue }
             managed.append(WineRuntime(manifest: manifest, root: dir, kind: .managed))
+            seenPaths.insert(dir.resolvingSymlinksInPath().path)
         }
-        let external = externalPaths().map { path -> WineRuntime in
+        var externalMap: [String: WineRuntime] = [:]
+        for path in externalPaths() {
             let root = URL(fileURLWithPath: path, isDirectory: true)
+            let resPath = root.resolvingSymlinksInPath().path
+            guard !seenPaths.contains(resPath) else { continue }
             let manifest = Self.readManifest(in: root) ?? Self.inferredManifest(for: root)
-            return WineRuntime(manifest: manifest, root: root, kind: .external)
+            externalMap[resPath] = WineRuntime(manifest: manifest, root: root, kind: .external)
+            seenPaths.insert(resPath)
         }
+
+        // Also discover runtimes on mounted volumes in <volume>/FineWine/Runtimes
+        let mountedVolumes = volumes.mounted().filter { $0.root.standardizedFileURL.path != "/" }
+        for vol in mountedVolumes {
+            let driveRuntimesDir = Self.runtimesFolder(on: vol)
+            let subdirs = (try? fm.contentsOfDirectory(at: driveRuntimesDir, includingPropertiesForKeys: nil)) ?? []
+            for sub in subdirs {
+                let resPath = sub.resolvingSymlinksInPath().path
+                if !seenPaths.contains(resPath) {
+                    if let manifest = Self.readManifest(in: sub) {
+                        externalMap[resPath] = WineRuntime(manifest: manifest, root: sub, kind: .external)
+                        seenPaths.insert(resPath)
+                    }
+                }
+            }
+        }
+
         let byName: (WineRuntime, WineRuntime) -> Bool = {
             $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
-        return managed.sorted(by: byName) + external.sorted(by: byName)
+        return managed.sorted(by: byName) + Array(externalMap.values).sorted(by: byName)
     }
 
     public func runtime(id: String) -> WineRuntime? { list().first { $0.id == id } }
@@ -395,7 +421,7 @@ public struct RuntimeStore {
         try JSONEncoder().encode(list).write(to: paths.externalRuntimes, options: .atomic)
     }
 
-    // MARK: Managed runtimes
+    // MARK: Managed & Custom Placed runtimes
 
     /// Installs a runtime from an unpacked folder that has a `runtime.json`, by copying it into
     /// the Runtimes folder. A runtime with the same id is replaced.
@@ -404,20 +430,111 @@ public struct RuntimeStore {
         guard let manifest = Self.readManifest(in: source) else {
             throw FineWineError("“\(source.lastPathComponent)” has no runtime.json, so it isn't a FineWine runtime.")
         }
+        try paths.ensureDirectories()
+        let destination = paths.runtimes.appendingPathComponent(manifest.id, isDirectory: true)
+        return try install(from: source, to: destination)
+    }
+
+    /// Installs a runtime into an arbitrary destination directory (e.g. on an external disk).
+    /// If the destination is inside `paths.runtimes`, it is managed; otherwise it is registered
+    /// as an external runtime so FineWine knows where it sits.
+    @discardableResult
+    public func install(from source: URL, to destination: URL) throws -> WineRuntime {
+        guard let manifest = Self.readManifest(in: source) else {
+            throw FineWineError("“\(source.lastPathComponent)” has no runtime.json, so it isn't a FineWine runtime.")
+        }
         guard Self.isSafeIdentifier(manifest.id) else {
             throw FineWineError("The runtime's id “\(manifest.id)” can't be used as a folder name.")
         }
-        let problems = WineRuntime(manifest: manifest, root: source, kind: .managed).problems()
+
+        let parent = destination.deletingLastPathComponent()
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+        try? paths.ensureDirectories()
+
+        let destResolved = destination.resolvingSymlinksInPath().path
+        let parentResolved = parent.resolvingSymlinksInPath().path
+        let managedResolved = paths.runtimes.resolvingSymlinksInPath().path
+        let isManaged = parentResolved == managedResolved
+            || destination.standardizedFileURL.path.hasPrefix(paths.runtimes.standardizedFileURL.path)
+        let kind: WineRuntime.Kind = isManaged ? .managed : .external
+
+        let problems = WineRuntime(manifest: manifest, root: source, kind: kind).problems()
         guard problems.isEmpty else {
             throw FineWineError("“\(manifest.name)” is not a usable Wine runtime: " + problems.joined(separator: " "))
         }
-        try paths.ensureDirectories()
-        let destination = paths.runtimes.appendingPathComponent(manifest.id, isDirectory: true)
-        let staging = paths.runtimes.appendingPathComponent(".installing-\(UUID().uuidString)", isDirectory: true)
-        try fm.copyItem(at: source, to: staging)
-        if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
+
+        let staging = parent.appendingPathComponent(".installing-\(UUID().uuidString)", isDirectory: true)
+        try FolderCopy.copy(source, to: staging)
+        if fm.fileExists(atPath: destination.path) {
+            try fm.removeItem(at: destination)
+        }
         try fm.moveItem(at: staging, to: destination)
-        return WineRuntime(manifest: manifest, root: destination, kind: .managed)
+
+        let installed = WineRuntime(manifest: manifest, root: destination, kind: kind)
+        if isManaged {
+            // Ensure managed destination is not lingering in external-runtimes.json
+            let list = externalPaths().filter { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path != destResolved }
+            try? writeExternal(list)
+        } else {
+            var list = externalPaths()
+            let destPath = destination.path
+            if !list.contains(destPath) && !list.contains(destResolved) {
+                list.append(destPath)
+                try writeExternal(list)
+            }
+        }
+        return installed
+    }
+
+    /// Installs a runtime from `source` to a `RuntimePlace` (this Mac, external drive, or custom folder).
+    @discardableResult
+    public func install(from source: URL, to place: RuntimePlace, volumes: VolumeProviding = SystemVolumes()) throws -> WineRuntime {
+        guard let manifest = Self.readManifest(in: source) else {
+            throw FineWineError("“\(source.lastPathComponent)” has no runtime.json, so it isn't a FineWine runtime.")
+        }
+        guard let target = targetDirectory(for: place, runtimeID: manifest.id, volumes: volumes) else {
+            throw FineWineError("The destination volume or directory is not available.")
+        }
+        return try install(from: source, to: target)
+    }
+
+    /// Moves an existing runtime to another destination directory (e.g. moving between disks).
+    @discardableResult
+    public func move(runtime: WineRuntime, to destination: URL) throws -> WineRuntime {
+        guard runtime.kind != .bundled else {
+            throw FineWineError("The built-in runtime inside FineWine.app cannot be moved.")
+        }
+        let destination = destination.standardizedFileURL
+        guard runtime.folder.standardizedFileURL.path != destination.path else {
+            return runtime
+        }
+
+        let oldFolder = runtime.folder
+        let oldKind = runtime.kind
+
+        let installed = try install(from: oldFolder, to: destination)
+
+        // Clean up old location
+        switch oldKind {
+        case .managed:
+            try? removeManaged(id: runtime.id)
+        case .external:
+            try? removeExternal(oldFolder)
+            try? fm.removeItem(at: oldFolder)
+        case .bundled:
+            break
+        }
+
+        return installed
+    }
+
+    /// Moves an existing runtime to a `RuntimePlace` (e.g. another disk or custom folder).
+    @discardableResult
+    public func move(runtime: WineRuntime, to place: RuntimePlace, volumes: VolumeProviding = SystemVolumes()) throws -> WineRuntime {
+        guard let target = targetDirectory(for: place, runtimeID: runtime.id, volumes: volumes) else {
+            throw FineWineError("The destination volume or directory is not available.")
+        }
+        return try move(runtime: runtime, to: target)
     }
 
     public func removeManaged(id: String) throws {

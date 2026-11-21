@@ -655,3 +655,45 @@
 "steam.launch_options_problem" = "Steam can't start these games with FineWine: %@. Their launch options begin with settings in the form NAME=value, which only NotProton's own tools understand; Steam reports “OS Error 260”. In Steam, open the game's Properties and clear Launch Options.";
 "steam.hide_prefixes_title" = "Hide the prefixes of Steam games";
 "steam.hide_prefixes_desc" = "Each game started from Steam has a prefix of its own. On: they are left out of FineWine's lists; they stay where they are and Steam still starts them.";
+
+/* Runtime Regeneration & Relocation */
+"runtime_regen.title" = "Regenerate Wine Runtime";
+"runtime_regen.subtitle" = "Build, package, or copy the Wine runtime and place it on any disk";
+"runtime_regen.action_btn" = "Regenerate Wine Runtime…";
+"runtime_regen.row_button" = "Regenerate";
+"runtime_regen.repo_card" = "Source Repository";
+"runtime_regen.has_packaged" = "Runtime Packaged";
+"runtime_regen.has_built" = "Wine Compiled";
+"runtime_regen.change_repo" = "Change…";
+"runtime_regen.choose_repo" = "Choose Endfield_FineWine Repository";
+"runtime_regen.repo_not_found" = "Endfield_FineWine repository not found automatically. Please locate the repository folder.";
+"runtime_regen.locate_repo" = "Locate Repository…";
+"runtime_regen.mode_card" = "Regeneration Action";
+"runtime_regen.destination_card" = "Destination Location";
+"runtime_regen.destination_footnote" = "Runtimes on an external disk are placed in FineWine/Runtimes. You can also pick any folder.";
+"runtime_regen.destination_label" = "Place runtime on";
+"runtime_regen.custom_folder" = "Custom Folder…";
+"runtime_regen.custom_path_label" = "Folder";
+"runtime_regen.choose_folder" = "Choose…";
+"runtime_regen.choose_custom_dest" = "Choose Destination Folder for Runtime";
+"runtime_regen.working" = "Working…";
+"runtime_regen.keep_open_notice" = "Please keep this window open while the runtime is being prepared.";
+"runtime_regen.success_title" = "Wine Runtime Ready!";
+"runtime_regen.success_message" = "The Wine runtime has been generated and placed on disk. FineWine is ready to run programs with it.";
+"runtime_regen.console_output" = "Console Output";
+"runtime_regen.start_button" = "Regenerate & Place Runtime";
+"runtime_regen.starting" = "Starting regeneration…";
+"runtime_regen.completed" = "Completed successfully.";
+"runtime_regen.failed" = "Regeneration failed.";
+"runtime_regen.cancelled" = "Regeneration cancelled.";
+
+"runtime_move.title" = "Move “%@”";
+"runtime_move.subtitle" = "Move this runtime to another disk or folder";
+"runtime_move.button" = "Move…";
+"runtime_move.source_card" = "Current Location";
+"runtime_move.target_card" = "New Location";
+"runtime_move.target_footnote" = "FineWine will copy the runtime to the new disk and update prefixes pointing to it.";
+"runtime_move.destination_label" = "Move to";
+"runtime_move.moving_msg" = "Moving runtime to new location…";
+"runtime_move.action_button" = "Move Runtime";
+"dialog.err_runtime_move" = "Could Not Move Runtime";
