@@ -15,6 +15,12 @@ dlls/win32u/sysparams.c
   program with an assertion: a program may now ask for any size (1366 wide on a 3024 wide
   display at 192 DPI did not fit).
 
+- FINEWINE_DPI_AWARE=1 runs a program as DPI aware whether it says so or not (Windows:
+  "Override high DPI scaling behaviour: Application"). FineWine sets it for games. Portal goes
+  full screen through SDL, which sizes the window itself: not DPI aware, in a prefix with 192
+  DPI, it was told a screen half the size of the modes it was offered, and its window came
+  out twice the screen.
+
 dlls/winemac.drv/opengl.c
 - A "raw" client surface, which is what win32u asks for when it scales the picture itself,
   has the size it has on the monitor. The Mac driver gave every surface the program's size,
@@ -29,7 +35,8 @@ dlls/wined3d/swapchain.c
 dlls/win32u/window.c
 - With an emulated mode, a picture that would be larger than the real screen is fitted to it.
 
-Checked with tests/runtime/d3d9-fullscreen.c as x64 and 32-bit: 960x600 fills the Space,
+Checked with Portal itself (its main menu fills the Space at 3024x1898) and with
+tests/runtime/d3d9-fullscreen.c as x64 and 32-bit, in Direct3D's exclusive mode and SDL's way: 960x600 fills the Space,
 1024x768 is centred with bars at the sides, the pointer set to the middle of the program's
 screen is at the middle of the Space, and the Mac's display mode does not change.
 
@@ -62,7 +69,7 @@ diff --git a/dlls/win32u/sysparams.c b/dlls/win32u/sysparams.c
      return r;
  }
  
-@@ -6153,6 +6166,19 @@
+@@ -6153,9 +6166,33 @@
          emulate_modeset = IS_OPTION_TRUE( buffer[0] );
      /* FineWine: a render size for the prefix is an emulated display mode (see add_modes) */
      if (finewine_render_scale()) emulate_modeset = TRUE;
@@ -82,6 +89,20 @@ diff --git a/dlls/win32u/sysparams.c b/dlls/win32u/sysparams.c
  
  #undef IS_OPTION_TRUE
  
++    /* FineWine: FINEWINE_DPI_AWARE=1 runs a program as if it had declared itself DPI aware
++     * (Windows: "Override high DPI scaling behaviour: Application"). FineWine sets it for
++     * games. A game that is not DPI aware, in a prefix with a high DPI (a Retina prefix has
++     * 192), is told a screen half the size of the display modes it is offered, and sizes its
++     * full-screen window by the mode: twice the screen (Portal, through SDL). Games count in
++     * pixels; scaling a program that is not DPI aware is for desktop programs' sake. */
++    {
++        const char *aware = getenv( "FINEWINE_DPI_AWARE" );
++        if (aware && aware[0] == '1') NtUserSetProcessDpiAwarenessContext( NTUSER_DPI_SYSTEM_AWARE, 0 );
++    }
++
+     if (app_compat_flags)
+     {
+         if (strstr( app_compat_flags, "HIGHDPIAWARE" )) NtUserSetProcessDpiAwarenessContext( NTUSER_DPI_SYSTEM_AWARE, 0 );
 diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
 --- a/dlls/win32u/window.c
 +++ b/dlls/win32u/window.c

@@ -2,7 +2,7 @@
  * display, the way an older game starts (Portal: 960x600). Draws four coloured quarters
  * (red, green / blue, yellow) so that a look at the window from outside shows whether the
  * picture fills it. Covers the display for the given number of seconds.
- * Usage: d3d9-fullscreen.exe [width] [height] [seconds] [windowed: 0|1]
+ * Usage: d3d9-fullscreen.exe [width] [height] [seconds] [0 exclusive | 1 window | 2 the SDL way]
  * Prints what Windows reports at each step and "d3d9-fullscreen: ok". */
 #define COBJMACROS
 #include <windows.h>
@@ -23,6 +23,17 @@ int main(int argc, char **argv)
     RegisterClassW(&wc);
     HWND window = CreateWindowExW(0, wc.lpszClassName, L"FineWine Direct3D 9 full screen", windowed ? WS_OVERLAPPEDWINDOW : WS_POPUP,
                                   windowed ? 100 : 0, windowed ? 100 : 0, width, height, NULL, NULL, wc.hInstance, NULL);
+    if (windowed == 2) {
+        /* The way SDL goes full screen, which Source engine games use: the program sets the
+         * display mode itself, makes its window a borderless one of the mode's size at the
+         * top left, and keeps a windowed Direct3D device. */
+        DEVMODEW dm = {0}; dm.dmSize = sizeof(dm); dm.dmPelsWidth = width; dm.dmPelsHeight = height;
+        dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+        LONG res = ChangeDisplaySettingsExW(NULL, &dm, NULL, CDS_FULLSCREEN, NULL);
+        printf("mode set by the program: %ld\n", res);
+        SetWindowLongW(window, GWL_STYLE, WS_POPUP);
+        SetWindowPos(window, HWND_TOPMOST, 0, 0, width, height, SWP_FRAMECHANGED);
+    }
     ShowWindow(window, SW_SHOW);
     D3DPRESENT_PARAMETERS pp = {0};
     pp.Windowed = windowed; pp.SwapEffect = D3DSWAPEFFECT_DISCARD; pp.BackBufferFormat = D3DFMT_X8R8G8B8;
@@ -63,7 +74,9 @@ int main(int argc, char **argv)
             reported = 1;
         }
     }
-    IDirect3DDevice9_Release(device); IDirect3D9_Release(d3d); DestroyWindow(window);
+    IDirect3DDevice9_Release(device); IDirect3D9_Release(d3d);
+    if (windowed == 2) ChangeDisplaySettingsExW(NULL, NULL, NULL, 0, NULL);
+    DestroyWindow(window);
     printf("d3d9-fullscreen: ok\n");
     return 0;
 }

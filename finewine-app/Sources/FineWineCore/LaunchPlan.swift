@@ -199,6 +199,21 @@ public struct LaunchPlanner {
         return env
     }
 
+    /// The variable that makes the runtime treat a program as DPI aware (Windows: "Override
+    /// high DPI scaling behaviour: Application"). See `dpiAwareEnvironment`.
+    public static let dpiAwareVariable = "FINEWINE_DPI_AWARE"
+
+    /// A game is run as DPI aware whether it says so or not. One that does not, in a prefix
+    /// with a high DPI (a Retina prefix has 192), is told a screen half the size of the display
+    /// modes it is offered and sizes its full-screen window by the mode, so the window comes
+    /// out twice the screen (Portal). Only for a program that draws with a rendering API
+    /// itself: a launcher that starts a game is a desktop program, and scaling is for those.
+    public func dpiAwareEnvironment(for program: Program) -> [String: String] {
+        guard let exe = WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory),
+              PEImports.usesRenderingAPI(at: exe) else { return [:] }
+        return [Self.dpiAwareVariable: "1"]
+    }
+
     // MARK: Steam stand-in
 
     /// The Steam id to start the program with, if it is one that is started through the
@@ -241,6 +256,7 @@ public struct LaunchPlanner {
         }
         // The program's own variables keep the last word, as everywhere else.
         for (name, value) in gameModeEnvironment(for: program) where env[name] == nil { env[name] = value }
+        for (name, value) in dpiAwareEnvironment(for: program) where env[name] == nil { env[name] = value }
         if let memoryTraceFolder { env[Self.memoryTraceVariable] = memoryTraceFolder.path }
         return LaunchPlan(executable: try wine(), arguments: arguments,
                           environment: env, workingDirectory: cwd ?? prefix.directory)

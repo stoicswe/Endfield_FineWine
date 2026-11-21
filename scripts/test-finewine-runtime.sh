@@ -638,9 +638,13 @@ SWIFT
      && "$REPO/build/llvm-mingw/bin/x86_64-w64-mingw32-clang" -O1 -o "$WORK/d9fs-x64.exe" "$REPO/tests/runtime/d3d9-fullscreen.c" -ld3d9 >>"$WORK/d9fs-build.log" 2>&1 \
      && "$REPO/build/llvm-mingw/bin/i686-w64-mingw32-clang" -O1 -o "$WORK/d9fs-32.exe" "$REPO/tests/runtime/d3d9-fullscreen.c" -ld3d9 >>"$WORK/d9fs-build.log" 2>&1; then
     mac_before="$("$WORK/macstate" | cut -d' ' -f1)"; bad=""
-    for exe in d9fs-x64 d9fs-32; do
+    # Twice each: Direct3D's exclusive mode, and the way SDL does it (the program sets the mode
+    # and sizes its own window; Portal), which needs the program run as DPI aware, as FineWine
+    # runs games.
+    for run in "d9fs-x64 0 0" "d9fs-32 0 0" "d9fs-x64 2 1" "d9fs-32 2 1"; do
+      set -- $run; exe="$1"; how="$2"; aware="$3"
       [ -f "$RT/lib/wine/i386-windows/ntdll.dll" ] || [ "$exe" = d9fs-x64 ] || continue
-      FINEWINE_FULLSCREEN=space perl -e 'alarm 60; exec @ARGV' "$RT/bin/wine" "$WORK/$exe.exe" 960 600 5 0 </dev/null >"$WORK/$exe.txt" 2>/dev/null &
+      FINEWINE_FULLSCREEN=space FINEWINE_DPI_AWARE="$aware" perl -e 'alarm 60; exec @ARGV' "$RT/bin/wine" "$WORK/$exe.exe" 960 600 5 "$how" </dev/null >"$WORK/$exe.txt" 2>/dev/null &
       during=""
       for _ in $(seq 1 40); do
         if grep -q '^state' "$WORK/$exe.txt" 2>/dev/null; then perl -e 'select(undef, undef, undef, 0.5)'; during="$("$WORK/macstate")"; break; fi
@@ -650,19 +654,20 @@ SWIFT
       out="$(tr -d '\r' < "$WORK/$exe.txt")"
       state="$(echo "$out" | sed -n 's/^state: //p')"; pointer="$(echo "$out" | sed -n 's/^pointer: //p')"
       w="$(echo "$state" | sed -n 's/.* screen \([0-9]*\)x.*/\1/p')"; h="$(echo "$state" | sed -n 's/.* screen [0-9]*x\([0-9]*\).*/\1/p')"
-      case "$out" in *"d3d9-fullscreen: ok"*) ;; *) bad="$bad $exe:did-not-finish" ;; esac
-      case "$state" in "window 0,0-$w,$h client ${w}x$h mode 960x600 "*) ;; *) bad="$bad $exe:window($state)" ;; esac
-      case "$pointer" in "set $((w/2)),$((h/2)) got $((w/2)),$((h/2)) client middle $((w/2)),$((h/2))") ;; *) bad="$bad $exe:pointer($pointer)" ;; esac
+      exe="$exe/$how"
+      case "$out" in *"d3d9-fullscreen: ok"*) ;; *) bad="$bad $exe/$how:did-not-finish" ;; esac
+      case "$state" in "window 0,0-$w,$h client ${w}x$h mode 960x600 "*) ;; *) bad="$bad $exe/$how:window($state)" ;; esac
+      case "$pointer" in "set $((w/2)),$((h/2)) got $((w/2)),$((h/2)) client middle $((w/2)),$((h/2))") ;; *) bad="$bad $exe/$how:pointer($pointer)" ;; esac
       set -- $during
-      [ "${1:-}" = "$mac_before" ] || bad="$bad $exe:mac-mode-changed(${1:-none})"
+      [ "${1:-}" = "$mac_before" ] || bad="$bad $exe/$how:mac-mode-changed(${1:-none})"
       # the middle of the Mac's display, within the height of a menu bar
       if [ -n "${5:-}" ]; then
         dx=$(( ${2:-0} - $4 / 2 )); dy=$(( ${3:-0} - $5 / 2 ))
-        [ "${dx#-}" -le 4 ] && [ "${dy#-}" -le 40 ] || bad="$bad $exe:mac-pointer(${2:-},${3:-})"
+        [ "${dx#-}" -le 4 ] && [ "${dy#-}" -le 40 ] || bad="$bad $exe/$how:mac-pointer(${2:-},${3:-})"
       fi
     done
     "$RT/bin/wineserver" -k 2>/dev/null
-    if [ -z "$bad" ]; then pass "Direct3D 9 exclusive full screen at 960x600 fills a Space: the Mac's mode is untouched, window and pointer agree (x64 and 32-bit)"
+    if [ -z "$bad" ]; then pass "Direct3D 9 full screen at 960x600 fills a Space, in exclusive mode and SDL's way: the Mac's mode is untouched, window and pointer agree (x64 and 32-bit)"
     else fail "Direct3D 9 full screen in a Space:$bad"; fi
   else
     fail "could not build the Direct3D 9 full-screen check"; tail -n 3 "$WORK/d9fs-build.log"

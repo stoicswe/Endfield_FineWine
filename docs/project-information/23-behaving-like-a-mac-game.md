@@ -165,9 +165,19 @@ sized the full-screen window in the program's units instead of real pixels: for 
 is not DPI aware in a prefix with 192 DPI (a Retina prefix) the window came out twice the size
 of the screen the program saw, and the pointer reached a quarter of it.
 
+**Games are run as DPI aware.** Portal does not use Direct3D's exclusive mode: through SDL
+it sets the mode and sizes its own window. It does not declare itself DPI aware, and in a
+Retina prefix (192 DPI) Wine then tells it a screen half the size of the display modes it is
+offered; sized by the mode, its window came out twice the screen. Windows has the same trap
+and the same way out ("Override high DPI scaling behaviour: Application"). FineWine does that
+for games: `FINEWINE_DPI_AWARE=1`, set for a program that draws with a rendering API itself
+and for everything Steam starts (`LaunchPlanner.dpiAwareEnvironment`). A launcher is left
+alone: scaling a program that is not DPI aware is what makes desktop programs readable.
+
 `FINEWINE_EMULATE_MODES=0` goes back to changing the real mode. With "exclusive" chosen as the
 prefix's full-screen mode nothing changes: there the Mac's mode is the game's.
 
-Checked with `tests/runtime/d3d9-fullscreen.c` (in the test script with
-`FINEWINE_TEST_FULLSCREEN=1`). Not yet seen with Portal itself by a person, nor a window being
-resized by hand while a game draws.
+Checked with Portal (its main menu fills the Space at 3024x1898, seen in a capture of its
+window) and with `tests/runtime/d3d9-fullscreen.c` (in the test script with
+`FINEWINE_TEST_FULLSCREEN=1`). Not checked: a window being resized by hand while a game draws,
+and switching away from a game and back.

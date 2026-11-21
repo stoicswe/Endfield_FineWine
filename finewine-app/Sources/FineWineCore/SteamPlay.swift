@@ -490,6 +490,8 @@ extension PrefixService {
         let bridgePath = bridge.appendingPathComponent("wine").path
         env["WINEDLLPATH"] = [env["WINEDLLPATH"], bridgePath].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ":")
         env[SteamRun.bridgeVariable] = "1"
+        // What Steam starts is a game, whichever of its files draws: see LaunchPlanner.dpiAwareEnvironment.
+        if env[LaunchPlanner.dpiAwareVariable] == nil { env[LaunchPlanner.dpiAwareVariable] = "1" }
         // The bridge loads Steam's overlay library into the game (Steam names it in
         // STEAM_DYLD_INSERT_LIBRARIES) together with this helper for it, when the runtime has one.
         let shim = bridge.appendingPathComponent("overlay-shim.dylib")
