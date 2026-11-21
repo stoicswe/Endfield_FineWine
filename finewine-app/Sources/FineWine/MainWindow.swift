@@ -57,6 +57,8 @@ struct MainWindow: View {
     }
 
     private var sidebar: some View {
+        // The buttons sit under the list, not in it, so they are there with no prefixes too.
+        VStack(spacing: 0) {
         List(selection: $model.selection) {
             Section(l10n.tr("main.prefixes")) {
                 ForEach(model.listedPrefixes) { prefix in
@@ -118,20 +120,23 @@ struct MainWindow: View {
                 }
             }
         }
-        .navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 320)
         // Only prefixes that are here can be selected; anything else goes back to one that is.
         .onChange(of: model.selection) { _, selected in
-            guard let selected, model.prefix(selected) == nil else { return }
+            guard let selected, !model.listedPrefixes.contains(where: { $0.id == selected }) else { return }
             model.selection = model.listedPrefixes.first?.id
         }
-        .safeAreaInset(edge: .bottom) {
             HStack {
                 Button {
                     showingNewPrefix = true
                 } label: {
-                    Label(l10n.tr("main.new_prefix"), systemImage: "plus")
+                    // the whole name where the sidebar is wide enough, else the plus alone
+                    ViewThatFits(in: .horizontal) {
+                        Label(l10n.tr("main.new_prefix"), systemImage: "plus").lineLimit(1).fixedSize()
+                        Image(systemName: "plus")
+                    }
                 }
                 .fwButton()
+                .help(l10n.tr("main.new_prefix"))
                 Button {
                     showingBottleImport = true
                 } label: {
@@ -151,6 +156,7 @@ struct MainWindow: View {
             }
             .padding(12)
         }
+        .navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 320)
     }
 
     private func subtitle(for prefix: Prefix) -> String {
@@ -161,7 +167,7 @@ struct MainWindow: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let prefix = model.prefix(model.selection) ?? model.listedPrefixes.first {
+        if let prefix = model.shownPrefix {
             PrefixDetailView(prefix: prefix).id(prefix.id)
         } else if model.usableRuntimes.isEmpty {
             EmptyState(symbol: "wineglass", title: l10n.tr("main.add_runtime_title"),

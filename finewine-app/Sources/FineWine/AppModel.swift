@@ -128,10 +128,15 @@ final class AppModel: ObservableObject {
             objectWillChange.send()
             UserDefaults.standard.set(newValue, forKey: Self.hideSteamPrefixesKey)
             // a hidden prefix cannot stay the one that is shown
-            if newValue, let current = prefix(selection), current.metadata.steamAppID != nil {
+            if !listedPrefixes.contains(where: { $0.id == selection }) {
                 selection = listedPrefixes.first?.id
             }
         }
+    }
+
+    /// The prefix the manager window shows: the selected one, as long as it is listed.
+    var shownPrefix: Prefix? {
+        listedPrefixes.first { $0.id == selection } ?? listedPrefixes.first
     }
 
     /// The prefixes the sidebar and the menu bar list.
@@ -220,8 +225,8 @@ final class AppModel: ObservableObject {
         runtimes = service.runtimes.list()
         profiles = service.profiles.list()
         snapshots = service.prefixes.snapshots()
-        if selection == nil || !prefixes.contains(where: { $0.id == selection }) {
-            selection = prefixes.first?.id
+        if selection == nil || !listedPrefixes.contains(where: { $0.id == selection }) {
+            selection = listedPrefixes.first?.id
         }
         repairShortcutIcons()
     }
