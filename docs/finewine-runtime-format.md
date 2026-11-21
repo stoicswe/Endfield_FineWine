@@ -104,6 +104,13 @@ desktop, DLL overrides, the Option keys) work with any Wine and need no capabili
 `overrides` are added to `WINEDLLOVERRIDES`. A prefix set to a backend the runtime does not
 list uses Wine's own Direct3D.
 
+One more key is not a choice of backend: `dxvk-d3d9`, DXVK's Direct3D 9
+(`{ "dllPath": "lib/dxvk", "overrides": {} }`, with `i386-windows/d3d9.dll` and
+`aarch64-windows/d3d9.dll` in that folder, marked as Wine builtins). A runtime that lists it
+offers the prefix setting "Direct3D 9 and older on Vulkan": with the setting on, the folder
+goes on `WINEDLLPATH` ahead of the backend's, and `FINEWINE_DXVK_FEATURES=1` and
+`DXVK_LOG_LEVEL=none` are set. Without the key the setting is greyed out and does nothing.
+
 ## Example: a description by itself
 
 ```json

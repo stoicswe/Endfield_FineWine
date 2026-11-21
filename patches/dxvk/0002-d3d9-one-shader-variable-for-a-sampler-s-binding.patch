@@ -1,0 +1,139 @@
+d3d9: one shader variable for a sampler's binding
+
+DXVK declares, for every sampler of a Direct3D 9 shader, a colour variable and a
+depth-comparing one at the same binding, and picks between them when sampling by a constant
+set per draw; for shaders older than 2.0 it declares one of each kind of texture (2D, cube,
+3D), all at that binding. Metal has no two resources at one index. MoltenVK's converter turns
+such a shader into Metal code that does not compile ("use of undeclared identifier
+'s0_2d_shadowSmplr'" with argument buffers, "cannot reserve 'texture' resource location at
+index 0" without), the pipeline is not made, and nothing that samples a texture is drawn:
+Portal 2 was a black screen with sound.
+
+src/dxso/dxso_options.h, dxso_options.cpp, src/d3d9/d3d9_options.h, d3d9_options.cpp
+- A new option, d3d9.singleSamplerVariant, on unless set to False.
+
+src/dxso/dxso_compiler.cpp
+- With it, a sampler gets the colour variable only, and a shader older than 2.0 a 2D one.
+
+src/d3d9/d3d9_device.cpp
+- With it, the sampler of a depth texture does not compare either.
+
+What is lost: a depth texture is sampled as plain values, so shadows a game draws by sampling
+a depth texture with comparison are not right, and a shader older than 2.0 cannot sample a
+cube or 3D texture.
+
+tests/runtime/d3d9-draw.c draws with a pixel shader that samples a texture.
+
+diff --git a/src/dxso/dxso_compiler.cpp b/src/dxso/dxso_compiler.cpp
+index 7cd6f72..6695a79 100644
+--- a/src/dxso/dxso_compiler.cpp
++++ b/src/dxso/dxso_compiler.cpp
+@@ -826,11 +826,16 @@ namespace dxvk {
+ 
+       DclSampler(idx, binding, samplerType, false, implicit);
+ 
+-      if (samplerType != SamplerTypeTexture3D) {
++      if (samplerType != SamplerTypeTexture3D && !m_moduleInfo.options.singleSamplerVariant) {
+         // We could also be depth compared!
+         DclSampler(idx, binding, samplerType, true, implicit);
+       }
+     }
++    else if (m_moduleInfo.options.singleSamplerVariant) {
++      // FineWine: one variable for the binding, see DxsoOptions::singleSamplerVariant.
++      // A shader that does not say what kind of texture it samples gets a 2D one.
++      DclSampler(idx, binding, SamplerTypeTexture2D, false, implicit);
++    }
+     else {
+       // Could be any of these!
+       // We will check with the spec constant at sample time.
+@@ -3055,7 +3060,7 @@ void DxsoCompiler::emitControlFlowGenericLoop(
+     auto SampleType = [&](DxsoSamplerType samplerType) {
+       // Only do the check for depth comp. samplers
+       // if we aren't a 3D texture
+-      if (samplerType != SamplerTypeTexture3D) {
++      if (samplerType != SamplerTypeTexture3D && !m_moduleInfo.options.singleSamplerVariant) {
+         uint32_t colorLabel  = m_module.allocateId();
+         uint32_t depthLabel  = m_module.allocateId();
+         uint32_t endLabel    = m_module.allocateId();
+@@ -3090,6 +3095,9 @@ void DxsoCompiler::emitControlFlowGenericLoop(
+ 
+       SampleType(samplerType);
+     }
++    else if (m_moduleInfo.options.singleSamplerVariant) {
++      SampleType(SamplerTypeTexture2D);
++    }
+     else {
+       std::array<SpirvSwitchCaseLabel, 3> typeCaseLabels = {{
+         { uint32_t(SamplerTypeTexture2D),           m_module.allocateId() },
+diff --git a/src/d3d9/d3d9_device.cpp b/src/d3d9/d3d9_device.cpp
+index 23b0a6f..745aed8 100644
+--- a/src/d3d9/d3d9_device.cpp
++++ b/src/d3d9/d3d9_device.cpp
+@@ -5945,7 +5945,9 @@ namespace dxvk {
+     key.MipmapLodBias = bit::cast<float>(state[D3DSAMP_MIPMAPLODBIAS]);
+     key.MaxMipLevel   = state[D3DSAMP_MAXMIPLEVEL];
+     key.BorderColor   = D3DCOLOR(state[D3DSAMP_BORDERCOLOR]);
+-    key.Depth         = m_depthTextures & (1u << Sampler);
++    // FineWine: with one variable per sampler there is no depth-comparing sampling
++    // (D3D9Options::singleSamplerVariant), so the sampler does not compare either.
++    key.Depth         = !m_d3d9Options.singleSamplerVariant && (m_depthTextures & (1u << Sampler));
+ 
+     if (m_d3d9Options.samplerAnisotropy != -1) {
+       if (key.MagFilter == D3DTEXF_LINEAR)
+diff --git a/src/d3d9/d3d9_options.cpp b/src/d3d9/d3d9_options.cpp
+index 29d2c60..9908509 100644
+--- a/src/d3d9/d3d9_options.cpp
++++ b/src/d3d9/d3d9_options.cpp
+@@ -62,6 +62,7 @@ namespace dxvk {
+     this->supportVCache                 = config.getOption<bool>        ("d3d9.supportVCache",                 vendorId == 0x10de);
+     this->enableDialogMode              = config.getOption<bool>        ("d3d9.enableDialogMode",              false);
+     this->forceSamplerTypeSpecConstants = config.getOption<bool>        ("d3d9.forceSamplerTypeSpecConstants", false);
++    this->singleSamplerVariant          = config.getOption<bool>        ("d3d9.singleSamplerVariant",          true);
+     this->forceSwapchainMSAA            = config.getOption<int32_t>     ("d3d9.forceSwapchainMSAA",            -1);
+     this->forceAspectRatio              = config.getOption<std::string> ("d3d9.forceAspectRatio",              "");
+     this->allowDoNotWait                = config.getOption<bool>        ("d3d9.allowDoNotWait",                true);
+diff --git a/src/d3d9/d3d9_options.h b/src/d3d9/d3d9_options.h
+index 17ffb41..8a902d6 100644
+--- a/src/d3d9/d3d9_options.h
++++ b/src/d3d9/d3d9_options.h
+@@ -124,6 +124,9 @@ namespace dxvk {
+     /// Works around a game bug in Halo CE where it gives cube textures to 2d/volume samplers
+     bool forceSamplerTypeSpecConstants;
+ 
++    /// FineWine: see DxsoOptions::singleSamplerVariant. On unless set to False.
++    bool singleSamplerVariant;
++
+     /// Forces an MSAA level on the swapchain
+     int32_t forceSwapchainMSAA;
+ 
+diff --git a/src/dxso/dxso_options.cpp b/src/dxso/dxso_options.cpp
+index 5e05ee6..fce029b 100644
+--- a/src/dxso/dxso_options.cpp
++++ b/src/dxso/dxso_options.cpp
+@@ -37,6 +37,7 @@ namespace dxvk {
+     invariantPosition    = options.invariantPosition;
+ 
+     forceSamplerTypeSpecConstants = options.forceSamplerTypeSpecConstants;
++    singleSamplerVariant = options.singleSamplerVariant;
+ 
+     vertexFloatConstantBufferAsSSBO = pDevice->GetVertexConstantLayout().floatSize() > devInfo.core.properties.limits.maxUniformBufferRange;
+ 
+diff --git a/src/dxso/dxso_options.h b/src/dxso/dxso_options.h
+index c977ce8..cce1b7e 100644
+--- a/src/dxso/dxso_options.h
++++ b/src/dxso/dxso_options.h
+@@ -43,6 +43,14 @@ namespace dxvk {
+     /// Works around a game bug in Halo CE where it gives cube textures to 2d/volume samplers
+     bool forceSamplerTypeSpecConstants;
+ 
++    /// FineWine: declare one variable for a sampler's binding, not a colour and a
++    /// depth-comparing one (and, for shaders older than 2.0, one per kind of texture) that
++    /// share it. Metal has no two resources at one index: MoltenVK's shader converter turns
++    /// such a shader into Metal code that does not compile, and nothing textured is drawn.
++    /// The cost is the comparing variant: a depth texture is sampled as plain values, so
++    /// shadows drawn from depth textures are not right.
++    bool singleSamplerVariant;
++
+     /// Should the SWVP float constant buffer be a SSBO (because of the size on NV)
+     bool vertexFloatConstantBufferAsSSBO;
+ 

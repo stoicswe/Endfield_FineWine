@@ -1,0 +1,34 @@
+wined3d: the largest mip level of a sampler, on Vulkan
+
+dlls/wined3d/sampler.c
+- D3DSAMP_MAXMIPLEVEL and a texture's level of detail (IDirect3DTexture9::SetLOD) say which
+  is the largest mip level that may be sampled. The Vulkan renderer only printed a FIXME for
+  it and sampled from level 0. A game that loads the big levels of its textures later and
+  keeps the sampler off them until then (Portal 2) was shown levels with nothing in them yet:
+  noise over the world. The level is now the sampler's smallest level of detail.
+
+tests/runtime/d3d9-formats.c has the case ("maxlevel").
+
+diff --git a/dlls/wined3d/sampler.c b/dlls/wined3d/sampler.c
+index 066e92c..7e5a395 100644
+--- a/dlls/wined3d/sampler.c
++++ b/dlls/wined3d/sampler.c
+@@ -278,8 +278,17 @@ static void wined3d_sampler_vk_cs_init(void *object)
+     if (desc->address_u == WINED3D_TADDRESS_BORDER || desc->address_v == WINED3D_TADDRESS_BORDER
+             || desc->address_w == WINED3D_TADDRESS_BORDER)
+         sampler_desc.borderColor = vk_border_colour_from_wined3d((const struct wined3d_color *)desc->border_color);
++    /* FineWine: the largest mip level a texture may be sampled at (D3DSAMP_MAXMIPLEVEL, and
++     * the level of detail a game sets on a texture while it is still loading the bigger
++     * levels). It was not applied here, so a game that streams its textures in, as Portal 2
++     * does, was shown the levels it had not filled yet: noise. No level below it is used. */
+     if (desc->mip_base_level)
+-        FIXME("Unhandled mip_base_level %u.\n", desc->mip_base_level);
++    {
++        if (sampler_desc.minLod < desc->mip_base_level)
++            sampler_desc.minLod = desc->mip_base_level;
++        if (sampler_desc.maxLod < sampler_desc.minLod)
++            sampler_desc.maxLod = sampler_desc.minLod;
++    }
+     if ((d3d_info->wined3d_creation_flags & WINED3D_SRGB_READ_WRITE_CONTROL) && !desc->srgb_decode)
+         FIXME("Unhandled srgb_decode %#x.\n", desc->srgb_decode);
+ 

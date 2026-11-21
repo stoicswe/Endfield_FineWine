@@ -247,6 +247,8 @@
 "config.dlss_metalfx_general_desc" = "Direct3D 12 および Vulkan ゲームで MetalFX を使用します。Direct3D 11 ゲームには DXMT が必要です。FSR はそのまま動作します。";
 "config.report_nvidia_title" = "NVIDIA GPU として報告";
 "config.report_nvidia_desc" = "GPU が %@ であると Windows プログラムに偽装報告します。多くのゲームは NVIDIA GPU を検出した場合にのみ DLSS を有効化します。";
+"config.d3d9_vulkan_title" = "Direct3D 9 以前を Vulkan で実行";
+"config.d3d9_vulkan_desc" = "古い Direct3D ゲームを OpenGL ではなく Vulkan 経由で Metal 上で実行します。高速になる場合があり、Metal HUD と MetalFX アップスケーリングも使えるようになります。実験的機能です。描画が乱れたり起動しないゲームではオフにしてください。";
 "config.fullscreen_label" = "フルスクリーン";
 "config.fullscreen_detail" = "フルスクリーンの表示方式。「独立した Space」モードでは画面上部でのメニューバー呼び出し、スワイプでのデスクトップ切り替え、通知のオーバーレイ表示が可能です。";
 "config.rounded_windows_title" = "ウィンドウの角を丸くする";

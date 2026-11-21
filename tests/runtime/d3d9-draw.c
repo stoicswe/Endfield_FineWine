@@ -16,9 +16,16 @@ struct vertex { float x, y, z, rhw; DWORD color; float u, v; };
 static int failures;
 static void check(int ok, const char *what) { if (!ok) { failures++; printf("FAIL %s\n", what); } }
 
+static IDirect3DSurface9 *resolved;
+
 static DWORD pixel(IDirect3DDevice9 *device, IDirect3DSurface9 *target, IDirect3DSurface9 *copy, int x, int y)
 {
     D3DLOCKED_RECT lr; DWORD value = 0xdeadbeef;
+    /* a multisampled target cannot be read back; its samples are resolved into a plain one first */
+    if (resolved) {
+        if (FAILED(IDirect3DDevice9_StretchRect(device, target, NULL, resolved, NULL, D3DTEXF_NONE))) return value;
+        target = resolved;
+    }
     if (FAILED(IDirect3DDevice9_GetRenderTargetData(device, target, copy))) return value;
     if (SUCCEEDED(IDirect3DSurface9_LockRect(copy, &lr, NULL, D3DLOCK_READONLY))) {
         value = *(DWORD *)((BYTE *)lr.pBits + y * lr.Pitch + x * 4) & 0x00ffffff;
@@ -33,7 +40,7 @@ static int close_to(DWORD a, DWORD b)
     return 1;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
     IDirect3D9 *d3d = Direct3DCreate9(D3D_SDK_VERSION);
@@ -48,6 +55,8 @@ int main(void)
     pp.Windowed = TRUE; pp.SwapEffect = D3DSWAPEFFECT_DISCARD; pp.BackBufferFormat = D3DFMT_X8R8G8B8;
     pp.BackBufferWidth = pp.BackBufferHeight = 256; pp.hDeviceWindow = window;
     pp.EnableAutoDepthStencil = TRUE; pp.AutoDepthStencilFormat = D3DFMT_D24S8;
+    /* "msaa": a multisampled back buffer, which is what a game with antialiasing on presents. */
+    if (argc > 1 && !strcmp(argv[1], "msaa")) pp.MultiSampleType = D3DMULTISAMPLE_4_SAMPLES;
     IDirect3DDevice9 *device = NULL;
     HRESULT hr = IDirect3D9_CreateDevice(d3d, 0, D3DDEVTYPE_HAL, window, D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, &device);
     if (FAILED(hr)) { printf("d3d9-draw: CreateDevice failed 0x%08lx\n", (unsigned long)hr); return 1; }
@@ -89,9 +98,50 @@ int main(void)
 
     IDirect3DSurface9 *target = NULL, *copy = NULL;
     IDirect3DDevice9_GetRenderTarget(device, 0, &target);
+    if (pp.MultiSampleType != D3DMULTISAMPLE_NONE)
+        check(SUCCEEDED(IDirect3DDevice9_CreateRenderTarget(device, 256, 256, D3DFMT_X8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &resolved, NULL)), "create resolve target");
     check(SUCCEEDED(IDirect3DDevice9_CreateOffscreenPlainSurface(device, 256, 256, D3DFMT_X8R8G8B8, D3DPOOL_SYSTEMMEM, &copy, NULL)), "create read-back surface");
 
-    DWORD top = 0, bottom = 0, right = 0, clear = 0;
+    /* A vertex shader fed whole numbers: UBYTE4 and SHORT4 elements, which a Direct3D 9 shader
+     * reads as floats (64 arrives as 64.0). Skinned models carry their bone indices this way.
+     *   vs_1_1; dcl_position v0; dcl_texcoord0 v1; dcl_texcoord1 v2
+     *   mov oPos, v0; mul r0, v1, c0; mad oD0, v2, c0, r0 */
+    static const DWORD shader_code[] = {
+        0xfffe0101,
+        0x0000001f, 0x80000000, 0x900f0000,
+        0x0000001f, 0x80000005, 0x900f0001,
+        0x0000001f, 0x80010005, 0x900f0002,
+        0x00000001, 0xc00f0000, 0x90e40000,
+        0x00000005, 0x800f0000, 0x90e40001, 0xa0e40000,
+        0x00000004, 0xd00f0000, 0x90e40002, 0xa0e40000, 0x80e40000,
+        0x0000ffff };
+    static const D3DVERTEXELEMENT9 int_elements[] = {
+        { 0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0 },
+        { 0, 12, D3DDECLTYPE_UBYTE4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0 },
+        { 0, 16, D3DDECLTYPE_SHORT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 1 },
+        D3DDECL_END() };
+    struct int_vertex { float x, y, z; BYTE b[4]; short s[4]; };
+    /* pixels 136..184 by 8..40; colour (64 + 51, 128, 255) / 255 */
+    static const struct int_vertex int_quad[4] = {
+        { 0.0625f, 0.9375f, 0.5f, { 64, 128, 255, 255 }, { 51, 0, 0, 0 } }, { 0.4375f, 0.9375f, 0.5f, { 64, 128, 255, 255 }, { 51, 0, 0, 0 } },
+        { 0.0625f, 0.6875f, 0.5f, { 64, 128, 255, 255 }, { 51, 0, 0, 0 } }, { 0.4375f, 0.6875f, 0.5f, { 64, 128, 255, 255 }, { 51, 0, 0, 0 } } };
+    static const float per_255[4] = { 1.0f / 255, 1.0f / 255, 1.0f / 255, 1.0f / 255 };
+    /* A pixel shader that samples a texture, which is what nearly every draw of a game is:
+     *   ps_2_0; dcl t0.xy; dcl_2d s0; texld r0, t0, s0; mov oC0, r0 */
+    static const DWORD pixel_shader_code[] = {
+        0xffff0200,
+        0x0200001f, 0x80000000, 0xb0030000,
+        0x0200001f, 0x90000000, 0xa00f0800,
+        0x03000042, 0x800f0000, 0xb0e40000, 0xa0e40800,
+        0x02000001, 0x800f0800, 0x80e40000,
+        0x0000ffff };
+    IDirect3DPixelShader9 *pixel_shader = NULL;
+    check(SUCCEEDED(IDirect3DDevice9_CreatePixelShader(device, pixel_shader_code, &pixel_shader)), "create pixel shader");
+    IDirect3DVertexShader9 *shader = NULL; IDirect3DVertexDeclaration9 *int_decl = NULL;
+    check(SUCCEEDED(IDirect3DDevice9_CreateVertexShader(device, shader_code, &shader)), "create vertex shader");
+    check(SUCCEEDED(IDirect3DDevice9_CreateVertexDeclaration(device, int_elements, &int_decl)), "create vertex declaration");
+
+    DWORD top = 0, bottom = 0, right = 0, clear = 0, ints = 0;
     for (int frame = 0; frame < 30; frame++) {
         MSG msg; while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) DispatchMessageW(&msg);
         IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xff102030, 1.0f, 0);
@@ -107,7 +157,15 @@ int main(void)
         IDirect3DDevice9_SetSamplerState(device, 0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
         IDirect3DDevice9_SetStreamSource(device, 0, vb, FILLER * sizeof(struct vertex), sizeof(struct vertex));
         IDirect3DDevice9_SetIndices(device, ib);
+        IDirect3DDevice9_SetPixelShader(device, pixel_shader);
+        /* with the alpha test, which a pixel shader gets from Direct3D's render states and
+         * games use for anything with holes in it (the texture is opaque: nothing is cut) */
+        IDirect3DDevice9_SetRenderState(device, D3DRS_ALPHATESTENABLE, TRUE);
+        IDirect3DDevice9_SetRenderState(device, D3DRS_ALPHAREF, 0x40);
+        IDirect3DDevice9_SetRenderState(device, D3DRS_ALPHAFUNC, D3DCMP_GREATEREQUAL);
         check(SUCCEEDED(IDirect3DDevice9_DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0, 0, 4, FILLER * 5, 2)), "draw from buffers");
+        IDirect3DDevice9_SetRenderState(device, D3DRS_ALPHATESTENABLE, FALSE);
+        IDirect3DDevice9_SetPixelShader(device, NULL);
         /* a green triangle strip from the program's own memory, lower right quarter */
         struct vertex up[4] = {
             { 128, 128, 0.5f, 1, 0xff00ff00, 0, 0 }, { 256, 128, 0.5f, 1, 0xff00ff00, 0, 0 },
@@ -115,8 +173,17 @@ int main(void)
         IDirect3DDevice9_SetTexture(device, 0, NULL);
         IDirect3DDevice9_SetTextureStageState(device, 0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
         check(SUCCEEDED(IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLESTRIP, 2, up, sizeof(up[0]))), "draw from memory");
+        if (shader && int_decl) {
+            IDirect3DDevice9_SetVertexDeclaration(device, int_decl);
+            IDirect3DDevice9_SetVertexShader(device, shader);
+            IDirect3DDevice9_SetVertexShaderConstantF(device, 0, per_255, 1);
+            IDirect3DDevice9_SetTextureStageState(device, 0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
+            check(SUCCEEDED(IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLESTRIP, 2, int_quad, sizeof(int_quad[0]))), "draw with whole-number vertex elements");
+            IDirect3DDevice9_SetVertexShader(device, NULL);
+        }
         IDirect3DDevice9_EndScene(device);
         if (frame == 29) {
+            ints = pixel(device, target, copy, 160, 24);
             top = pixel(device, target, copy, 64, 60); bottom = pixel(device, target, copy, 64, 200);
             right = pixel(device, target, copy, 200, 200); clear = pixel(device, target, copy, 200, 60);
         }
@@ -126,7 +193,11 @@ int main(void)
     check(close_to(bottom, 0xc06020), "textured quad, bottom half of the texture");
     check(close_to(right, 0x00ff00), "triangle strip drawn from memory");
     check(close_to(clear, 0x102030), "cleared area");
-    if (failures) printf("pixels: %06lx %06lx %06lx %06lx\n", (unsigned long)top, (unsigned long)bottom, (unsigned long)right, (unsigned long)clear);
+    check(close_to(ints, 0x7380ff), "vertex shader with UBYTE4 and SHORT4 elements");
+    if (failures) printf("pixels: %06lx %06lx %06lx %06lx %06lx\n", (unsigned long)top, (unsigned long)bottom, (unsigned long)right, (unsigned long)clear, (unsigned long)ints);
+    if (pixel_shader) IDirect3DPixelShader9_Release(pixel_shader);
+    if (shader) IDirect3DVertexShader9_Release(shader);
+    if (int_decl) IDirect3DVertexDeclaration9_Release(int_decl);
 
     IDirect3DSurface9_Release(copy); IDirect3DSurface9_Release(target);
     IDirect3DTexture9_Release(tex); IDirect3DIndexBuffer9_Release(ib); IDirect3DVertexBuffer9_Release(vb);

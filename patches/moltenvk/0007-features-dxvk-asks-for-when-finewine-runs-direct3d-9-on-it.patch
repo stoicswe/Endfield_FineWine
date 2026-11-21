@@ -1,0 +1,32 @@
+Features DXVK asks for, when FineWine runs Direct3D 9 on it
+
+MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+- DXVK refuses to create a device unless the GPU reports geometry shaders and cull distances
+  (it also asks for 64-bit floats and depth clamping where reported). Metal has no geometry
+  shaders, and MoltenVK says so. FineWine uses DXVK for Direct3D 9 only, which has neither
+  geometry shaders nor cull distances, so with FINEWINE_DXVK_FEATURES=1 in the environment
+  the features are reported. FineWine sets the variable only for programs it runs on DXVK
+  (the prefix setting "Direct3D 9 and older on Vulkan"); every other program sees what Metal
+  really has.
+
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+index 9772757..83db387 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+@@ -2841,6 +2918,16 @@
+ 	mvkClear(&_vulkan14NoExtFeatures);		// Start with everything cleared
+ 	_vulkan14NoExtFeatures.pushDescriptor = true;
+ 
++	// FineWine: DXVK will not create a device without these, though Direct3D 9 (what FineWine
++	// uses DXVK for) has no geometry shaders and no cull distances. FineWine sets the variable
++	// only for programs it runs on DXVK; a shader that did use one would fail to convert.
++	const char* dxvk = getenv("FINEWINE_DXVK_FEATURES");
++	if (dxvk && dxvk[0] == '1') {
++		_features.geometryShader = true;
++		_features.shaderCullDistance = true;
++		_features.shaderFloat64 = true;
++		_features.depthClamp = true;
++	}
+ }
+ 
+ // Initializes the physical device property limits.

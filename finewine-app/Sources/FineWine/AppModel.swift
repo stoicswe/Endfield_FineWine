@@ -72,7 +72,7 @@ final class AppModel: ObservableObject {
     /// Set by the menu bar label, which is the one view that always exists.
     var openMainWindow: () -> Void = {}
 
-    init(service: PrefixService = PrefixService(paths: .standard())) {
+    init(service: PrefixService = PrefixService(paths: .standard()).withSystemShaderCaches()) {
         self.service = service
         try? service.paths.ensureDirectories()
         reload()
@@ -220,6 +220,7 @@ final class AppModel: ObservableObject {
         defer { watchRunningPrefixes(); measurePrefixSizes() }
         service.prefixes.refreshDrives()
         prefixes = service.prefixes.list()
+        prefixFoldersSeen = prefixFoldersOnDisk()
         drives = service.prefixes.drives.drives
         connectedDrives = Set(drives.map(\.uuid).filter { service.prefixes.drives.mountedVolume($0) != nil })
         runtimes = service.runtimes.list()
@@ -330,9 +331,33 @@ final class AppModel: ObservableObject {
         refreshAlive()
     }
 
+    /// What is in the prefixes folder: each prefix's description and when it was last written.
+    /// A prefix can be made or changed by another FineWine process, which is what Steam runs
+    /// to start a game (it makes the game's prefix and adds the game to it), and the list in
+    /// this one would not know.
+    private func prefixFoldersOnDisk() -> Set<String> {
+        let fm = FileManager.default
+        let root = service.paths.prefixes
+        var out: Set<String> = []
+        for name in (try? fm.contentsOfDirectory(atPath: root.path)) ?? [] where !name.hasPrefix(".") {
+            let file = root.appendingPathComponent(name).appendingPathComponent("finewine.json")
+            guard let written = (try? fm.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date else { continue }
+            out.insert("\(name)|\(written.timeIntervalSince1970)")
+        }
+        return out
+    }
+    private var prefixFoldersSeen: Set<String> = []
+
+    /// Reads the prefixes again if the folder is not what was last read.
+    private func reloadIfPrefixesChangedOnDisk() {
+        guard prefixFoldersOnDisk() != prefixFoldersSeen, busy.isEmpty, !isCreatingPrefix else { return }
+        reload()
+    }
+
     /// Looks once for which prefixes have processes. The looking runs `lsof` and `ps`, so it
     /// is done off the main thread, and never twice at the same time.
     func refreshAlive() {
+        reloadIfPrefixesChangedOnDisk()
         guard !aliveLookupUnderWay else { return }
         aliveLookupUnderWay = true
         let all = prefixes

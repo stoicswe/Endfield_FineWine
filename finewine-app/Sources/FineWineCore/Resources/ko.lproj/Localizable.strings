@@ -247,6 +247,8 @@
 "config.dlss_metalfx_general_desc" = "DLSS를 지원하는 Direct3D 12 및 Vulkan 게임이 MetalFX를 사용합니다. Direct3D 11 게임은 Direct3D 계층으로 DXMT가 필요합니다. FSR은 자체 실행됩니다.";
 "config.report_nvidia_title" = "NVIDIA GPU로 보고";
 "config.report_nvidia_desc" = "Windows 프로그램에 GPU를 %@(이름 및 PCI ID)로 속여 보고합니다. 대다수 게임은 NVIDIA 그래픽 카드를 감지해야만 DLSS 설정을 활성화합니다.";
+"config.d3d9_vulkan_title" = "Direct3D 9 이하를 Vulkan으로 실행";
+"config.d3d9_vulkan_desc" = "오래된 Direct3D 게임을 OpenGL 대신 Vulkan을 통해 Metal에서 실행합니다. 더 빨라질 수 있으며, 이 게임들에서 Metal HUD와 MetalFX 업스케일링을 쓸 수 있습니다. 실험적 기능: 화면이 잘못 그려지거나 시작되지 않는 게임에서는 끄십시오.";
 "config.fullscreen_label" = "전체 화면 방식";
 "config.fullscreen_detail" = "전체 화면 창 표시 방식입니다. '독립 Space 공간' 모드는 상단 메뉴 막대 호출, 데스크탑 스와이프 및 알림 배너 수신이 가능합니다.";
 "config.rounded_windows_title" = "창 모서리 둥글게 처리";

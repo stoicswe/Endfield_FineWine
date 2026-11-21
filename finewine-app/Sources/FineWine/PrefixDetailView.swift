@@ -36,18 +36,25 @@ struct PrefixDetailView: View {
             header
                 .onAppear { takeRequestedTab() }
                 .onChange(of: model.requestedSection) { takeRequestedTab() }
-            ScrollView {
-                Group {
-                    switch tab {
-                    case .programs: ProgramsTab(prefix: prefix)
-                    case .configuration: ConfigurationTab(prefix: prefix)
-                    case .tools: ToolsTab(prefix: prefix)
-                    case .details: DetailsTab(prefix: prefix)
+            Group {
+                if tab == .configuration {
+                    // scrolls by itself: its Apply button floats over the settings
+                    ConfigurationTab(prefix: prefix)
+                } else {
+                    ScrollView {
+                        Group {
+                            switch tab {
+                            case .programs: ProgramsTab(prefix: prefix)
+                            case .configuration: EmptyView()
+                            case .tools: ToolsTab(prefix: prefix)
+                            case .details: DetailsTab(prefix: prefix)
+                            }
+                        }
+                        .padding(20)
+                        .frame(maxWidth: 760)
+                        .frame(maxWidth: .infinity)
                     }
                 }
-                .padding(20)
-                .frame(maxWidth: 760)
-                .frame(maxWidth: .infinity)
             }
             .disabled(model.busy[prefix.id] != nil)
         }

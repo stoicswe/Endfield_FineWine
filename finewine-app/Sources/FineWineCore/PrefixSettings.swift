@@ -268,6 +268,11 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// ids. The memory stays what it is. Games only offer DLSS on an NVIDIA adapter, so they
     /// need this to show the option; it is off by default because it is not the truth.
     public var reportNvidiaGPU: Bool = false
+    /// Run Direct3D 9 and older on Vulkan, so on Metal through MoltenVK, instead of on WineD3D
+    /// and Apple's OpenGL: with DXVK's Direct3D 9, which the runtime has to ship (LaunchPlan
+    /// puts it in place). What only exists for Metal then reaches those games: the Metal HUD
+    /// and MetalFX upscaling. Off by default, as it has been tried with few games.
+    public var legacyDirect3DOnVulkan: Bool = false
 
     /// How full-screen windows are presented. A Space of their own by default, so that a game
     /// behaves like a Mac game.
@@ -353,6 +358,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         macAppearance = try c.decodeIfPresent(Bool.self, forKey: .macAppearance) ?? d.macAppearance
         dlssThroughMetalFX = try c.decodeIfPresent(Bool.self, forKey: .dlssThroughMetalFX) ?? d.dlssThroughMetalFX
         reportNvidiaGPU = try c.decodeIfPresent(Bool.self, forKey: .reportNvidiaGPU) ?? d.reportNvidiaGPU
+        legacyDirect3DOnVulkan = try c.decodeIfPresent(Bool.self, forKey: .legacyDirect3DOnVulkan) ?? d.legacyDirect3DOnVulkan
         gameMode = try c.decodeIfPresent(Bool.self, forKey: .gameMode) ?? d.gameMode
         steamForHoYoverse = try c.decodeIfPresent(Bool.self, forKey: .steamForHoYoverse) ?? d.steamForHoYoverse
         roundedWindows = try c.decodeIfPresent(Bool.self, forKey: .roundedWindows) ?? d.roundedWindows
@@ -517,11 +523,13 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         // The ids the GPU is reported under, to each layer a program can ask: Vulkan
         // (MoltenVK), Wine's Direct3D (which Direct3D 12 also reports through), and DXMT.
         let vendor = String(Self.reportedGPUVendorID, radix: 16), device = String(Self.reportedGPUDeviceID, radix: 16)
+        // Wine's Direct3D reads all of its settings from one variable.
+        var wineD3D: [String] = []
         if reportNvidiaGPU {
             out.append(("FINEWINE_GPU_VENDOR_ID", vendor))
             out.append(("FINEWINE_GPU_DEVICE_ID", device))
             out.append(("FINEWINE_GPU_NAME", Self.reportedGPUName))
-            out.append(("WINE_D3D_CONFIG", "VideoPciVendorID=0x\(vendor),VideoPciDeviceID=0x\(device)"))
+            wineD3D += ["VideoPciVendorID=0x\(vendor)", "VideoPciDeviceID=0x\(device)"]
             if graphicsBackend == .dxmt {
                 out.append(("DXMT_CONFIG", "dxgi.customVendorId=\(vendor);dxgi.customDeviceId=\(device);dxgi.customDeviceDesc=\"\(Self.reportedGPUName)\""))
             }
@@ -530,6 +538,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
             // the GPU is reported as NVIDIA is this prefix's other setting, so say Apple's.
             out.append(("DXMT_CONFIG", "dxgi.customVendorId=\(String(Self.appleGPUVendorID, radix: 16))"))
         }
+        if !wineD3D.isEmpty { out.append(("WINE_D3D_CONFIG", wineD3D.joined(separator: ","))) }
         for variable in environment where EnvironmentVariable.isValidName(variable.name) {
             out.append((variable.name, variable.value))
         }

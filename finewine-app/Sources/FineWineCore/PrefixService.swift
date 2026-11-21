@@ -9,6 +9,18 @@ public struct PrefixService {
     public var killProcess: @Sendable (Int32) -> Void = { _ = kill($0, SIGKILL) }
     public var commandsOfProcesses: @Sendable ([Int32]) -> [String] = { RunningPrograms.systemCommands(of: $0) }
 
+    /// The shader caches cleared when a prefix changes what draws Direct3D. Metal's and DXMT's
+    /// are in macOS' cache folder, outside anything a prefix owns, so a service only touches
+    /// them when it is told where that folder is: the app does (`withSystemShaderCaches()`).
+    public var shaderCaches = ShaderCaches(systemCacheDirectory: nil)
+
+    /// The same service, clearing the caches in macOS' cache folder too.
+    public func withSystemShaderCaches() -> PrefixService {
+        var copy = self
+        copy.shaderCaches = ShaderCaches()
+        return copy
+    }
+
     public let paths: FineWinePaths
     public let prefixes: PrefixStore
     public let runtimes: RuntimeStore
@@ -103,6 +115,12 @@ public struct PrefixService {
         try RegistryFile.data(edits).write(to: file, options: .atomic)
         defer { try? FileManager.default.removeItem(at: file) }
         try runChecked(try planner(for: prefix).plan(importingRegistryFile: file), what: "Applying the settings")
+
+        // Direct3D drawn another way: the shaders compiled for the old way go, so that nothing
+        // of it is left for the new one. They are built again as games run.
+        if ShaderCaches.rendererChanged(from: prefix.metadata.appliedSettings, to: prefix.metadata.settings) {
+            shaderCaches.clear(for: prefix)
+        }
 
         var updated = prefix
         updated.metadata.appliedSettings = prefix.metadata.settings

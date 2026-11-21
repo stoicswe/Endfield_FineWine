@@ -987,6 +987,55 @@ elif "$MINGW32" -O1 -o "$WORK/suite32.exe" "$REPO/tests/runtime/suite32.c" -luse
     one="$(last "$WORK/d3d9draw-x64.exe")"; two="$(last "$WORK/d3d9draw-32.exe")"
     case "$one|$two" in "d3d9-draw: ok|d3d9-draw: ok") pass "Direct3D 9 draws from buffers, a texture and memory, and presents into a window: x64 and 32-bit" ;;
       *) fail "Direct3D 9 drawing (x64: '$one', 32-bit: '$two')" ;; esac
+    # The same drawing on Vulkan, which is DXVK's Direct3D 9 on the runtime's MoltenVK (the
+    # prefix setting "Direct3D 9 and older on Vulkan"; scripts/build-dxvk.sh). The 32-bit runs
+    # are also the check of Vulkan in a 32-bit program (patch 0048). "msaa" is an antialiased
+    # back buffer, as a game with antialiasing on has.
+    if [ -f "$RT/lib/dxvk/i386-windows/d3d9.dll" ] && [ -f "$RT/lib/dxvk/aarch64-windows/d3d9.dll" ]; then
+      dxvk(){ WINEDLLPATH="$RT/lib/dxvk:$RT/lib/dxmt" FINEWINE_DXVK_FEATURES=1 DXVK_LOG_LEVEL=none "$@"; }
+      one="$(dxvk last "$WORK/d3d9draw-x64.exe")"; two="$(dxvk last "$WORK/d3d9draw-32.exe")"
+      case "$one|$two" in "d3d9-draw: ok|d3d9-draw: ok") pass "Direct3D 9 on Vulkan (DXVK) draws and presents: x64 and 32-bit" ;;
+        *) fail "Direct3D 9 on Vulkan (x64: '$one', 32-bit: '$two')" ;; esac
+      out="$(dxvk perl -e 'alarm 90; exec @ARGV' "$RT/bin/wine" "$WORK/d3d9draw-32.exe" msaa </dev/null 2>&1 | tr -d '\r')"
+      pkill -f d3d9draw-32.exe 2>/dev/null || true
+      case "$out" in
+        *mvk-error*) fail "Direct3D 9 on Vulkan with antialiasing: MoltenVK reports an error" ;;
+        *"d3d9-draw: ok"*) pass "Direct3D 9 on Vulkan (DXVK) with an antialiased back buffer (32-bit)" ;;
+        *) fail "Direct3D 9 on Vulkan with antialiasing: '$(printf '%s' "$out" | tail -n 1)'" ;; esac
+    else
+      fail "the runtime has no DXVK (lib/dxvk): run scripts/build-dxvk.sh"
+    fi
+    # Every texture format on both of WineD3D's renderers (patch 0050; its Vulkan renderer is
+    # not what the prefix setting uses, but it is kept working): the Vulkan renderer must offer
+    # what the OpenGL one offers and draw the same: whole textures, parts of them, each mip level
+    # and the sampler's largest level (patch 0052). Left out of the comparison: the refilled
+    # cases (ATI formats have an odd pitch), the gamma cases (the Vulkan renderer has no sRGB
+    # reading or writing for Direct3D 9 yet), X1R5G5B5, which differs by one step of rounding,
+    # and three rare formats the Vulkan renderer does not have.
+    if "$MINGW32" -O1 -o "$WORK/d3d9formats-32.exe" "$REPO/tests/runtime/d3d9-formats.c" -ld3d9 >>"$WORK/d3d9-32-build.log" 2>&1; then
+      formats(){ perl -e 'alarm 300; exec @ARGV' "$RT/bin/wine" "$WORK/d3d9formats-32.exe" </dev/null 2>/dev/null | tr -d '\r' \
+                 | grep -E ' (managed|updated|dynamic|large|parts|repart|level|maxlevel|unsupported)|^d3d9-formats' \
+                 | grep -vE '^(X1R5G5B5|X4R4G4B4|L6V5U5|X8L8V8U8) '
+                 pkill -f d3d9formats-32.exe 2>/dev/null || true; }
+      formats > "$WORK/formats-gl.txt"; WINE_D3D_CONFIG=renderer=vulkan formats > "$WORK/formats-vk.txt"
+      if grep -q "d3d9-formats: done" "$WORK/formats-vk.txt" && cmp -s "$WORK/formats-gl.txt" "$WORK/formats-vk.txt"; then
+        pass "Direct3D 9 texture formats: the Vulkan renderer offers and draws what the OpenGL one does ($(grep -c . "$WORK/formats-vk.txt") cases)"
+      else
+        fail "Direct3D 9 texture formats differ between OpenGL and Vulkan"; diff "$WORK/formats-gl.txt" "$WORK/formats-vk.txt" | head -n 8
+      fi
+      # The same on DXVK. Its output is not compared line by line with WineD3D's: it has
+      # formats WineD3D lacks and rounds a few differently. It has to get through, and to
+      # have the formats games are made of.
+      WINEDLLPATH="$RT/lib/dxvk:$RT/lib/dxmt" FINEWINE_DXVK_FEATURES=1 DXVK_LOG_LEVEL=none formats > "$WORK/formats-dxvk.txt"
+      missing="$(grep -E '^(A8R8G8B8|X8R8G8B8|R5G6B5|L8|A8L8|A8|DXT1|DXT3|DXT5|ATI2|RGBA16F) +unsupported' "$WORK/formats-dxvk.txt" | awk '{print $1}' | tr '\n' ' ')"
+      if grep -q "d3d9-formats: done" "$WORK/formats-dxvk.txt" && [ -z "$missing" ]; then
+        pass "Direct3D 9 texture formats on DXVK ($(grep -c . "$WORK/formats-dxvk.txt") cases)"
+      else
+        fail "Direct3D 9 texture formats on DXVK (not supported: ${missing:-none}; finished: $(grep -c 'd3d9-formats: done' "$WORK/formats-dxvk.txt"))"
+      fi
+    else
+      fail "could not build the Direct3D 9 format test"
+    fi
     one="$(last "$WORK/glo-x64.exe")"; two="$(last "$WORK/glo-32.exe")"
     case "$one|$two" in "gl-buffer-offsets: ok|gl-buffer-offsets: ok") pass "OpenGL arguments that are an address or a buffer offset: x64 and 32-bit" ;;
       *) fail "OpenGL addresses and buffer offsets (x64: '$one', 32-bit: '$two')" ;; esac

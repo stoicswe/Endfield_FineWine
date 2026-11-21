@@ -1,0 +1,69 @@
+wined3d: Direct3D 9 texture formats the Vulkan renderer left out
+
+dlls/wined3d/utils.c
+- The Vulkan format table had no entry for L8, A8L8, L16, X1R5G5B5, A2R10G10B10, X8B8G8R8,
+  ATI1N and ATI2N, so the Vulkan renderer reported them as unsupported while the OpenGL one
+  has them. Portal 2 drew green and magenta garbage over its menu on Vulkan. They are added:
+  the luminance formats as red (and red-green) formats whose channels the image view puts in
+  place, ATI1N and ATI2N as BC4 and BC5 with the channel order the OpenGL renderer gives them.
+
+- R16F, R32F, G16R16, G16R16F and G32R32F read 1 in the channels they do not have, as
+  Direct3D 9 does and the OpenGL renderer already did; they read 0.
+
+tests/runtime/d3d9-formats.c draws a texture of every format and prints what arrives; the two
+renderers' output is compared.
+
+diff --git a/dlls/wined3d/utils.c b/dlls/wined3d/utils.c
+index 9d8353a..9dc009f 100644
+--- a/dlls/wined3d/utils.c
++++ b/dlls/wined3d/utils.c
+@@ -4102,7 +4102,7 @@ static void init_vulkan_format_info(struct wined3d_adapter *adapter, struct wine
+         {WINED3DFMT_R16G16B16A16_UINT,          VK_FORMAT_R16G16B16A16_UINT,       },
+         {WINED3DFMT_R16G16B16A16_SNORM,         VK_FORMAT_R16G16B16A16_SNORM,      },
+         {WINED3DFMT_R16G16B16A16_SINT,          VK_FORMAT_R16G16B16A16_SINT,       },
+-        {WINED3DFMT_R32G32_FLOAT,               VK_FORMAT_R32G32_SFLOAT,           },
++        {WINED3DFMT_R32G32_FLOAT,               VK_FORMAT_R32G32_SFLOAT,           "XY1W", true},
+         {WINED3DFMT_R32G32_UINT,                VK_FORMAT_R32G32_UINT,             },
+         {WINED3DFMT_R32G32_SINT,                VK_FORMAT_R32G32_SINT,             },
+         {WINED3DFMT_R10G10B10A2_UNORM,          VK_FORMAT_A2B10G10R10_UNORM_PACK32,},
+@@ -4116,16 +4116,16 @@ static void init_vulkan_format_info(struct wined3d_adapter *adapter, struct wine
+         {WINED3DFMT_R8G8B8A8_UINT,              VK_FORMAT_R8G8B8A8_UINT,           },
+         {WINED3DFMT_R8G8B8A8_SNORM,             VK_FORMAT_R8G8B8A8_SNORM,          },
+         {WINED3DFMT_R8G8B8A8_SINT,              VK_FORMAT_R8G8B8A8_SINT,           },
+-        {WINED3DFMT_R16G16_FLOAT,               VK_FORMAT_R16G16_SFLOAT,           },
+-        {WINED3DFMT_R16G16_UNORM,               VK_FORMAT_R16G16_UNORM,            },
++        {WINED3DFMT_R16G16_FLOAT,               VK_FORMAT_R16G16_SFLOAT,           "XY1W", true},
++        {WINED3DFMT_R16G16_UNORM,               VK_FORMAT_R16G16_UNORM,            "XY1W", true},
+         {WINED3DFMT_R16G16_UINT,                VK_FORMAT_R16G16_UINT,             },
+         {WINED3DFMT_R16G16_SNORM,               VK_FORMAT_R16G16_SNORM,            "XY11", true},
+         {WINED3DFMT_R16G16_SINT,                VK_FORMAT_R16G16_SINT,             },
+         {WINED3DFMT_D32_FLOAT,                  VK_FORMAT_D32_SFLOAT,              },
+-        {WINED3DFMT_R32_FLOAT,                  VK_FORMAT_R32_SFLOAT,              },
++        {WINED3DFMT_R32_FLOAT,                  VK_FORMAT_R32_SFLOAT,              "X11W", true},
+         {WINED3DFMT_R32_UINT,                   VK_FORMAT_R32_UINT,                },
+         {WINED3DFMT_R32_SINT,                   VK_FORMAT_R32_SINT,                },
+-        {WINED3DFMT_R16_FLOAT,                  VK_FORMAT_R16_SFLOAT,              },
++        {WINED3DFMT_R16_FLOAT,                  VK_FORMAT_R16_SFLOAT,              "X11W", true},
+         {WINED3DFMT_D16_UNORM,                  VK_FORMAT_D16_UNORM,               },
+         {WINED3DFMT_R16_UNORM,                  VK_FORMAT_R16_UNORM,               },
+         {WINED3DFMT_R16_UINT,                   VK_FORMAT_R16_UINT,                },
+@@ -4168,6 +4168,19 @@ static void init_vulkan_format_info(struct wined3d_adapter *adapter, struct wine
+         {WINED3DFMT_X32_TYPELESS_G8X24_UINT,    VK_FORMAT_D32_SFLOAT_S8_UINT,      },
+         {WINED3DFMT_D24_UNORM_S8_UINT,          VK_FORMAT_D24_UNORM_S8_UINT,       },
+         {WINED3DFMT_NV12_PLANAR,                VK_FORMAT_G8_B8R8_2PLANE_420_UNORM,},
++        /* FineWine: formats Direct3D 9 games use that this table left out, so that the Vulkan
++         * renderer reported them as unsupported and Portal 2 drew garbage where they were
++         * (2026-11-21). Vulkan has no luminance formats: they are red, or red and green, with
++         * the channels put in place by the image view. ATI1N and ATI2N are BC4 and BC5 with
++         * the channel order the OpenGL renderer gives them. */
++        {WINED3DFMT_L8_UNORM,                   VK_FORMAT_R8_UNORM,                "XXX1"},
++        {WINED3DFMT_L8A8_UNORM,                 VK_FORMAT_R8G8_UNORM,              "XXXY"},
++        {WINED3DFMT_L16_UNORM,                  VK_FORMAT_R16_UNORM,               "XXX1"},
++        {WINED3DFMT_B5G5R5X1_UNORM,             VK_FORMAT_A1R5G5B5_UNORM_PACK16,   "XYZ1"},
++        {WINED3DFMT_B10G10R10A2_UNORM,          VK_FORMAT_A2R10G10B10_UNORM_PACK32,},
++        {WINED3DFMT_R8G8B8X8_UNORM,             VK_FORMAT_R8G8B8A8_UNORM,          "XYZ1"},
++        {WINED3DFMT_ATI1N,                      VK_FORMAT_BC4_UNORM_BLOCK,         "XXXX"},
++        {WINED3DFMT_ATI2N,                      VK_FORMAT_BC5_UNORM_BLOCK,         "YX11"},
+     };
+     const struct wined3d_d3d_info *d3d_info = &adapter->d3d_info;
+     VkFormat vk_format = VK_FORMAT_UNDEFINED;

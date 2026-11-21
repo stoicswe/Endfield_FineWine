@@ -8,12 +8,14 @@
 #   4. FEX (x64 and 32-bit programs: two builds)            scripts/build-fex.sh all
 #   5. DXMT (Direct3D 10 and 11 on Metal; its Windows DLLs   scripts/build-dxmt.sh all
 #      twice, for 64-bit and for 32-bit programs)
+#      and DXVK's Direct3D 9 (the setting "Direct3D 9 and    scripts/build-dxvk.sh all
+#      older on Vulkan"), also for both
 #   6. the runtime checks                                    scripts/test-finewine-runtime.sh
 #   7. the runtime's release archive                         scripts/build-finewine-runtime.sh archive
 #   8. FineWine.app, with the runtime inside it              finewine-app/scripts/build-app.sh
 #
 # The order matters: the runtime's packaging picks MoltenVK up and needs the compiler from
-# step 2 for the Steam stand-in; FEX and DXMT install themselves into the packaged runtime.
+# step 2 for the Steam stand-in; FEX, DXMT and DXVK install themselves into the packaged runtime.
 # A failure stops the script. The runtime in build/finewine-runtime is only replaced once the
 # new one has been built.
 #
@@ -65,12 +67,14 @@ if [ "$TARGET" != "app" ]; then
   "$REPO/scripts/build-fex.sh" all
   log "5/8 DXMT"
   "$REPO/scripts/build-dxmt.sh" all
+  "$REPO/scripts/build-dxvk.sh" all
   # The runtime runs ARM64, x64 and 32-bit programs. Each script above skips the 32-bit part
   # with a note when a piece it needs is missing; here, where everything was just built, a
   # missing part is an error.
   for part in lib/wine/aarch64-windows/xtajit64.dll lib/wine/aarch64-windows/xtajit.dll \
               lib/wine/i386-windows/ntdll.dll lib/wine/i386-windows/winemetal.dll \
               lib/dxmt/aarch64-windows/d3d11.dll lib/dxmt/i386-windows/d3d11.dll \
+              lib/dxvk/aarch64-windows/d3d9.dll lib/dxvk/i386-windows/d3d9.dll \
               lib/wine/aarch64-unix/winemetal.so \
               lib/steam-bridge/wine/lsteamclient.dll lib/steam-bridge/wine/i386-windows/lsteamclient.dll \
               lib/steam-bridge/wine/aarch64-unix/lsteamclient.so; do

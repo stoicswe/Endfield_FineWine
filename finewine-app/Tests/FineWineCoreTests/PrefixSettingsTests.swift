@@ -101,6 +101,20 @@ final class PrefixSettingsTests: XCTestCase {
         XCTAssertEqual(old?.reportNvidiaGPU, false)
     }
 
+    func testOlderDirect3DOnVulkanIsOffByDefaultAndIsNotASettingOfWinesDirect3D() throws {
+        var settings = PrefixSettings()
+        XCTAssertFalse(settings.legacyDirect3DOnVulkan)
+        let old = try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8))
+        XCTAssertFalse(old.legacyDirect3DOnVulkan, "a prefix saved before the setting existed")
+
+        // It is DXVK's Direct3D 9, which the launch plan puts in place (LaunchPlanTests);
+        // Wine's own Direct3D keeps its OpenGL renderer.
+        settings.legacyDirect3DOnVulkan = true
+        XCTAssertNil(env(settings)["WINE_D3D_CONFIG"])
+        let saved = try JSONDecoder().decode(PrefixSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertTrue(saved.legacyDirect3DOnVulkan)
+    }
+
     func testReportingAnNvidiaGPUUsesTheNameAndIdsOfAnRTX5080OnEveryLayer() throws {
         XCTAssertEqual(PrefixSettings.reportedGPUVendorID, 0x10DE)
         XCTAssertEqual(PrefixSettings.reportedGPUDeviceID, 0x2C02)

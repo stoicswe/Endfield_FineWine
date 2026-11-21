@@ -167,7 +167,7 @@ A native ARM64 Wine with everything a game needs beside it, built by the scripts
 
 | Layer | What it does | Built by | Our changes |
 |---|---|---|---|
-| **Wine 11.21** | The Windows environment, as native ARM64 code | `build-finewine-runtime.sh` | [`patches/runtime`](../patches/runtime) (47 patches) |
+| **Wine 11.21** | The Windows environment, as native ARM64 code | `build-finewine-runtime.sh` | [`patches/runtime`](../patches/runtime) (53 patches) |
 | **FEX** | Runs x64 and 32-bit Windows code inside Wine's ARM64 processes (`xtajit64.dll` and the ARM64EC library; `xtajit.dll` for 32-bit); no Rosetta | `build-fex.sh` | [`patches/fex`](../patches/fex) |
 | **DXMT** | Direct3D 10 and 11 on Metal, and NVIDIA's NGX (DLSS) as MetalFX | `build-dxmt.sh` | [`patches/dxmt`](../patches/dxmt) |
 | **MoltenVK** | Vulkan on Metal; Direct3D 12 reaches it through Wine's vkd3d | `MVK_FLAVOR=finewine build-moltenvk.sh` | [`patches/moltenvk`](../patches/moltenvk): ray tracing, MetalFX |

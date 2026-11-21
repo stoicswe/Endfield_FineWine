@@ -135,6 +135,20 @@ public struct LaunchPlanner {
             env["WINEDLLPATH"] = runtime.root.appendingPathComponent(spec.dllPath).path
             overrides += spec.overrides.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
         }
+        // Direct3D 9 and older on DXVK, when the prefix asks for it and the runtime has it: its
+        // d3d9.dll is found before Wine's own, and the runtime's MoltenVK reports the features
+        // DXVK will not start without (Direct3D 9 uses none of them). DXVK's log files, which
+        // it would write next to the game, are off.
+        if prefix.metadata.settings.legacyDirect3DOnVulkan, let dxvk = runtime.direct3D9OnVulkanSpec {
+            let path = runtime.root.appendingPathComponent(dxvk.dllPath).path
+            env["WINEDLLPATH"] = [path, env["WINEDLLPATH"]].compactMap { $0 }.joined(separator: ":")
+            env["FINEWINE_DXVK_FEATURES"] = "1"
+            env["DXVK_LOG_LEVEL"] = "none"
+            // Its shader cache in the prefix, not next to the game (which may be in a Steam
+            // library): there FineWine can find it to clear it.
+            env["DXVK_STATE_CACHE_PATH"] = WindowsPath.windowsPath(for: ShaderCaches.dxvkDirectory(inPrefix: prefix.directory),
+                                                                   inPrefix: prefix.directory)
+        }
 
         // A language for non-Unicode programs is set through LC_CTYPE, which an inherited
         // LC_ALL would override.

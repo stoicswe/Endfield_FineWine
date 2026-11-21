@@ -1,0 +1,40 @@
+dxvk: build with the MinGW headers of llvm-mingw 2025
+
+DXVK 1.10.3 as it is in CrossOver's source archive (with CodeWeavers' changes for MoltenVK).
+
+src/d3d9/d3d9_include.h
+- DXVK defines D3DDEVINFO_RESOURCEMANAGER because the MinGW headers of its day lacked it.
+  Today's have it and the second definition does not compile; it is kept for headers older
+  than version 12.
+
+src/util/config/config.cpp
+- std::transform is used without <algorithm>, which newer libc++ no longer brings in.
+
+diff --git a/src/d3d9/d3d9_include.h b/src/d3d9/d3d9_include.h
+index 8762265..b93b401 100644
+--- a/src/d3d9/d3d9_include.h
++++ b/src/d3d9/d3d9_include.h
+@@ -79,10 +79,14 @@
+ 
+ // MinGW headers are broken. Who'dve guessed?
+ #ifndef _MSC_VER
++// FineWine: the MinGW headers of the compiler this is built with (llvm-mingw 2025) have
++// D3DDEVINFO_RESOURCEMANAGER, and a second definition does not compile.
++#if !defined(__MINGW64_VERSION_MAJOR) || __MINGW64_VERSION_MAJOR < 12
+ typedef struct _D3DDEVINFO_RESOURCEMANAGER
+ {
+   char dummy;
+ } D3DDEVINFO_RESOURCEMANAGER, * LPD3DDEVINFO_RESOURCEMANAGER;
++#endif
+ 
+ #ifndef __WINE__
+ extern "C" WINUSERAPI WINBOOL WINAPI SetProcessDPIAware(VOID);
+diff --git a/src/util/config/config.cpp b/src/util/config/config.cpp
+index 1da49ab..3482635 100644
+--- a/src/util/config/config.cpp
++++ b/src/util/config/config.cpp
+@@ -1,3 +1,4 @@
++#include <algorithm>
+ #include <array>
+ #include <fstream>
+ #include <sstream>

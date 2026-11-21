@@ -48,6 +48,51 @@ struct ConfigurationTab: View {
 
     var body: some View {
         let problems = edited.validationProblems()
+        ScrollView {
+            settings(problems: problems)
+                .padding(20)
+                // room under the last setting for the floating buttons
+                .padding(.bottom, hasChanges ? 56 : 0)
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
+        }
+        // The bar at the top scrolls away with the settings, and a change made further down
+        // was easy to leave unapplied (a switch turned on, never stored). While something is
+        // unapplied the same two buttons stay in reach in the corner.
+        .overlay(alignment: .bottomTrailing) {
+            if hasChanges {
+                HStack(spacing: 8) {
+                    Button(l10n.tr("app.revert")) { revert() }
+                        .fwButton()
+                        .disabled(edited == prefix.metadata.settings && runtimeID == prefix.metadata.runtimeID)
+                    Button {
+                        Task { await model.apply(edited, runtimeID: runtimeID, to: prefix) }
+                    } label: {
+                        Label(l10n.tr("app.apply"), systemImage: "checkmark")
+                    }
+                    .fwProminentButton()
+                    .keyboardShortcut("s", modifiers: .command)
+                    .disabled(!problems.isEmpty)
+                    .help(problems.first ?? l10n.tr("config.changes_pending"))
+                }
+                .controlSize(.large)
+                .padding(8)
+                .fwGlass(in: Capsule())
+                .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
+                .padding(18)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.snappy(duration: 0.25), value: hasChanges)
+    }
+
+    private func revert() {
+        draft = prefix.metadata.settings
+        runtimeID = prefix.metadata.runtimeID
+        desktopEnabled = draft.virtualDesktop != nil
+    }
+
+    private func settings(problems: [String]) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             applyBar(problems: problems)
 
@@ -165,6 +210,11 @@ struct ConfigurationTab: View {
                     Text(l10n.tr("config.report_nvidia_desc", PrefixSettings.reportedGPUName))
                 }
                 .disabled(lacks(.gpuIdentity))
+                Toggle(isOn: $draft.legacyDirect3DOnVulkan) {
+                    Text(l10n.tr("config.d3d9_vulkan_title"))
+                    Text(l10n.tr("config.d3d9_vulkan_desc"))
+                }
+                .disabled(selectedRuntime.map { $0.direct3D9OnVulkanSpec == nil } ?? false)
                 Row(label: l10n.tr("config.fullscreen_label"), detail: l10n.tr("config.fullscreen_detail")) {
                     Picker(l10n.tr("config.fullscreen_label"), selection: $draft.fullScreenMode) {
                         ForEach(FullScreenMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
@@ -327,11 +377,7 @@ struct ConfigurationTab: View {
             }
             .font(.callout)
             Spacer()
-            Button(l10n.tr("app.revert")) {
-                draft = prefix.metadata.settings
-                runtimeID = prefix.metadata.runtimeID
-                desktopEnabled = draft.virtualDesktop != nil
-            }
+            Button(l10n.tr("app.revert")) { revert() }
             .fwButton()
             .disabled(edited == prefix.metadata.settings && runtimeID == prefix.metadata.runtimeID)
             Button(l10n.tr("app.apply")) {

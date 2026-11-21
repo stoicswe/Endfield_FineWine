@@ -172,6 +172,30 @@ This directory does not contain Wine itself — only diffs to be applied to a Wi
 Applied by `scripts/build-finewine-runtime.sh` on top of `patches/ARM` (minus the two x86-only
 kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21.
 
+- `0053-ntdll-a-wait-of-the-emulator-does-not-take-the-wake-up-of-a-32-bit-program-s-wait.patch`:
+  32-bit programs froze now and then with every thread waiting (Portal 2 at start). A thread
+  has one alert flag; the emulator's own lock wait, 64-bit code on the program's thread, took
+  the wake-up meant for the program's wait. The 64-bit wait now leaves alerts that are not
+  its own and sets the flag again on the way out.
+- `0052-wined3d-the-largest-mip-level-of-a-sampler-on-vulkan.patch`: D3DSAMP_MAXMIPLEVEL and a
+  texture's level of detail are applied by the Vulkan renderer's samplers; without it a game
+  that streams its textures in was shown mip levels it had not filled yet (noise in Portal 2).
+- `0051-wined3d-whole-number-vertex-elements-reach-direct3d-9-shaders-as-floats-on-vulkan.patch`:
+  UBYTE4 and SHORT vertex elements are given to the Vulkan renderer's pipelines as SCALED
+  formats for Direct3D 9 shaders, which read them as floats; as integer formats MoltenVK
+  could not build the pipelines and the draws were lost (Portal 2's world).
+- `0050-wined3d-direct3d-9-texture-formats-the-vulkan-renderer-left-out.patch`: L8, A8L8, L16,
+  X1R5G5B5, A2R10G10B10, X8B8G8R8, ATI1N and ATI2N in WineD3D's Vulkan format table, which the
+  OpenGL renderer has and Direct3D 9 games use (Portal 2 drew garbage without them).
+- `0049-wined3d-a-multisampled-back-buffer-is-resolved-before-the-vulkan-swapchain-blit.patch`:
+  WineD3D's Vulkan renderer presented an antialiased back buffer with a blit, which Vulkan
+  does not allow from a multisampled image; on MoltenVK the window stayed black (Portal 2).
+  It is resolved into a single-sample image first.
+- `0048-win32u-winevulkan-vulkan-for-32-bit-programs.patch`: Vulkan in a 32-bit program. A
+  command pool's handle (the address of the program's own structure) gets the base of the
+  program's memory window, and mapped device memory is accepted when it lies inside that
+  window instead of below 4 GB. With it Wine's Direct3D runs on its Vulkan renderer in 32-bit
+  games (the prefix setting "Direct3D 9 and older on Vulkan"), and 32-bit Direct3D 12 starts.
 - `0047-win32u-winemac-wined3d-a-display-mode-a-program-asks-for-is-emulated-in-a-space.patch`:
   with full screen in a Space or as a borderless window, a program that sets a display mode
   (Direct3D 9 games in exclusive full screen do; Portal asks for 960x600) no longer changes the
@@ -522,3 +546,29 @@ FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`, and i
   stand-ins (DLSS as MetalFX) stay 64-bit only.
 - `build-arm64ec-finewine.txt` is the meson cross file `scripts/build-dxmt.sh` builds DXMT with.
   It is DXMT's own ARM64EC cross file plus one linker flag (see the comment in the file).
+
+## `dxvk/` — DXVK's Direct3D 9, for the FineWine runtime
+
+Applied by `scripts/build-dxvk.sh` to DXVK 1.10.3 as it is in CrossOver's source archive (which
+has CodeWeavers' changes for MoltenVK). Only `d3d9.dll` is built, for 32-bit and 64-bit
+programs; it is what the prefix setting "Direct3D 9 and older on Vulkan" uses.
+
+- `0001-build-with-the-mingw-headers-of-llvm-mingw-2025.patch`: a structure the MinGW headers
+  now define themselves, and a missing `<algorithm>`.
+
+- `0002-d3d9-one-shader-variable-for-a-sampler-s-binding.patch`: DXVK gives every sampler a
+  colour and a depth-comparing shader variable at one binding, which Metal cannot have, so no
+  shader that samples a texture compiled (Portal 2: a black screen). One variable per
+  sampler now (`d3d9.singleSamplerVariant`); the cost is depth-comparing sampling, which some
+  games draw shadows with.
+
+- `0003-d3d9-a-pixel-shader-s-push-constants-are-declared-with-their-size.patch`: a slip in
+  DXVK (`pushConstSize = m_pushConstOffset`) left pixel shaders older than 3.0 without declared
+  push constants; MoltenVK then did not bind them, the shader read an unbound buffer and the
+  GPU dropped the command buffer (Portal 2 froze while loading, "Lost VkDevice").
+
+MoltenVK's side of it is `moltenvk/0007-features-dxvk-asks-for-when-finewine-runs-direct3d-9-on-it.patch`:
+with `FINEWINE_DXVK_FEATURES=1` the runtime's MoltenVK reports geometry shaders, cull
+distances, 64-bit floats and depth clamping, which DXVK will not create a device without and
+Direct3D 9 does not use. FineWine sets the variable only together with the setting.
+

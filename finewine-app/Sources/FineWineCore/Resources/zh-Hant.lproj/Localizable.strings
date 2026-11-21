@@ -247,6 +247,8 @@
 "config.dlss_metalfx_general_desc" = "支援 DLSS 的 Direct3D 12 與 Vulkan 遊戲將橋接至 MetalFX。Direct3D 11 遊戲需以 DXMT 作為 Direct3D 層。FSR 不受影響。";
 "config.report_nvidia_title" = "回報為 NVIDIA GPU";
 "config.report_nvidia_desc" = "向 Windows 程式回報 GPU 為 %@（包含名稱與裝置 ID）。多數遊戲僅在偵測到 NVIDIA 顯示卡時才開啟 DLSS 選項。";
+"config.d3d9_vulkan_title" = "透過 Vulkan 執行 Direct3D 9 及更早版本";
+"config.d3d9_vulkan_desc" = "讓較舊的 Direct3D 遊戲經由 Vulkan 在 Metal 上執行，而不是 OpenGL。可能更快，且這些遊戲可以使用 Metal HUD 與 MetalFX 放大。實驗性功能：若遊戲畫面異常或無法啟動，請將其關閉。";
 "config.fullscreen_label" = "全螢幕模式";
 "config.fullscreen_detail" = "全螢幕呈現方式。「獨立 Space 空間」模式可在頂部邊緣叫出選單列、滑動切換回桌面，且通知橫幅可正常顯示。";
 "config.rounded_windows_title" = "視窗圓角";
