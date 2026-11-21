@@ -345,7 +345,8 @@ JSON
     "$REPO/scripts/build-steam-bridge.sh" install | tail -n 1
   else
     rm -f "$OUT/lib/wine/aarch64-windows/steam.exe" "$OUT/lib/wine/aarch64-windows/lsteamclient.dll" \
-          "$OUT/lib/wine/aarch64-unix/lsteamclient.so"
+          "$OUT/lib/wine/aarch64-unix/lsteamclient.so" \
+          "$OUT/lib/wine/i386-windows/steam.exe" "$OUT/lib/wine/i386-windows/lsteamclient.dll"
     echo "note: no Steam bridge; games started from Steam will not reach it (scripts/build-steam-bridge.sh all)"
   fi
   echo "runtime: $OUT ($id, $(du -sh "$OUT" | cut -f1))"

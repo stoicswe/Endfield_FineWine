@@ -243,8 +243,11 @@ cmd_install(){
   # Wine's `make install` puts the two modules among its own. They must not stay there: a
   # steam.exe among Wine's programs is the ARM64 one, and Wine would run it in place of the
   # x64 helper in the prefix.
+  # The 32-bit copies Wine's build also makes go too: the bridge is for 64-bit programs, and
+  # the 32-bit steam.exe is an empty program (see steam-helper/steam.cpp).
   rm -f "$OUT/lib/wine/aarch64-windows/steam.exe" "$OUT/lib/wine/aarch64-windows/lsteamclient.dll" \
-        "$OUT/lib/wine/aarch64-unix/lsteamclient.so"
+        "$OUT/lib/wine/aarch64-unix/lsteamclient.so" \
+        "$OUT/lib/wine/i386-windows/steam.exe" "$OUT/lib/wine/i386-windows/lsteamclient.dll"
   rm -rf "$dest"; mkdir -p "$dest/wine" "$dest/steam"
   cp "$OBJ/dlls/lsteamclient/aarch64-windows/lsteamclient.dll" "$dest/wine/lsteamclient.dll"
   cp "$OBJ/dlls/lsteamclient/lsteamclient.so" "$dest/wine/lsteamclient.so"
