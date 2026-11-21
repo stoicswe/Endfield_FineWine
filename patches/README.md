@@ -172,6 +172,15 @@ This directory does not contain Wine itself — only diffs to be applied to a Wi
 Applied by `scripts/build-finewine-runtime.sh` on top of `patches/ARM` (minus the two x86-only
 kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21.
 
+- `0047-win32u-winemac-wined3d-a-display-mode-a-program-asks-for-is-emulated-in-a-space.patch`:
+  with full screen in a Space or as a borderless window, a program that sets a display mode
+  (Direct3D 9 games in exclusive full screen do; Portal asks for 960x600) no longer changes the
+  Mac's real mode: the mode is emulated and the picture brought to the size of the Space, by
+  MetalFX for Direct3D 10/11 and Vulkan and by Wine's blit for OpenGL. For that the Mac driver
+  gives Wine an OpenGL surface of the real size when Wine scales, WineD3D sizes its full-screen
+  window in real pixels (programs that are not DPI aware got a window twice their screen), and
+  a scaling ratio that does not fit 16 bits is shortened instead of asserting.
+  `FINEWINE_EMULATE_MODES=0` turns the emulation off.
 - `0046-ntdll-a-library-whose-imports-fail-is-unmapped-steam-bridge-for-32-bit-games.patch`: a
   native library whose imports cannot be resolved was left mapped (so upstream); a Steam game
   that cannot load Steam's client library retries thousands of times, and a 32-bit one ran out

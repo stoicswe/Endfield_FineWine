@@ -624,6 +624,49 @@ if [ "${FINEWINE_TEST_FULLSCREEN:-0}" = 1 ] && [ -x "$GAME_LOADER" ]; then
   else
     fail "could not build tests/runtime/fullscreen.c"; tail -n 3 "$WORK/gfx-build.log"
   fi
+  # A Direct3D 9 game in exclusive full screen at a small mode (Portal: 960x600), 32-bit and x64
+  # (patches/runtime/0047): the Mac's own display mode must stay as it is, the program's window
+  # and screen must agree, and the pointer put in the middle of its screen must be in the
+  # middle of the Mac's. Covers the display for a few seconds and moves the pointer and back.
+  cat > "$WORK/macstate.swift" <<'SWIFT'
+import CoreGraphics
+let m = CGDisplayCopyDisplayMode(CGMainDisplayID())!
+let p = CGEvent(source: nil)!.location
+print("\(m.pixelWidth)x\(m.pixelHeight) \(Int(p.x)) \(Int(p.y)) \(m.width) \(m.height)")
+SWIFT
+  if swiftc -O -o "$WORK/macstate" "$WORK/macstate.swift" >"$WORK/d9fs-build.log" 2>&1 \
+     && "$REPO/build/llvm-mingw/bin/x86_64-w64-mingw32-clang" -O1 -o "$WORK/d9fs-x64.exe" "$REPO/tests/runtime/d3d9-fullscreen.c" -ld3d9 >>"$WORK/d9fs-build.log" 2>&1 \
+     && "$REPO/build/llvm-mingw/bin/i686-w64-mingw32-clang" -O1 -o "$WORK/d9fs-32.exe" "$REPO/tests/runtime/d3d9-fullscreen.c" -ld3d9 >>"$WORK/d9fs-build.log" 2>&1; then
+    mac_before="$("$WORK/macstate" | cut -d' ' -f1)"; bad=""
+    for exe in d9fs-x64 d9fs-32; do
+      [ -f "$RT/lib/wine/i386-windows/ntdll.dll" ] || [ "$exe" = d9fs-x64 ] || continue
+      FINEWINE_FULLSCREEN=space perl -e 'alarm 60; exec @ARGV' "$RT/bin/wine" "$WORK/$exe.exe" 960 600 5 0 </dev/null >"$WORK/$exe.txt" 2>/dev/null &
+      during=""
+      for _ in $(seq 1 40); do
+        if grep -q '^state' "$WORK/$exe.txt" 2>/dev/null; then perl -e 'select(undef, undef, undef, 0.5)'; during="$("$WORK/macstate")"; break; fi
+        perl -e 'select(undef, undef, undef, 0.25)'
+      done
+      wait
+      out="$(tr -d '\r' < "$WORK/$exe.txt")"
+      state="$(echo "$out" | sed -n 's/^state: //p')"; pointer="$(echo "$out" | sed -n 's/^pointer: //p')"
+      w="$(echo "$state" | sed -n 's/.* screen \([0-9]*\)x.*/\1/p')"; h="$(echo "$state" | sed -n 's/.* screen [0-9]*x\([0-9]*\).*/\1/p')"
+      case "$out" in *"d3d9-fullscreen: ok"*) ;; *) bad="$bad $exe:did-not-finish" ;; esac
+      case "$state" in "window 0,0-$w,$h client ${w}x$h mode 960x600 "*) ;; *) bad="$bad $exe:window($state)" ;; esac
+      case "$pointer" in "set $((w/2)),$((h/2)) got $((w/2)),$((h/2)) client middle $((w/2)),$((h/2))") ;; *) bad="$bad $exe:pointer($pointer)" ;; esac
+      set -- $during
+      [ "${1:-}" = "$mac_before" ] || bad="$bad $exe:mac-mode-changed(${1:-none})"
+      # the middle of the Mac's display, within the height of a menu bar
+      if [ -n "${5:-}" ]; then
+        dx=$(( ${2:-0} - $4 / 2 )); dy=$(( ${3:-0} - $5 / 2 ))
+        [ "${dx#-}" -le 4 ] && [ "${dy#-}" -le 40 ] || bad="$bad $exe:mac-pointer(${2:-},${3:-})"
+      fi
+    done
+    "$RT/bin/wineserver" -k 2>/dev/null
+    if [ -z "$bad" ]; then pass "Direct3D 9 exclusive full screen at 960x600 fills a Space: the Mac's mode is untouched, window and pointer agree (x64 and 32-bit)"
+    else fail "Direct3D 9 full screen in a Space:$bad"; fi
+  else
+    fail "could not build the Direct3D 9 full-screen check"; tail -n 3 "$WORK/d9fs-build.log"
+  fi
 else
   echo "  - full-screen and Game Mode activation not checked: they cover the display (FINEWINE_TEST_FULLSCREEN=1 to run them)"
 fi
