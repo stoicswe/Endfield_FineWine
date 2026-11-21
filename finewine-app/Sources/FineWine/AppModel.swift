@@ -119,6 +119,26 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Leave the prefixes FineWine made for Steam games out of its lists. They are run from
+    /// Steam, which is where a user looks for them; hidden, they still exist and still run.
+    static let hideSteamPrefixesKey = "HideSteamPrefixes"
+    var hidesSteamPrefixes: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.hideSteamPrefixesKey) }
+        set {
+            objectWillChange.send()
+            UserDefaults.standard.set(newValue, forKey: Self.hideSteamPrefixesKey)
+            // a hidden prefix cannot stay the one that is shown
+            if newValue, let current = prefix(selection), current.metadata.steamAppID != nil {
+                selection = listedPrefixes.first?.id
+            }
+        }
+    }
+
+    /// The prefixes the sidebar and the menu bar list.
+    var listedPrefixes: [Prefix] {
+        hidesSteamPrefixes ? prefixes.filter { $0.metadata.steamAppID == nil } : prefixes
+    }
+
     /// Prefixes on drives that are not plugged in, as FineWine last saw them.
     var disconnectedPrefixes: [(drive: PrefixDrive, prefix: KnownPrefix)] {
         drives.filter { !connectedDrives.contains($0.uuid) }

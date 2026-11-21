@@ -114,6 +114,67 @@ final class SteamPlayTests: XCTestCase {
         XCTAssertEqual(client.appName(appID: "42", installPath: library.appendingPathComponent("common/Other Game")), "Other Game")
     }
 
+    func testGamesWhoseLaunchOptionsSteamCannotStartAreFound() throws {
+        let sandbox = Sandbox()
+        let client = client(sandbox)
+        XCTAssertEqual(client.launchOptionProblems(forTool: SteamTool.name), [])
+        sandbox.write("\"AppState\"\n{\n\t\"name\"\t\t\"Portal 2\"\n}\n", to: client.root.appendingPathComponent("steamapps/appmanifest_620.acf"))
+        func block(_ id: String, _ lines: String...) -> String { "\t\"\(id)\"\n\t{\n" + lines.map { "\t\t\($0)\n" }.joined() + "\t}\n" }
+        sandbox.write("\"InstallConfigStore\"\n{\n\t\"CompatToolMapping\"\n\t{\n"
+            + block("400", "\"name\"\t\t\"finewine-proton\"", "\"config\"\t\t\"\"")
+            + block("620", "\"name\"\t\t\"finewine-proton\"")
+            + block("730", "\"name\"\t\t\"notproton-26.3\"")
+            + "\t}\n}\n", to: client.root.appendingPathComponent("config/config.vdf"))
+        sandbox.write("\"UserLocalConfigStore\"\n{\n\t\"apps\"\n\t{\n"
+            + block("400", "\"LaunchOptions\"\t\t\"-novid %command%\"")
+            + block("620", "\"LastPlayed\"\t\t\"1\"", "\"LaunchOptions\"\t\t\"NOTPROTON_RETINA=1 WINEMSYNC=1 %command%\"")
+            + block("730", "\"LaunchOptions\"\t\t\"WINEMSYNC=1 %command%\"")
+            + "\t}\n}\n", to: client.root.appendingPathComponent("userdata/1234/config/localconfig.vdf"))
+        // Portal 2 is FineWine's and begins with NAME=value; Portal's options are arguments;
+        // the third game is another tool's.
+        XCTAssertEqual(client.launchOptionProblems(forTool: SteamTool.name),
+                       [SteamClient.LaunchOptionProblem(appID: "620", name: "Portal 2", options: "NOTPROTON_RETINA=1 WINEMSYNC=1 %command%")])
+        XCTAssertTrue(SteamClient.startsWithAssignment("A_1=x %command%"))
+        XCTAssertFalse(SteamClient.startsWithAssignment("%command% -novid"))
+        XCTAssertFalse(SteamClient.startsWithAssignment("-w=800 %command%"))
+        XCTAssertFalse(SteamClient.startsWithAssignment(""))
+    }
+
+    func testTheGameIsShutDownWhenSteamEndsTheLauncher() throws {
+        let sandbox = Sandbox()
+        // stands in for wineserver: writes down that it was asked to shut the prefix down
+        let server = sandbox.root.appendingPathComponent("wineserver")
+        sandbox.write("#!/bin/sh\necho \"$1 $WINEPREFIX\" > \"$MARK\"\n", to: server)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: server.path)
+        func marker(_ name: String) -> URL { sandbox.root.appendingPathComponent(name) }
+        func wait(for file: URL, seconds: Double) -> Bool {
+            let end = Date().addingTimeInterval(seconds)
+            while Date() < end {
+                if FileManager.default.fileExists(atPath: file.path) { return true }
+                usleep(50_000)
+            }
+            return false
+        }
+
+        // The launcher goes away (its end of the pipe closes): the prefix is shut down.
+        let gone = marker("gone")
+        let watcher = try XCTUnwrap(PrefixService.startStopWatcher(server: server, environment: ["MARK": gone.path, "WINEPREFIX": "/the/prefix"]))
+        usleep(300_000)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: gone.path), "nothing happens while the launcher lives")
+        try watcher.hold.fileHandleForWriting.close()
+        XCTAssertTrue(wait(for: gone, seconds: 5))
+        XCTAssertEqual(try String(contentsOf: gone, encoding: .utf8), "-k /the/prefix\n")
+
+        // The game ended by itself: the watcher is told to go and does nothing.
+        let ended = marker("ended")
+        let second = try XCTUnwrap(PrefixService.startStopWatcher(server: server, environment: ["MARK": ended.path, "WINEPREFIX": "/the/prefix"]))
+        usleep(300_000)
+        second.cancel()
+        second.process.waitUntilExit()
+        XCTAssertFalse(wait(for: ended, seconds: 1))
+        XCTAssertNil(PrefixService.startStopWatcher(server: nil, environment: [:]))
+    }
+
     func testValveFilesAreAdoptedOnlyWhenTheyAreTheRightOnes() throws {
         let sandbox = Sandbox()
         let valve = valve(sandbox, contents: ["steamclient64.dll": "client", "tier0_s64.dll": "tier0"])
@@ -229,6 +290,10 @@ final class SteamPlayTests: XCTestCase {
         XCTAssertEqual(plan.environment["SteamAppId"], "2739990")
         XCTAssertEqual(plan.environment["STEAM_COMPAT_CLIENT_INSTALL_PATH"], "/steam/client")
         XCTAssertEqual(plan.environment["WINEPREFIX"], prefix.directory.path)
+        // A Steam game gets the prefix's own settings like any other program: the Metal HUD
+        // can be shown and hidden, and a game is run as DPI aware.
+        XCTAssertEqual(plan.environment["MTL_HUD_ENABLED"], "1")
+        XCTAssertEqual(plan.environment[LaunchPlanner.dpiAwareVariable], "1")
         let dllPath = try XCTUnwrap(plan.environment["WINEDLLPATH"])
         XCTAssertTrue(dllPath.hasSuffix("lib/steam-bridge/wine"), dllPath)
         XCTAssertFalse(dllPath.contains("/evil"), "only Steam's own variables are passed on")

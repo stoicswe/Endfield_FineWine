@@ -647,3 +647,6 @@
 "steam.err_valve_checksum" = "“%@” from Valve isn't the file FineWine expects, so it wasn't used.";
 "steam.prefix_pill" = "Steam Prefix";
 "steam.prefix_pill_help" = "FineWine made this prefix for a game started from Steam (Steam app %@). Steam's Play button uses it.";
+"steam.launch_options_problem" = "Steam can't start these games with FineWine: %@. Their launch options begin with settings in the form NAME=value, which only NotProton's own tools understand; Steam reports “OS Error 260”. In Steam, open the game's Properties and clear Launch Options.";
+"steam.hide_prefixes_title" = "Hide the prefixes of Steam games";
+"steam.hide_prefixes_desc" = "Each game started from Steam has a prefix of its own. On: they are left out of FineWine's lists; they stay where they are and Steam still starts them.";

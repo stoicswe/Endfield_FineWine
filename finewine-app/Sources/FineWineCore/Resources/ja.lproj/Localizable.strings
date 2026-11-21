@@ -647,3 +647,6 @@
 "steam.err_valve_checksum" = "Valve から取得した“%@”は FineWine が想定するファイルではないため、使用しませんでした。";
 "steam.prefix_pill" = "Steam プレフィックス";
 "steam.prefix_pill_help" = "Steam から起動したゲーム用に FineWine が作成したプレフィックスです（Steam アプリ %@）。Steam の「プレイ」ボタンがこれを使います。";
+"steam.launch_options_problem" = "次のゲームは FineWine では Steam から起動できません: %@。起動オプションが NAME=value 形式の設定で始まっており、これは NotProton 自身のツールでのみ有効です（Steam は「OS Error 260」と表示します）。Steam でゲームの「プロパティ」を開き、「起動オプション」を消去してください。";
+"steam.hide_prefixes_title" = "Steam ゲームのプレフィックスを隠す";
+"steam.hide_prefixes_desc" = "Steam から起動した各ゲームには専用のプレフィックスがあります。オン: FineWine の一覧に表示しません。プレフィックスはそのまま残り、Steam からは引き続き起動できます。";

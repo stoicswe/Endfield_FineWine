@@ -61,6 +61,71 @@ public struct SteamClient: Equatable, Sendable {
         return nil
     }
 
+    /// A game set to run with a compatibility tool whose Steam launch options start with
+    /// `NAME=value`. Steam on a Mac does not pass launch options through a shell, so it would
+    /// try to run `NAME=value` as the program: "Failed to start process: OS Error 260". (NotProton
+    /// makes that form work for its own tools only, and its settings page writes it; a game
+    /// switched from one of those tools to another keeps the options.)
+    public struct LaunchOptionProblem: Equatable, Sendable {
+        public var appID: String
+        public var name: String
+        public var options: String
+    }
+
+    /// The games mapped to `tool` whose launch options Steam cannot start. Read from Steam's
+    /// own settings files; nothing is changed.
+    public func launchOptionProblems(forTool tool: String) -> [LaunchOptionProblem] {
+        let fm = FileManager.default
+        guard let config = try? String(contentsOf: root.appendingPathComponent("config/config.vdf"), encoding: .utf8) else { return [] }
+        let mapped = Self.blocks(in: config).filter { Self.value(of: "name", inACF: $0.body) == tool }.map(\.key)
+        guard !mapped.isEmpty else { return [] }
+        var options: [String: String] = [:]
+        let users = (try? fm.contentsOfDirectory(at: root.appendingPathComponent("userdata"), includingPropertiesForKeys: nil)) ?? []
+        for user in users {
+            guard let text = try? String(contentsOf: user.appendingPathComponent("config/localconfig.vdf"), encoding: .utf8) else { continue }
+            for block in Self.blocks(in: text) where mapped.contains(block.key) {
+                if let value = Self.value(of: "LaunchOptions", inACF: block.body), !value.isEmpty { options[block.key] = value }
+            }
+        }
+        return mapped.compactMap { appID -> LaunchOptionProblem? in
+            guard let value = options[appID], Self.startsWithAssignment(value) else { return nil }
+            return LaunchOptionProblem(appID: appID, name: appName(appID: appID, installPath: nil) ?? appID, options: value)
+        }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Whether launch options begin with an environment assignment (`NAME=value …`).
+    static func startsWithAssignment(_ options: String) -> Bool {
+        guard let first = options.split(whereSeparator: { $0 == " " || $0 == "\t" }).first,
+              let equals = first.firstIndex(of: "="), equals != first.startIndex else { return false }
+        let name = first[first.startIndex..<equals]
+        guard let head = name.first, head == "_" || head.isLetter else { return false }
+        return name.allSatisfy { $0 == "_" || $0.isLetter || $0.isNumber }
+    }
+
+    /// Every `"<number>" { … }` block in a file of Valve's text format, at any depth, with the
+    /// lines directly inside it (not those of blocks inside it).
+    static func blocks(in text: String) -> [(key: String, body: String)] {
+        var found: [(String, String)] = []
+        var stack: [(key: String?, lines: [String])] = []
+        var pending: String?
+        for line in text.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == "{" {
+                stack.append((pending.flatMap { $0.allSatisfy(\.isNumber) && !$0.isEmpty ? $0 : nil }, []))
+                pending = nil
+            } else if trimmed == "}" {
+                if let top = stack.popLast(), let key = top.key { found.append((key, top.lines.joined(separator: "\n"))) }
+                pending = nil
+            } else {
+                let parts = trimmed.components(separatedBy: "\"")
+                // a lone "name" opens a block on the next line; "key" "value" is a value
+                if parts.count == 3, parts[0].isEmpty, parts[2].isEmpty { pending = parts[1] } else { pending = nil }
+                if !stack.isEmpty { stack[stack.count - 1].lines.append(line) }
+            }
+        }
+        return found
+    }
+
     /// The value of a top-level `"key"  "value"` line in Valve's text format.
     static func value(of key: String, inACF text: String) -> String? {
         for line in text.components(separatedBy: .newlines) {
@@ -500,6 +565,38 @@ extension PrefixService {
                           workingDirectory: run.executable.deletingLastPathComponent())
     }
 
+    /// Holds the watcher that shuts a prefix down when this process dies.
+    final class StopWatcher: @unchecked Sendable {
+        let process: Process
+        let hold: Pipe
+        init(process: Process, hold: Pipe) { self.process = process; self.hold = hold }
+        /// The game ended by itself: the watcher is not needed any more.
+        func cancel() { if process.isRunning { process.terminate() } }
+    }
+
+    /// What the watcher runs. It leaves this process's session, so that whatever ends this
+    /// process and its children leaves it alone, waits for the end of its input, which comes
+    /// when this process is gone (the other end of the pipe is held here and nowhere else),
+    /// and then shuts the prefix down. Ended with SIGTERM, when the game finished by itself,
+    /// it does nothing.
+    static let stopWatcherScript = "use POSIX; POSIX::setsid(); $SIG{HUP} = 'IGNORE'; $SIG{INT} = 'IGNORE'; "
+        + "my $b; while (sysread(STDIN, $b, 4096)) {} exec @ARGV;"
+
+    /// Starts the watcher for a game Steam is waiting on. `nil` when there is nothing to run.
+    static func startStopWatcher(server: URL?, environment: [String: String]) -> StopWatcher? {
+        guard let server, FileManager.default.isExecutableFile(atPath: "/usr/bin/perl") else { return nil }
+        let process = Process()
+        let hold = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
+        process.arguments = ["-e", stopWatcherScript, server.path, "-k"]
+        process.environment = environment
+        process.standardInput = hold.fileHandleForReading
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        return StopWatcher(process: process, hold: hold)
+    }
+
     /// Runs a game for Steam and waits for it. Returns the game's exit status.
     public func runForSteam(_ run: SteamRun, client: SteamClient = .standard(),
                             log: (@Sendable (String) -> Void)? = nil) throws -> Int32 {
@@ -520,6 +617,11 @@ extension PrefixService {
         refreshEmulator(in: prefix, from: runtime)
 
         let plan = try steamLaunchPlan(for: run, program: program, in: prefix)
+        // Steam's Stop button ends this process, not the Windows game it started, which
+        // would keep running. A watcher outlives this process and ends the game with it.
+        let watcher = run.verb == .waitForExitAndRun
+            ? Self.startStopWatcher(server: runtime.wineserverBinary, environment: plan.environment) : nil
+        defer { watcher?.cancel() }
         let done = DispatchSemaphore(value: 0)
         let status = LockedBox<Int32>(0)
         _ = try runner.start(plan, logFile: logFile(for: prefix, name: program.name)) { code in

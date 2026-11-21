@@ -26,7 +26,7 @@ struct MenuBarView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .glassCard(padding: 12)
             }
-            if model.prefixes.isEmpty {
+            if model.listedPrefixes.isEmpty {
                 Text(model.usableRuntimes.isEmpty
                      ? l10n.tr("menu.empty_no_runtimes")
                      : l10n.tr("menu.empty_has_runtimes"))
@@ -42,7 +42,7 @@ struct MenuBarView: View {
                 ScrollView {
                     FWGlassContainer(spacing: 10) {
                         VStack(spacing: 10) {
-                            ForEach(model.prefixes) { prefix in
+                            ForEach(model.listedPrefixes) { prefix in
                                 MenuPrefixCard(prefix: prefix)
                             }
                             if model.showsDisconnectedPrefixes, !model.disconnectedPrefixes.isEmpty {

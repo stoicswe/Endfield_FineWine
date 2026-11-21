@@ -647,3 +647,6 @@
 "steam.err_valve_checksum" = "來自 Valve 的「%@」不是 FineWine 預期的檔案，因此未使用。";
 "steam.prefix_pill" = "Steam 前置環境";
 "steam.prefix_pill_help" = "FineWine 為從 Steam 啟動的遊戲建立的前置環境（Steam 應用程式 %@）。Steam 的「開始遊戲」按鈕會使用它。";
+"steam.launch_options_problem" = "Steam 無法透過 FineWine 啟動這些遊戲：%@。它們的啟動選項以 NAME=value 形式的設定開頭，只有 NotProton 內建的工具能辨識（Steam 會顯示「OS Error 260」）。請在 Steam 中打開遊戲的「內容」，清除「啟動選項」。";
+"steam.hide_prefixes_title" = "隱藏 Steam 遊戲的前置環境";
+"steam.hide_prefixes_desc" = "從 Steam 啟動的每個遊戲都有自己的前置環境。開啟後：它們不會出現在 FineWine 的列表中；前置環境仍然保留，Steam 仍可啟動這些遊戲。";

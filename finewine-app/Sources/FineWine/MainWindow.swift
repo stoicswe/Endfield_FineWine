@@ -55,7 +55,7 @@ struct MainWindow: View {
     private var sidebar: some View {
         List(selection: $model.selection) {
             Section(l10n.tr("main.prefixes")) {
-                ForEach(model.prefixes) { prefix in
+                ForEach(model.listedPrefixes) { prefix in
                     HStack(spacing: 8) {
                         Image(systemName: "shippingbox")
                             .foregroundStyle(Look.accent)
@@ -118,7 +118,7 @@ struct MainWindow: View {
         // Only prefixes that are here can be selected; anything else goes back to one that is.
         .onChange(of: model.selection) { _, selected in
             guard let selected, model.prefix(selected) == nil else { return }
-            model.selection = model.prefixes.first?.id
+            model.selection = model.listedPrefixes.first?.id
         }
         .safeAreaInset(edge: .bottom) {
             HStack {
@@ -157,7 +157,7 @@ struct MainWindow: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let prefix = model.prefix(model.selection) ?? model.prefixes.first {
+        if let prefix = model.prefix(model.selection) ?? model.listedPrefixes.first {
             PrefixDetailView(prefix: prefix).id(prefix.id)
         } else if model.usableRuntimes.isEmpty {
             EmptyState(symbol: "wineglass", title: l10n.tr("main.add_runtime_title"),
@@ -682,6 +682,23 @@ struct SteamCard: View {
                     Button(l10n.tr("steam.install")) { model.installSteamTool() }.fwButton()
                         .disabled(model.steamBusy || !model.steamClient.isInstalled || model.steamRuntime == nil)
                 }
+            }
+            Divider()
+            Toggle(isOn: Binding(get: { model.hidesSteamPrefixes }, set: { model.hidesSteamPrefixes = $0 })) {
+                Text(l10n.tr("steam.hide_prefixes_title"))
+                Text(l10n.tr("steam.hide_prefixes_desc"))
+            }
+            // Games set to FineWine that Steam cannot start because of their launch options.
+            let problems = installed ? model.steamClient.launchOptionProblems(forTool: SteamTool.name) : []
+            if !problems.isEmpty {
+                Label {
+                    Text(l10n.tr("steam.launch_options_problem", problems.map(\.name).joined(separator: ", ")))
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                .padding(.top, 4)
             }
         }
     }

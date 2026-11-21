@@ -26,6 +26,13 @@ dlls/winemac.drv/opengl.c
   has the size it has on the monitor. The Mac driver gave every surface the program's size,
   so the scaled blit went past the surface and a corner of the picture was seen, magnified.
 
+dlls/winemac.drv/gdi.c
+- GetDeviceCaps(HORZRES/VERTRES) is no longer doubled in high-resolution (Retina) mode. The
+  doubling dates from when the size below it was in Mac points; it is in the calling
+  thread's own units now, so a DPI aware program was told a screen of 6048x3796. Portal 2
+  centres its window by that number and put it half a screen down and to the right, where
+  it also never became a full-screen window.
+
 dlls/wined3d/swapchain.c
 - The window of an exclusive full-screen swap chain is sized to the mode in real pixels. A
   program that is not DPI aware, in a prefix with a high DPI, counts in larger units: in its
@@ -35,7 +42,7 @@ dlls/wined3d/swapchain.c
 dlls/win32u/window.c
 - With an emulated mode, a picture that would be larger than the real screen is fitted to it.
 
-Checked with Portal itself (its main menu fills the Space at 3024x1898) and with
+Checked with Portal and Portal 2 themselves (each fills the Space at 3024x1898) and with
 tests/runtime/d3d9-fullscreen.c as x64 and 32-bit, in Direct3D's exclusive mode and SDL's way: 960x600 fills the Space,
 1024x768 is centred with bars at the sides, the pointer set to the middle of the program's
 screen is at the middle of the Space, and the Mac's display mode does not change.
@@ -143,6 +150,24 @@ diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
      /* use toplevel visible rect relative position, so drivers can then assume it */
      OffsetRect( monitor_rect, monitor_rects.client.left - monitor_rects.visible.left,
                  monitor_rects.client.top - monitor_rects.visible.top );
+diff --git a/dlls/winemac.drv/gdi.c b/dlls/winemac.drv/gdi.c
+--- a/dlls/winemac.drv/gdi.c
++++ b/dlls/winemac.drv/gdi.c
+@@ -225,8 +225,12 @@
+         pthread_mutex_unlock(&device_data_mutex);
+         dev = GET_NEXT_PHYSDEV( dev, pGetDeviceCaps );
+         ret = dev->funcs->pGetDeviceCaps( dev, cap );
+-        if ((cap == HORZRES || cap == VERTRES) && retina_on)
+-            ret *= 2;
++        /* FineWine: upstream doubles HORZRES and VERTRES here in high-resolution (Retina)
++         * mode. That dates from when the size below this was in Mac points. It is the
++         * display's size in the calling thread's own units now, pixels for a DPI aware
++         * program: doubled, such a program was told a screen twice the real one
++         * (6048x3796), and Portal 2, which centres its window by it, put the window half a
++         * screen down and to the right. */
+         return ret;
+     }
+ 
 diff --git a/dlls/winemac.drv/opengl.c b/dlls/winemac.drv/opengl.c
 --- a/dlls/winemac.drv/opengl.c
 +++ b/dlls/winemac.drv/opengl.c

@@ -647,3 +647,6 @@
 "steam.err_valve_checksum" = "来自 Valve 的“%@”不是 FineWine 预期的文件，因此未使用。";
 "steam.prefix_pill" = "Steam 前缀";
 "steam.prefix_pill_help" = "FineWine 为从 Steam 启动的游戏创建的前缀（Steam 应用 %@）。Steam 的“开始游戏”按钮会使用它。";
+"steam.launch_options_problem" = "Steam 无法通过 FineWine 启动这些游戏：%@。它们的启动选项以 NAME=value 形式的设置开头，只有 NotProton 自带的工具能识别（Steam 会提示“OS Error 260”）。请在 Steam 中打开游戏的“属性”，清空“启动选项”。";
+"steam.hide_prefixes_title" = "隐藏 Steam 游戏的前缀";
+"steam.hide_prefixes_desc" = "从 Steam 启动的每个游戏都有自己的前缀。开启后：它们不会出现在 FineWine 的列表中；前缀仍然保留，Steam 仍可启动这些游戏。";

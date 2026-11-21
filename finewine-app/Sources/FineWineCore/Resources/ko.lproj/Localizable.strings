@@ -647,3 +647,6 @@
 "steam.err_valve_checksum" = "Valve에서 받은 “%@”은(는) FineWine이 예상한 파일이 아니어서 사용하지 않았습니다.";
 "steam.prefix_pill" = "Steam 프리픽스";
 "steam.prefix_pill_help" = "Steam에서 시작한 게임을 위해 FineWine이 만든 프리픽스입니다(Steam 앱 %@). Steam의 플레이 버튼이 이 프리픽스를 사용합니다.";
+"steam.launch_options_problem" = "다음 게임은 FineWine으로 Steam에서 시작할 수 없습니다: %@. 실행 옵션이 NAME=value 형식의 설정으로 시작하는데, 이는 NotProton 자체 도구에서만 동작합니다(Steam은 “OS Error 260”을 표시합니다). Steam에서 게임의 속성을 열고 실행 옵션을 지우십시오.";
+"steam.hide_prefixes_title" = "Steam 게임의 프리픽스 숨기기";
+"steam.hide_prefixes_desc" = "Steam에서 시작한 게임마다 전용 프리픽스가 있습니다. 켬: FineWine 목록에 표시하지 않습니다. 프리픽스는 그대로 남고 Steam에서 계속 시작할 수 있습니다.";

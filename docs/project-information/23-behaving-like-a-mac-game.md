@@ -174,6 +174,13 @@ for games: `FINEWINE_DPI_AWARE=1`, set for a program that draws with a rendering
 and for everything Steam starts (`LaunchPlanner.dpiAwareEnvironment`). A launcher is left
 alone: scaling a program that is not DPI aware is what makes desktop programs readable.
 
+**The screen size a DPI aware program is told.** Portal 2 then came up half a screen down
+and to the right, with three quarters of its window off the screen. The Mac driver doubled
+the size `GetDeviceCaps` reports for the screen in high-resolution mode, which was right when
+the size underneath was in Mac points and is wrong now that it is in the program's own units:
+a DPI aware program was told 6048x3796, and Portal 2 centres its window by that. The doubling
+is gone.
+
 `FINEWINE_EMULATE_MODES=0` goes back to changing the real mode. With "exclusive" chosen as the
 prefix's full-screen mode nothing changes: there the Mac's mode is the game's.
 
