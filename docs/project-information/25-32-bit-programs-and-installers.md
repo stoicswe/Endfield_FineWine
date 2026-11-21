@@ -64,8 +64,8 @@ section, and starting another 32-bit program. Besides that:
 | | State | How |
 |---|---|---|
 | Direct3D 10, 11 | Works | DXMT, whose Windows DLLs are built a second time for 32-bit x86 (`scripts/build-dxmt.sh`); DXMT patch 0008 does the pointer conversion on DXMT's Mac side |
-| Direct3D 9 and older, OpenGL | Works | WineD3D's OpenGL renderer and Wine's OpenGL call layer, runtime patch 0044 |
-| Direct3D 9 and older on Vulkan | Works in the drawing and format tests; no game confirmed yet | The prefix setting "Direct3D 9 and older on Vulkan": DXVK's `d3d9.dll` (`scripts/build-dxvk.sh`, DXVK 1.10.3 from CrossOver's source archive) on the runtime's MoltenVK, which reports the features DXVK asks for when `FINEWINE_DXVK_FEATURES=1` (MoltenVK patch 0007). The Metal HUD and MetalFX then reach these games. WineD3D's own Vulkan renderer was tried first: Portal 2 needed five fixes to it (runtime patches 0049 to 0052, kept) and still drew wrongly, as that renderer has no sRGB reading or writing for Direct3D 9 |
+| Direct3D 9 and older, OpenGL | Works | WineD3D's OpenGL renderer and Wine's OpenGL call layer, runtime patch 0044; patch 0054 keeps a buffer lock from copying the whole buffer (a lock of a few hundred bytes in a 4 MB buffer: 330 µs before, 20 µs after) |
+| Direct3D 9 and older on Vulkan | Built, off by default; Portal 2 reaches its menu and fails loading a level | The prefix setting of that name: DXVK's `d3d9.dll` on the runtime's MoltenVK. What was built, fixed and left open is in [31-direct3d-9-on-vulkan.md](31-direct3d-9-on-vulkan.md) |
 | Direct3D 12, Vulkan | Start (a clear and a present pass) | Runtime patch 0048. Wine gives a 32-bit program mapped GPU memory it can reach by allocating it in the program's window and handing it to MoltenVK (`VK_EXT_external_memory_host`), so MoltenVK needs no 32-bit build. Two things in Wine's Vulkan layer assumed 32-bit addresses below 4 GB: a command pool handle and the check on a mapping's address |
 
 The OpenGL layer needed more than the base. Its 32-bit thunks ran everything the size of a

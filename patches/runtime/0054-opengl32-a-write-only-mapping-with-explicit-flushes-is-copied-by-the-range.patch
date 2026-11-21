@@ -1,0 +1,75 @@
+opengl32: a write-only buffer mapping with explicit flushes is copied by the range
+
+dlls/opengl32/unix_wgl.c
+- A 32-bit program cannot reach the memory OpenGL maps a buffer at, so it is given a copy:
+  filled from the buffer when it is mapped, written back whole when it is unmapped. WineD3D
+  maps the whole buffer every time a program locks any part of it, for writing only, and
+  names what was written with glFlushMappedBufferRange(). A game that fills a 4 MB vertex
+  buffer a few hundred bytes at a time (Source does) had 4 MB copied in and 4 MB copied out
+  for each of those locks: about a fifth of Portal 2's render thread.
+- For a mapping made with GL_MAP_FLUSH_EXPLICIT_BIT and without GL_MAP_READ_BIT neither copy
+  is needed: the old contents may not be read through it, and only flushed ranges count as
+  written. Nothing is copied in, each range is copied when it is flushed, and nothing more
+  at unmap.
+
+tests/runtime/bench-d3d9-locks.c, a 32-bit program, on an M3: about 330 us per lock, write and
+draw before, 20 us after (the same program as 64-bit: 14.5 us).
+tests/runtime/gl-buffer-offsets.c maps a buffer this way and checks what arrives.
+
+diff --git a/dlls/opengl32/unix_wgl.c b/dlls/opengl32/unix_wgl.c
+index 26136a0..cbc18b8 100644
+--- a/dlls/opengl32/unix_wgl.c
++++ b/dlls/opengl32/unix_wgl.c
+@@ -62,6 +62,7 @@ struct buffer
+     void *host_ptr;
+     void *map_ptr;
+     size_t copy_length;
++    size_t flush_length;    /* FineWine: see wow64_map_buffer() */
+     void *vm_ptr;
+     SIZE_T vm_size;
+     BOOL pinned;
+@@ -1378,6 +1379,14 @@ static void flush_buffer( TEB *teb, struct buffer *buffer, size_t offset, size_t
+     };
+     VkResult vr;
+ 
++    /* FineWine: the copy of a written range into the driver's mapping, see wow64_map_buffer() */
++    if (buffer->flush_length && buffer->map_ptr && buffer->host_ptr && buffer->map_ptr != buffer->host_ptr
++            && offset <= buffer->flush_length)
++    {
++        if (length > buffer->flush_length - offset) length = buffer->flush_length - offset;
++        memcpy( (char *)buffer->host_ptr + offset, (char *)buffer->map_ptr + offset, length );
++    }
++
+     if (!buffer->vk_memory) return;
+ 
+     vr = buffer->vk_device->p_vkFlushMappedMemoryRanges( buffer->vk_device->vk_device, 1, &memory_range );
+@@ -1687,6 +1696,21 @@ static void *wow64_map_buffer( TEB *teb, struct buffer *buffer, GLenum target, G
+     if (!buffer_vm_alloc( teb, buffer, length + (offset & 0xf) )) goto unmap;
+     buffer->map_ptr = (char *)buffer->vm_ptr + (offset & 0xf);
+     buffer->copy_length = (access & GL_MAP_WRITE_BIT) ? length : 0;
++    buffer->flush_length = 0;
++    /* FineWine: a buffer mapped for writing only, with the ranges that were written to be
++     * named by glFlushMappedBufferRange(). That is how WineD3D maps: the whole buffer, every
++     * time a program locks any part of it, and it then names the part. Copying the whole
++     * buffer here and the whole buffer back on unmap, megabytes for a lock of a few hundred
++     * bytes, was a fifth of Portal 2's render thread. Such a mapping needs neither: what the
++     * buffer held may not be read through it, and only the named ranges count as written,
++     * so each is copied when it is named. */
++    if ((access & GL_MAP_FLUSH_EXPLICIT_BIT) && (access & GL_MAP_WRITE_BIT) && !(access & GL_MAP_READ_BIT))
++    {
++        buffer->copy_length = 0;
++        buffer->flush_length = length;
++        TRACE( "returning buffer %p, to be copied back as it is flushed\n", buffer->map_ptr );
++        return buffer->map_ptr;
++    }
+     if (!(access & (GL_MAP_INVALIDATE_RANGE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT)))
+     {
+         static int once;
+@@ -1873,6 +1897,7 @@ static BOOL wow64_unmap_buffer( TEB *teb, struct buffer *buffer )
+         buffer->copy_length = 0;
+     }
+ 
++    buffer->flush_length = 0;
+     buffer->host_ptr = buffer->map_ptr = NULL;
+     return TRUE;
+ }

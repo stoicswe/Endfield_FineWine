@@ -28,6 +28,9 @@ static void (WINAPI *p_glBindBuffer)(GLenum, GLuint);
 static void (WINAPI *p_glBufferData)(GLenum, ptrdiff_t, const void *, GLenum);
 static void *(WINAPI *p_glMapBuffer)(GLenum, GLenum);
 static GLboolean (WINAPI *p_glUnmapBuffer)(GLenum);
+static void *(WINAPI *p_glMapBufferRange)(GLenum, ptrdiff_t, ptrdiff_t, GLbitfield);
+static void (WINAPI *p_glFlushMappedBufferRange)(GLenum, ptrdiff_t, ptrdiff_t);
+static void (WINAPI *p_glGetBufferSubData)(GLenum, ptrdiff_t, ptrdiff_t, void *);
 static void (WINAPI *p_glGenFramebuffers)(GLsizei, GLuint *);
 static void (WINAPI *p_glBindFramebuffer)(GLenum, GLuint);
 static void (WINAPI *p_glGenRenderbuffers)(GLsizei, GLuint *);
@@ -62,7 +65,7 @@ int main(void)
     printf("renderer: %s, version %s\n", (const char *)glGetString(GL_RENDERER), (const char *)glGetString(GL_VERSION));
 
 #define LOAD(name) if (!(p_##name = (void *)wglGetProcAddress(#name))) { printf("gl-buffer-offsets: no %s\n", #name); return 1; }
-    LOAD(glGenBuffers) LOAD(glBindBuffer) LOAD(glBufferData) LOAD(glMapBuffer) LOAD(glUnmapBuffer)
+    LOAD(glGenBuffers) LOAD(glBindBuffer) LOAD(glBufferData) LOAD(glMapBuffer) LOAD(glUnmapBuffer) LOAD(glGetBufferSubData)
     LOAD(glGenFramebuffers) LOAD(glBindFramebuffer) LOAD(glGenRenderbuffers) LOAD(glBindRenderbuffer)
     LOAD(glRenderbufferStorage) LOAD(glFramebufferRenderbuffer) LOAD(glCheckFramebufferStatus)
 
@@ -122,6 +125,46 @@ int main(void)
     }
     p_glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
+    /* A buffer mapped the way Direct3D's vertex buffers are by Wine: all of it, for writing
+     * only, with the written parts named afterwards. What is named has to arrive, and what
+     * was not written has to stay as it was. */
+    /* glMapBufferRange() is OpenGL 3.0: on a Mac it needs a core profile context, which is
+     * also what WineD3D asks for. */
+    HGLRC core = NULL;
+    {
+        static const int attribs[] = { 0x2091 /* MAJOR */, 3, 0x2092 /* MINOR */, 2, 0x9126 /* PROFILE_MASK */, 1 /* CORE */, 0 };
+        HGLRC (WINAPI *create)(HDC, HGLRC, const int *) = (void *)wglGetProcAddress("wglCreateContextAttribsARB");
+        if (create && (core = create(dc, NULL, attribs))) wglMakeCurrent(dc, core);
+        p_glMapBufferRange = (void *)wglGetProcAddress("glMapBufferRange");
+        p_glFlushMappedBufferRange = (void *)wglGetProcAddress("glFlushMappedBufferRange");
+        check(core && p_glMapBufferRange && p_glFlushMappedBufferRange, "a core profile context with glMapBufferRange");
+    }
+    if (core && p_glMapBufferRange && p_glFlushMappedBufferRange) {
+        enum { SIZE = 256 * 1024, AT = 100 * 1024, LEN = 4096 };
+        static BYTE before[SIZE], after[SIZE];
+        GLuint vbo2; int wrong = 0;
+        for (int i = 0; i < SIZE; i++) before[i] = (BYTE)(i * 7 + 1);
+        p_glGenBuffers(1, &vbo2); p_glBindBuffer(GL_ARRAY_BUFFER, vbo2);
+        p_glBufferData(GL_ARRAY_BUFFER, SIZE, before, 0x88E8 /* GL_DYNAMIC_DRAW */);
+        for (int round = 0; round < 3; round++) {
+            BYTE *map = p_glMapBufferRange(GL_ARRAY_BUFFER, 0, SIZE, 0x0002 /* WRITE */ | 0x0010 /* FLUSH_EXPLICIT */ | 0x0020 /* UNSYNCHRONIZED */);
+            check(map != NULL, "map a buffer for writing with explicit flushes");
+            if (!map) break;
+            int at = AT + round * 2 * LEN;
+            memset(map + at, 0xa0 + round, LEN);
+            p_glFlushMappedBufferRange(GL_ARRAY_BUFFER, at, LEN);
+            p_glUnmapBuffer(GL_ARRAY_BUFFER);
+            memset(before + at, 0xa0 + round, LEN);
+        }
+        p_glGetBufferSubData(GL_ARRAY_BUFFER, 0, SIZE, after);
+        for (int i = 0; i < SIZE; i++) if (after[i] != before[i]) wrong++;
+        check(glGetError() == GL_NO_ERROR, "explicit flushes without an error");
+        check(wrong == 0, "flushed ranges arrive and the rest of the buffer is untouched");
+        if (wrong) printf("  %d of %d bytes differ\n", wrong, SIZE);
+        p_glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    if (core) { wglMakeCurrent(NULL, NULL); wglDeleteContext(core); }
     wglMakeCurrent(NULL, NULL); wglDeleteContext(rc); ReleaseDC(window, dc); DestroyWindow(window);
     if (failures) { printf("gl-buffer-offsets: %d failure(s)\n", failures); return 1; }
     printf("gl-buffer-offsets: ok\n");

@@ -172,6 +172,10 @@ This directory does not contain Wine itself — only diffs to be applied to a Wi
 Applied by `scripts/build-finewine-runtime.sh` on top of `patches/ARM` (minus the two x86-only
 kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21.
 
+- `0054-opengl32-a-write-only-mapping-with-explicit-flushes-is-copied-by-the-range.patch`: a
+  32-bit program gets a copy of a mapped OpenGL buffer; for the way WineD3D maps (the whole
+  buffer, write-only, with the written ranges flushed) only those ranges are copied now, not
+  the whole buffer in and out for every lock. About 16 times faster per lock in the benchmark.
 - `0053-ntdll-a-wait-of-the-emulator-does-not-take-the-wake-up-of-a-32-bit-program-s-wait.patch`:
   32-bit programs froze now and then with every thread waiting (Portal 2 at start). A thread
   has one alert flag; the emulator's own lock wait, 64-bit code on the program's thread, took
