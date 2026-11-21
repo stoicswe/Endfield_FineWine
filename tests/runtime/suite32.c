@@ -279,6 +279,80 @@ static void test_window_messages(void)
     check( DestroyWindow( hwnd ), "window: destroy" );
 }
 
+/* ---- the program's address space is its own, and what the emulator keeps for itself ---- */
+static HANDLE hold_threads;
+static DWORD WINAPI held_thread( void *arg )
+{
+    volatile double x = 1.5; int i;
+    for (i = 0; i < 1000; i++) x = x * 1.0001;   /* x87 work on a new thread */
+    WaitForSingleObject( hold_threads, INFINITE );
+    return 0;
+}
+
+static SIZE_T free_address_space(void)
+{
+    MEMORY_BASIC_INFORMATION info;
+    char *p = (char *)0x10000;
+    SIZE_T total = 0;
+    while (VirtualQuery( p, &info, sizeof(info) ) == sizeof(info))
+    {
+        if (info.State == MEM_FREE) total += info.RegionSize;
+        p = (char *)info.BaseAddress + info.RegionSize;
+        if ((ULONG_PTR)p >= 0x7ffe0000 || (ULONG_PTR)p < 0x10000) break;
+    }
+    return total;
+}
+
+static void test_address_space(void)
+{
+    typedef struct { void *lowest, *highest; SIZE_T alignment; } requirements;
+    typedef struct { ULONG64 type; union { ULONG64 value; void *pointer; } u; } parameter;
+    void *(WINAPI *p_VirtualAlloc2)( HANDLE, void *, SIZE_T, ULONG, ULONG, parameter *, ULONG );
+    requirements req = { NULL, NULL, 4 << 20 };
+    parameter param = { 1 /* address requirements */ };
+    MEMORYSTATUSEX status = { sizeof(status) };
+    HANDLE threads[40];
+    SIZE_T before, after;
+    unsigned short ds = 0, es = 0;
+    volatile long double ld = 2.0L;
+    volatile double d;
+    char *p;
+    int i;
+
+    before = free_address_space();
+    hold_threads = CreateEventA( NULL, TRUE, FALSE, NULL );
+    for (i = 0; i < 40; i++) threads[i] = CreateThread( NULL, 0, held_thread, NULL, 0, NULL );
+    Sleep( 500 );
+    after = free_address_space();
+    check( before - after < (200u << 20), "address space: 40 threads take less than 200 MB of it" );
+    SetEvent( hold_threads );
+    WaitForMultipleObjects( 40, threads, TRUE, 10000 );
+    for (i = 0; i < 40; i++) CloseHandle( threads[i] );
+
+    p_VirtualAlloc2 = (void *)GetProcAddress( GetModuleHandleA( "kernelbase.dll" ), "VirtualAlloc2" );
+    param.u.pointer = &req;
+    p = p_VirtualAlloc2 ? p_VirtualAlloc2( GetCurrentProcess(), NULL, 64 << 20, MEM_RESERVE, PAGE_READWRITE, &param, 1 ) : NULL;
+    check( p != NULL && !((ULONG_PTR)p & ((4 << 20) - 1)), "address space: VirtualAlloc2 with only an alignment" );
+    if (p)
+    {
+        char *c = VirtualAlloc( p + 0x1000, 0x10000, MEM_COMMIT, PAGE_READWRITE );
+        if (c) c[0x560] = 42;
+        check( c && c[0x560] == 42, "address space: that memory can be committed and used" );
+        VirtualFree( p, 0, MEM_RELEASE );
+    }
+
+    check( GlobalMemoryStatusEx( &status ) && status.ullAvailPhys <= status.ullTotalPhys && status.dwMemoryLoad <= 100,
+           "memory status: free is not more than total, load is a percentage" );
+
+    /* segment registers saved and loaded again, as old CPU detection code does */
+    __asm__ volatile( "pushw %%ds\n\tpushw %%es\n\tpopw %%es\n\tpopw %%ds\n\tmovw %%ds, %0\n\tmovw %%es, %1" : "=r"(ds), "=r"(es) );
+    check( ds == es && ds != 0, "segment registers: push and pop" );
+
+    /* x87 values kept across calls, which is where the emulator loses track of the stack top */
+    d = (double)sqrtl( ld ) + floor( 2.5 );
+    check( d > 3.41 && d < 3.42, "x87: values across library calls" );
+}
+
 /* ---- a window on screen, with standard controls: a small one appears for a moment ---- */
 static int painted, got_minmax, got_poschanged, got_command;
 static HWND shown_edit;
@@ -416,6 +490,7 @@ int main( int argc, char **argv )
     test_threads();
     test_exceptions();
     test_generated_code();
+    test_address_space();
     if (argc > 1 && !strcmp( argv[1], "nogui" )) printf( "skip window and gdi checks\n" );
     else { test_window_messages(); test_shown_window(); test_gdi(); }
     test_child_process( argv[0] );

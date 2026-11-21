@@ -1,0 +1,37 @@
+--- a/steamclient_structs.h
++++ b/steamclient_structs.h
+@@ -48,15 +48,31 @@
+     template< typename U > struct pointee< U** > { using type = struct ptr32< U* >*; };
+     using Type = typename pointee< T >::type;
+ 
++    /* FineWine: on macOS/arm64 a 32-bit program's memory is a 4 GB window at a base that is a
++     * multiple of 4 GB (Wine runtime patch 0043; ntdll.so exports the base, 0 in any other
++     * process). A 32-bit value that is an address gets the base; an address in the window
++     * loses it by being cut to 32 bits. */
++#if defined(WINE_UNIX_LIB) && defined(__APPLE__) && defined(__aarch64__)
++    static UINT64 window_base()
++    {
++        return __wine_wow_window_base;  /* declared by Wine's basetsd.h for Unix libraries */
++    }
++#else
++    static UINT64 window_base() { return 0; }
++#endif
+     struct ptr32& operator=( const Type ptr )
+     {
+-        assert( (UINT64)ptr == (UINT_PTR)ptr );
+-        this->value = (UINT_PTR)ptr;
++        UINT64 base = window_base(), value = (UINT64)ptr;
++        if (base && value >= base && value < base + 0x100000000ull) value -= base;
++        assert( value == (uint32_t)value );
++        this->value = (uint32_t)value;
+         return *this;
+     }
+     operator Type() const
+     {
+-        return (Type)(UINT_PTR)this->value;
++        UINT64 value = this->value;
++        if (value >= 0x10000) value |= window_base();
++        return (Type)(UINT_PTR)value;
+     }
+ #endif /* __cplusplus */
+ };

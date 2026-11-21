@@ -93,6 +93,9 @@ print(h.hexdigest())')"
   done
   cp "$HERE/lsteamclient/steamworks_sdk_165x/isteamnetworkingsocketsserialized.h" "$TREE/steamworks_sdk_165x/"
   patch -p1 -d "$TREE" --forward -s < "$HERE/lsteamclient/serialized005.patch"
+  # 32-bit games: the 32-bit pointer type of the Mac half adds the base of the program's
+  # memory window (Wine runtime patch 0043).
+  patch -p1 -d "$TREE" --forward -s < "$HERE/lsteamclient/window32.patch"
   # The Mac half is C++ and Valve's makefile names no C++ library (on Linux the compiler
   # driver adds it). Without this, Wine's own `make` stops at linking lsteamclient.so.
   grep -q '^UNIX_LIBS' "$TREE/Makefile.in" && die "Valve's Makefile.in has UNIX_LIBS now: look at it again"
@@ -180,6 +183,12 @@ cmd_build(){
   make -j"$JOBS" "$dll/aarch64-windows/lsteamclient.dll" >"$BUILD_DIR/steam-bridge-pe.log" 2>&1 \
     || die "lsteamclient.dll failed: see $BUILD_DIR/steam-bridge-pe.log"
 
+  # The same for 32-bit games, when Wine is built with a 32-bit side. It calls the same Mac half.
+  if grep -q '^i386_CC = ' Makefile; then
+    echo "lsteamclient.dll (Windows half, for 32-bit programs)"
+    make -j"$JOBS" "$dll/i386-windows/lsteamclient.dll" >"$BUILD_DIR/steam-bridge-pe32.log" 2>&1 \
+      || die "the 32-bit lsteamclient.dll failed: see $BUILD_DIR/steam-bridge-pe32.log"
+  fi
   echo "lsteamclient.so (Mac half)"
   make -j"$JOBS" "$dll/lsteamclient.so" >"$BUILD_DIR/steam-bridge-unix.log" 2>&1 \
     || die "lsteamclient's Mac half failed: see $BUILD_DIR/steam-bridge-unix.log"
@@ -251,6 +260,16 @@ cmd_install(){
   rm -rf "$dest"; mkdir -p "$dest/wine" "$dest/steam"
   cp "$OBJ/dlls/lsteamclient/aarch64-windows/lsteamclient.dll" "$dest/wine/lsteamclient.dll"
   cp "$OBJ/dlls/lsteamclient/lsteamclient.so" "$dest/wine/lsteamclient.so"
+  # For 32-bit games, in the folder Wine looks in for a 32-bit program's libraries.
+  if [ -f "$OBJ/dlls/lsteamclient/i386-windows/lsteamclient.dll" ]; then
+    mkdir -p "$dest/wine/i386-windows"
+    cp "$OBJ/dlls/lsteamclient/i386-windows/lsteamclient.dll" "$dest/wine/i386-windows/lsteamclient.dll"
+    "$strip" --strip-debug "$dest/wine/i386-windows/lsteamclient.dll"
+    # Wine looks for the Mac half of a library it found in <folder>/i386-windows in
+    # <folder>/aarch64-unix. It is the one library, so that is a link to it.
+    mkdir -p "$dest/wine/aarch64-unix"
+    ln -sf ../lsteamclient.so "$dest/wine/aarch64-unix/lsteamclient.so"
+  fi
   cp "$OBJ/programs/steam.exe/arm64ec-windows/steam.exe" "$dest/steam/steam.exe"
   # Released runtimes carry no debug information (see build-finewine-runtime.sh).
   "$strip" --strip-debug "$dest/wine/lsteamclient.dll" "$dest/steam/steam.exe"

@@ -32,6 +32,10 @@ sits beside theirs.
 - `lsteamclient/` — the three source files, one patch and one header that replace or add to
   Valve's `lsteamclient` tree. Valve's tree itself is downloaded at the commit
   [`finewine-sources.lock`](../../finewine-sources.lock) names and checked against a digest.
+  `window32.patch` is FineWine's own: for 32-bit games, the Mac half's one 32-bit pointer type
+  adds the base of the game's memory window (Wine runtime patch 0043). The 32-bit Windows half
+  is installed as `lib/steam-bridge/wine/i386-windows/lsteamclient.dll`, with a link to the Mac
+  half in `aarch64-unix` beside it, where Wine looks for it.
 - `steam-helper/` — the sources of `steam.exe`, with JsonCpp.
 - `overlay-shim/` — the overlay helper, one Objective-C file.
 

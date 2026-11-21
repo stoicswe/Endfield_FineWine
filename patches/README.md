@@ -172,6 +172,17 @@ This directory does not contain Wine itself — only diffs to be applied to a Wi
 Applied by `scripts/build-finewine-runtime.sh` on top of `patches/ARM` (minus the two x86-only
 kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21.
 
+- `0046-ntdll-a-library-whose-imports-fail-is-unmapped-steam-bridge-for-32-bit-games.patch`: a
+  native library whose imports cannot be resolved was left mapped (so upstream); a Steam game
+  that cannot load Steam's client library retries thousands of times, and a 32-bit one ran out
+  of address space. It is unmapped now, with its thread-local slot released. Also the Steam
+  redirect of 0042 for 32-bit games: `steamclient.dll` to the 32-bit `lsteamclient.dll`.
+- `0045-ntdll-wow64-32-bit-programs-keep-their-address-space-to-themselves.patch`: found with
+  Portal's "Out of memory". The 64-bit side's own allocations (the emulator's tables for each
+  thread) were served from the 32-bit program's window, 150 to 500 MB a thread; only requests
+  confined to the window are now. `VirtualAlloc2` from a 32-bit program with requirements that
+  give no upper limit (mimalloc) gets the program's limit. And for every program: the physical
+  memory size was counted in 16K pages and reported in 4K ones (24 GB shown as 6 GB).
 - `0044-opengl32-32-bit-programs-pointers-sizes-and-buffer-offsets.patch`: Direct3D 9 and older
   (WineD3D's OpenGL renderer) and OpenGL from 32-bit programs. With 0043 the 32-bit thunks of
   the OpenGL call layer must tell addresses from numbers: a context the 32-bit side allocated
@@ -404,6 +415,11 @@ Applied by `scripts/build-fex.sh` to FEX at the commit pinned in `finewine-sourc
 FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`, and its WOW64 build
 (for 32-bit programs) as `xtajit.dll`.
 
+- `0012-32-bit-guests-fex-s-own-data-read-through-guest-memory-operations.patch`: two places
+  in the 32-bit build read FEX's own data with a guest memory operation, which 0011 sends
+  through the guest's window: the x87 stack's slow path (now through the state register) and
+  the segment descriptor table read when a segment register is loaded (now allocated inside
+  the window). They worked only while FEX's memory happened to be inside the window.
 - `0011-32-bit-guests-in-a-window-above-4-gb.patch`: the WOW64 build reaches all guest memory
   through a base (`FEX_GUEST_BASE`, 1 TB; see runtime patch 0043). Generated code adds it on
   every guest memory access, using x19 and x24, which are taken out of register allocation for

@@ -1,0 +1,107 @@
+ntdll, wow64: 32-bit programs keep their address space to themselves
+
+Follows 0043. Found with Portal (a 32-bit game), which stopped with "Out of memory".
+
+dlls/ntdll/unix/virtual.c
+- The window a 32-bit program's memory lives in is a reserved area, and reserved areas are
+  searched first for any allocation. Allocations of the 64-bit side (the emulator's tables and
+  code for each thread, 64-bit heaps and stacks) therefore went into the window and used the
+  program's address space up: 150 to 500 MB a thread. Only a request confined to the window
+  is served from it now. With that, a thread costs the program about 1 MB.
+- The physical page count was the system's (16K pages on Apple silicon) while the page size
+  reported with it is 4K: a 24 GB Mac was 6 GB with more free than that, and the memory load
+  a negative number. For every program, not only 32-bit ones.
+
+dlls/wow64/virtual.c
+- NtAllocateVirtualMemoryEx and NtMapViewOfSectionEx from a 32-bit program: address
+  requirements are passed as the numbers they are (0043 put the window's base on them, which
+  made them a 64-bit range), and requirements without an upper limit (an alignment only, as
+  mimalloc gives through VirtualAlloc2) get the program's own limit. Before the change above
+  such memory landed in the window by accident; after it, outside.
+
+Checked with tests/runtime/suite32.c (address space left after 40 threads, VirtualAlloc2 with
+an alignment only) and Portal.
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -1920,6 +1920,18 @@
+ {
+     void *start, *end, *ptr = NULL;
+     unsigned int area;
++#if defined(__APPLE__) && defined(__aarch64__)
++    /* FineWine 32-bit: the window is a reserved area, and reserved areas are searched first.
++     * Only a request confined to the window (one from the 32-bit side) may be served from it:
++     * anything else is the 64-bit side's own memory (the emulator's tables and code, 64-bit
++     * heaps and stacks), which would use up the 32-bit program's address space. */
++    BOOL skip_window = wow_window_active &&
++                       !((ULONG_PTR)limit_low >= wow_base && (ULONG_PTR)limit_high <= wow_base + limit_4g);
++#define IN_WOW_WINDOW(area) (skip_window && (ULONG_PTR)mem_area_base( area ) >= wow_base && \
++                             (ULONG_PTR)mem_area_base( area ) < wow_base + limit_4g)
++#else
++#define IN_WOW_WINDOW(area) 0
++#endif
+ 
+     limit_low = (void *)ROUND_SIZE( 0, limit_low, align_mask );
+     limit_high = ROUND_ADDR( limit_high, host_page_mask );
+@@ -1930,6 +1942,7 @@
+         for (area = find_mem_area( end ); end > limit_low; end = mem_area_end( --area ))
+         {
+             if (mem_area_state( area ) != AREA_RESERVED) continue;
++            if (IN_WOW_WINDOW( area )) continue;
+             start = ROUND_ADDR( (char *)mem_area_base( area ) + align_mask, align_mask );
+             if (start >= end || (char *)end - (char *)start < size) continue;
+             ptr = ROUND_ADDR( (char *)end - size, align_mask );
+@@ -1942,6 +1955,7 @@
+         for (area = find_mem_area( start ); start < limit_high; start = mem_area_base( ++area ))
+         {
+             if (mem_area_state( area ) != AREA_RESERVED) continue;
++            if (IN_WOW_WINDOW( area )) continue;
+             start = ROUND_ADDR( (char *)start + align_mask, align_mask );
+             end = min( limit_high, mem_area_end( area ));
+             if (start >= end || (char *)end - (char *)start < size) continue;
+@@ -1951,6 +1965,7 @@
+     }
+     if (ptr && anon_mmap_fixed( ptr, size, unix_prot, 0 ) != ptr) ptr = NULL;
+     return ptr;
++#undef IN_WOW_WINDOW
+ }
+ 
+ /***********************************************************************
+@@ -3758,6 +3773,9 @@
+ #elif defined(_SC_PHYS_PAGES)
+     LONG64 phys_pages = sysconf( _SC_PHYS_PAGES );
+ 
++    /* FineWine: the system counts in its own pages (16K on Apple silicon), Windows programs
++     * in the 4K pages reported below. Unscaled, a 24 GB Mac was 6 GB with more free than that. */
++    phys_pages = phys_pages * (LONG64)(sysconf( _SC_PAGESIZE ) / page_size);
+     info->MmHighestPhysicalPage = max(1, phys_pages);
+ #else
+     info->MmHighestPhysicalPage = 0x7fffffff / page_size;
+diff --git a/dlls/wow64/virtual.c b/dlls/wow64/virtual.c
+--- a/dlls/wow64/virtual.c
++++ b/dlls/wow64/virtual.c
+@@ -117,14 +117,20 @@
+     {
+         if (req32->LowestStartingAddress > highest_user_address) return STATUS_INVALID_PARAMETER;
+         if (req32->HighestEndingAddress > highest_user_address) return STATUS_INVALID_PARAMETER;
+-        req->LowestStartingAddress = ULongToPtr( req32->LowestStartingAddress );
+-        req->HighestEndingAddress  = ULongToPtr( req32->HighestEndingAddress );
++        /* FineWine 32-bit: these are limits, passed as 32-bit numbers: the memory manager puts
++         * a range that ends below 4 GB into the 32-bit program's window. A program that gives
++         * requirements without an upper limit (an alignment only, as mimalloc does) still
++         * must get memory it can address. */
++        req->LowestStartingAddress = (void *)(ULONG_PTR)req32->LowestStartingAddress;
++        req->HighestEndingAddress  = (void *)(ULONG_PTR)req32->HighestEndingAddress;
++        if (!req->HighestEndingAddress && set_limit)
++            req->HighestEndingAddress = (void *)(ULONG_PTR)highest_user_address;
+         req->Alignment             = req32->Alignment;
+     }
+     else if (set_limit)
+     {
+         req->LowestStartingAddress = NULL;
+-        req->HighestEndingAddress  = ULongToPtr( highest_user_address );
++        req->HighestEndingAddress  = (void *)(ULONG_PTR)highest_user_address;
+         req->Alignment             = 0;
+ 
+         params[i].Type = MemExtendedParameterAddressRequirements;

@@ -1,0 +1,92 @@
+ntdll: a library whose imports fail is unmapped; the Steam bridge for 32-bit games
+
+dlls/ntdll/loader.c
+- When a native library's imports cannot be resolved, loading fails and the library stayed
+  mapped (upstream leaves it: "we can leave them lying around with no problems"). A Steam
+  game that cannot load Steam's client library tries again thousands of times, and a 32-bit
+  one ran out of address space after about 180 tries of 21 MB each. The image is unmapped
+  now, and its thread-local data slot released first: a thread started later copied its
+  template from the unmapped image otherwise.
+- The redirect of Steam's client library to the bridge (0042) also for 32-bit games: in a
+  32-bit process, steamclient.dll's exports go to the 32-bit lsteamclient.dll, with 32-bit
+  jump and entry-point stubs.
+
+Checked with tests/runtime/suite32.c (a library with a missing import, loaded 30 times) and
+Portal started through the Steam bridge.
+
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -2273,7 +2273,7 @@
+  */
+ static BOOL steam_bridge_redirect( WINE_MODREF *wm, const IMAGE_NT_HEADERS *nt, LPCWSTR load_path )
+ {
+-#ifdef _WIN64
++#if defined(_WIN64) || defined(__i386__)
+     static const WCHAR bridgeW[] = L"lsteamclient.dll";
+     UNICODE_STRING env_name = RTL_CONSTANT_STRING( L"FINEWINE_STEAM_BRIDGE" );
+     UNICODE_STRING bridge_name = RTL_CONSTANT_STRING( bridgeW );
+@@ -2290,8 +2290,14 @@
+     unsigned int i, j, count = 0;
+     NTSTATUS status;
+ 
++#ifdef __i386__
++    /* a 32-bit game loads steamclient.dll; the bridge is the 32-bit lsteamclient.dll */
++    if (nt->FileHeader.Machine != IMAGE_FILE_MACHINE_I386) return FALSE;
++    if (wcsicmp( wm->ldr.BaseDllName.Buffer, L"steamclient.dll" )) return FALSE;
++#else
+     if (nt->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64) return FALSE;
+     if (wcsicmp( wm->ldr.BaseDllName.Buffer, L"steamclient64.dll" )) return FALSE;
++#endif
+ 
+     env_value.Buffer = env_buffer;
+     env_value.Length = 0;
+@@ -2339,17 +2345,29 @@
+             if (!strcmp( name, (const char *)bridge + bridge_names[j] )) break;
+         if (j == bridge_exports->NumberOfNames) continue;
+ 
++#ifdef __i386__
++        /* mov $target,%eax; jmp *%eax */
++        from[0] = 0xb8;
++        *(ULONG_PTR *)(from + 1) = (ULONG_PTR)(bridge + bridge_funcs[bridge_ordinals[j]]);
++        from[5] = 0xff; from[6] = 0xe0;
++#else
+         /* movabs $target,%rax; jmp *%rax */
+         from[0] = 0x48; from[1] = 0xb8;
+         *(ULONG_PTR *)(from + 2) = (ULONG_PTR)(bridge + bridge_funcs[bridge_ordinals[j]]);
+         from[10] = 0xff; from[11] = 0xe0;
++#endif
+         count++;
+     }
+ 
+     if (nt->OptionalHeader.AddressOfEntryPoint)
+     {
+         /* mov $1,%eax; ret: the bridge's own entry point is what runs, when the bridge loads */
++#ifdef __i386__
++        /* mov $1,%eax; ret $12 (the entry point takes three arguments and removes them) */
++        static const BYTE ret_true[] = { 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc2, 0x0c, 0x00 };
++#else
+         static const BYTE ret_true[] = { 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3 };
++#endif
+         memcpy( module + nt->OptionalHeader.AddressOfEntryPoint, ret_true, sizeof(ret_true) );
+     }
+     NtFlushInstructionCache( NtCurrentProcess(), module, nt->OptionalHeader.SizeOfImage );
+@@ -2427,6 +2445,18 @@
+              * around with no problems, so we don't care.
+              * As these might reference our wm, we don't free it.
+              */
++            /* FineWine: the image itself is unmapped, though. Nothing can be using it yet,
++             * and a program that keeps trying to load a library whose imports are missing
++             * (a Steam game looking for Steam's client library does, thousands of times)
++             * otherwise loses the library's size in address space on every attempt, which
++             * a 32-bit program runs out of. */
++            if (!is_builtin)
++            {
++                /* its thread-local data template is in the image: threads started later
++                 * must not copy from it */
++                free_tls_slot( &wm->ldr );
++                NtUnmapViewOfSection( NtCurrentProcess(), *module );
++            }
+             *module = NULL;
+             return status;
+         }

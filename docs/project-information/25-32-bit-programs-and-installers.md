@@ -77,6 +77,25 @@ a draw from memory, a read-back, presenting into a window) and `gl-buffer-offset
 programs; the last fails without the buffer rule. The generated file `unix_thunks.c` was
 changed directly: running Wine's `make_opengl` again would undo most of it.
 
+**A real game: Portal (2026-11-20).** Portal is a 32-bit Direct3D 9 game started from Steam.
+It reaches its main menu through FineWine's Steam tool. Getting there found what the test
+programs had not, all of it now fixed and covered by `suite32.c` or the test script:
+
+| What the game showed | Cause | Fix |
+|---|---|---|
+| "Out of memory" | The window is a reserved area, and Wine serves any allocation from reserved areas first: the emulator's per-thread tables (150 to 500 MB a thread) went into the program's own 2 or 4 GB | Runtime patch 0045: only a request confined to the window is served from it |
+| (same) | Windows was told the Mac had 6 GB with 8 GB free: physical pages counted in 16K, reported in 4K. Also wrong for 64-bit programs | 0045 |
+| "Failed to load the launcher DLL" | FEX's x87 slow path read its own register stack with a guest memory load; it had worked only while FEX's memory was inside the window | FEX patch 0012 |
+| (would have followed) | The game's allocator (mimalloc) calls `VirtualAlloc2` with an alignment and no upper limit, which the 32-bit call layer passed on unlimited | 0045 |
+| "Failed to allocate minimum memory requirement" | Steam's client library could not load (below), the game retried thousands of times, and each failed load left 21 MB mapped | Runtime patch 0046: a library whose imports fail is unmapped |
+| A crash in the Miles sound library | `pop %es`: FEX reads the segment descriptor table, its own data, with a guest load | FEX patch 0012: the table is allocated inside the window |
+| The game quits: no Steam | The Steam bridge was 64-bit only | 0046 (redirect for `steamclient.dll`), a 32-bit `lsteamclient.dll` in `lib/steam-bridge/wine/i386-windows`, and the base added in the bridge's one 32-bit pointer type (`runtime-extras/steam-bridge/lsteamclient/window32.patch`); the app puts the 32-bit bridge in the prefix's `syswow64` |
+
+The lesson for the next such bug: after 0045, FEX's and Wine's 64-bit-side memory is outside
+the window, so a 64-bit-side pointer that reaches 32-bit code, or FEX data read with a guest
+memory operation, faults at once instead of working by accident. In a trace it shows as an
+access to window + (the low 32 bits of a 64-bit-side address).
+
 **What it costs.** `tests/runtime/bench.c` as a 32-bit program against the same as x64, on an
 Apple M3 (2026-11-20): integer sieve, matrix multiply, memory copy, pointer chase, atomics and
 locks are within about 10% either way; a 64-bit hash loop takes 1.8 times as long (64-bit
@@ -85,8 +104,17 @@ unit, which the emulator computes in software); `QueryPerformanceCounter` 4 time
 `bench-d3d11.c` (10,000 draws a frame through DXMT): 6.0 ms with new constants each draw and
 2.0 ms with nothing changing, against 7.4 ms and 1.6 ms as x64.
 
-**Not tried yet:** a 32-bit game, installers with their pages shown and clicked through, and
-audio. An address formed as base plus index does not wrap at 4 GB as on a real 32-bit CPU. A
+**Known fault: a hang when an OpenGL program closes.** About one run in eight of
+`d3d9-draw.c` as a 32-bit program never exits: the test's checks have passed, and while the
+Direct3D device is released the Mac driver's OpenGL context teardown (`-[NSOpenGLContext
+dealloc]` on WineD3D's worker thread, which waits for the main thread) never returns, with the
+program's own thread spinning. A window-closing hang of the same look was seen once with a
+64-bit program before any of the 32-bit work, so it is the Mac driver's, not the window's. A
+Direct3D 9 game could hang this way when it quits. Not fixed; the test script gives those
+checks a time limit.
+
+**Not tried yet:** playing a level of a 32-bit game (Portal was seen at its main menu only),
+installers with their pages shown and clicked through, and audio. An address formed as base plus index does not wrap at 4 GB as on a real 32-bit CPU. A
 missed pointer conversion shows as a crash in whatever program uses that call;
 `WINEDEBUG=+seh` names the Mac-side function it happened in.
 

@@ -876,7 +876,7 @@ elif "$MINGW32" -O1 -o "$WORK/suite32.exe" "$REPO/tests/runtime/suite32.c" -luse
   else fail "a new prefix has no 32-bit system folder (syswow64)"; fi
   out="$(WINEMSYNC=0 "$RT/bin/wine" "$WORK/suite32.exe" </dev/null 2>/dev/null | tr -d '\r')"
   case "$out" in *"
-0 failure(s)") pass "32-bit programs: $(echo "$out" | grep -c '^ok ') checks of memory, threads, exceptions, generated code, window messages, drawing, child processes" ;;
+0 failure(s)") pass "32-bit programs: $(echo "$out" | grep -c '^ok ') checks of memory, address space, threads, exceptions, x87, segments, generated code, window messages, drawing, child processes" ;;
     *) fail "32-bit suite:"; echo "$out" | grep -v '^ok ' | tail -n 8 ;; esac
   # MSync is decided when a prefix's server starts, so the server is stopped first.
   "$RT/bin/wineserver" -k 2>/dev/null; "$RT/bin/wineserver" -w 2>/dev/null
@@ -887,6 +887,22 @@ elif "$MINGW32" -O1 -o "$WORK/suite32.exe" "$REPO/tests/runtime/suite32.c" -luse
   out="$("$RT/bin/wine" 'C:\windows\syswow64\cmd.exe' /c 'echo %PROCESSOR_ARCHITECTURE%' </dev/null 2>/dev/null | tr -d '\r')"
   case "$out" in x86) pass "the 32-bit command prompt runs and sees an x86 processor" ;;
     *) fail "32-bit cmd.exe printed: $out" ;; esac
+  # A library whose imports are missing does not stay mapped (patches/runtime/0046): 32-bit and x64.
+  mkdir -p "$WORK/fl32" "$WORK/fl64"; fl_ok=1
+  for pair in "fl32:$MINGW32" "fl64:$REPO/build/llvm-mingw/bin/x86_64-w64-mingw32-clang"; do
+    d="$WORK/${pair%%:*}"; cc="${pair#*:}"
+    ( cd "$d" && "$cc" -shared -DDEP -o dep.dll "$REPO/tests/runtime/failed-load.c" \
+        && "$cc" -shared -DBIG -o big.dll "$REPO/tests/runtime/failed-load.c" -L. -l:dep.dll \
+        && "$cc" -O1 -o failed-load.exe "$REPO/tests/runtime/failed-load.c" && rm dep.dll ) >"$d/build.log" 2>&1 || fl_ok=0
+  done
+  if [ "$fl_ok" = 1 ]; then
+    one="$(cd "$WORK/fl32" && "$RT/bin/wine" failed-load.exe </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    two="$(cd "$WORK/fl64" && "$RT/bin/wine" failed-load.exe </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$one|$two" in "failed-load: ok|failed-load: ok") pass "a library whose imports are missing is unmapped again: 32-bit and x64" ;;
+      *) fail "a library that failed to load stays mapped (32-bit: '$one', x64: '$two')" ;; esac
+  else
+    fail "could not build tests/runtime/failed-load.c"; tail -n 3 "$WORK/fl32/build.log" "$WORK/fl64/build.log"
+  fi
   # Direct3D 11 from a 32-bit program, through DXMT's 32-bit Windows side: off screen, then
   # into a window (a small one appears for a moment).
   if [ ! -f "$RT/lib/dxmt/i386-windows/d3d11.dll" ]; then
@@ -912,7 +928,11 @@ elif "$MINGW32" -O1 -o "$WORK/suite32.exe" "$REPO/tests/runtime/suite32.c" -luse
      && "$MINGW32" -O1 -o "$WORK/glo-32.exe" "$REPO/tests/runtime/gl-buffer-offsets.c" -lopengl32 -lgdi32 >>"$WORK/d3d9-32-build.log" 2>&1 \
      && "$REPO/build/llvm-mingw/bin/x86_64-w64-mingw32-clang" -O1 -o "$WORK/d3d9draw-x64.exe" "$REPO/tests/runtime/d3d9-draw.c" -ld3d9 >>"$WORK/d3d9-32-build.log" 2>&1 \
      && "$REPO/build/llvm-mingw/bin/x86_64-w64-mingw32-clang" -O1 -o "$WORK/glo-x64.exe" "$REPO/tests/runtime/gl-buffer-offsets.c" -lopengl32 -lgdi32 >>"$WORK/d3d9-32-build.log" 2>&1; then
-    last(){ "$RT/bin/wine" "$1" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1; }
+    # With a time limit: closing an OpenGL context in the Mac driver hangs once in a while (a
+    # known fault, see docs/project-information/25), and the script must not hang with it.
+    # perl's alarm stands in for `timeout`, which macOS does not have.
+    last(){ perl -e 'alarm 90; exec @ARGV' "$RT/bin/wine" "$1" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1
+            pkill -f "$(basename "$1")" 2>/dev/null || true; }
     out="$(last "$WORK/d3d9-32.exe")"
     case "$out" in "d3d9-clear: ok") pass "Direct3D 9, 32-bit program: device, clear, read back" ;;
       *) fail "Direct3D 9 from a 32-bit program: '$out'" ;; esac

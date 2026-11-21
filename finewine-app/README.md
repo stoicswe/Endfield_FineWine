@@ -12,7 +12,7 @@ which patches a CrossOver install instead.
 > through FEX) with MSync, Direct3D 10/11 on Metal (DXMT) and Vulkan and Direct3D 12 through
 > MoltenVK. Games have been run on it, with rough edges still. 32-bit support is new: installers,
 > ordinary programs, Direct3D 9 to 11 and OpenGL; Direct3D 12 and Vulkan do not work from a
-> 32-bit program yet, and no 32-bit game has been tried.
+> 32-bit program yet. One 32-bit game has been tried: Portal, from Steam, reaches its main menu.
 
 Contents: [What it does](#what-it-does) · [Build](#build) ·
 [Technical architecture](#technical-architecture) · [Runtimes](#runtimes) ·
@@ -167,7 +167,7 @@ A native ARM64 Wine with everything a game needs beside it, built by the scripts
 
 | Layer | What it does | Built by | Our changes |
 |---|---|---|---|
-| **Wine 11.21** | The Windows environment, as native ARM64 code | `build-finewine-runtime.sh` | [`patches/runtime`](../patches/runtime) (44 patches) |
+| **Wine 11.21** | The Windows environment, as native ARM64 code | `build-finewine-runtime.sh` | [`patches/runtime`](../patches/runtime) (46 patches) |
 | **FEX** | Runs x64 and 32-bit Windows code inside Wine's ARM64 processes (`xtajit64.dll` and the ARM64EC library; `xtajit.dll` for 32-bit); no Rosetta | `build-fex.sh` | [`patches/fex`](../patches/fex) |
 | **DXMT** | Direct3D 10 and 11 on Metal, and NVIDIA's NGX (DLSS) as MetalFX | `build-dxmt.sh` | [`patches/dxmt`](../patches/dxmt) |
 | **MoltenVK** | Vulkan on Metal; Direct3D 12 reaches it through Wine's vkd3d | `MVK_FLAVOR=finewine build-moltenvk.sh` | [`patches/moltenvk`](../patches/moltenvk): ray tracing, MetalFX |

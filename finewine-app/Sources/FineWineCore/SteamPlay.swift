@@ -460,6 +460,17 @@ extension PrefixService {
             try? fm.removeItem(at: target)
             try fm.copyItem(at: source, to: target)
         }
+        // 32-bit games load the 32-bit bridge. It has the same file name as the 64-bit one, so
+        // it goes where only 32-bit programs look: the prefix's 32-bit system folder.
+        let bridge32 = bridge.appendingPathComponent("wine/i386-windows/lsteamclient.dll")
+        let system32Bit = prefix.directory.appendingPathComponent("drive_c/windows/syswow64", isDirectory: true)
+        if fm.fileExists(atPath: bridge32.path), fm.fileExists(atPath: system32Bit.path) {
+            let target = system32Bit.appendingPathComponent("lsteamclient.dll")
+            if !fm.contentsEqual(atPath: bridge32.path, andPath: target.path) {
+                try? fm.removeItem(at: target)
+                try fm.copyItem(at: bridge32, to: target)
+            }
+        }
     }
 
     /// How the game is started: through the helper, with the prefix's settings, Steam's own

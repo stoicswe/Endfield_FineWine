@@ -71,8 +71,10 @@ if [ "$TARGET" != "app" ]; then
   for part in lib/wine/aarch64-windows/xtajit64.dll lib/wine/aarch64-windows/xtajit.dll \
               lib/wine/i386-windows/ntdll.dll lib/wine/i386-windows/winemetal.dll \
               lib/dxmt/aarch64-windows/d3d11.dll lib/dxmt/i386-windows/d3d11.dll \
-              lib/wine/aarch64-unix/winemetal.so; do
-    [ -f "$REPO/build/finewine-runtime/$part" ] || { echo "ERROR: the runtime is missing $part" >&2; exit 1; }
+              lib/wine/aarch64-unix/winemetal.so \
+              lib/steam-bridge/wine/lsteamclient.dll lib/steam-bridge/wine/i386-windows/lsteamclient.dll \
+              lib/steam-bridge/wine/aarch64-unix/lsteamclient.so; do
+    [ -e "$REPO/build/finewine-runtime/$part" ] || { echo "ERROR: the runtime is missing $part" >&2; exit 1; }
   done
   # Everything that ships, now that FEX and DXMT are in: the runtime runs on macOS 15 and later.
   "$REPO/scripts/lib/check-macos-compat.sh" 15.0 "$REPO/build/finewine-runtime/bin" "$REPO/build/finewine-runtime/lib"

@@ -222,7 +222,9 @@ jobs:
                       lib/wine/i386-windows/d3d9.dll lib/wine/i386-windows/opengl32.dll \
                       lib/wine/aarch64-windows/wow64.dll lib/wine/aarch64-windows/xtajit.dll \
                       lib/dxmt/i386-windows/d3d11.dll lib/dxmt/i386-windows/dxgi.dll \
-                      lib/wine/i386-windows/winemetal.dll; do
+                      lib/wine/i386-windows/winemetal.dll \
+                      lib/steam-bridge/wine/i386-windows/lsteamclient.dll \
+                      lib/steam-bridge/wine/aarch64-unix/lsteamclient.so; do
             [ -e "$RT/$part" ] || fail "the runtime in the app is missing $part (32-bit programs)"
           done
           file "$RT/lib/wine/i386-windows/ntdll.dll" | grep -q 'Intel 80386\|Intel i386' || fail "the 32-bit ntdll.dll is not a 32-bit x86 file"
