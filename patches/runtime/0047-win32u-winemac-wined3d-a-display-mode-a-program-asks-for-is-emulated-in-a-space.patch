@@ -1,0 +1,250 @@
+win32u, winemac, wined3d: a display mode a program asks for is emulated in a Space
+
+Found with Portal (Direct3D 9, exclusive full screen at 960x600). With full screen in a Space
+of its own or as a borderless window (FINEWINE_FULLSCREEN=space|borderless), a program that
+set a display mode still changed the Mac's real one: every other window on the Mac was
+resized, the display was captured, and the game's picture sat in a corner. Restoring the mode
+failed afterwards ("No matching mode found 3024x1898").
+
+dlls/win32u/sysparams.c
+- In those two modes Wine's display mode emulation is on (EmulateModeset): the mode a program
+  asks for is emulated and its picture brought to the size of its window. Direct3D 10/11 and
+  Vulkan pictures are upscaled by MetalFX as before (DXMT, MoltenVK); OpenGL ones, which
+  Direct3D 9 and older are, by Wine's own blit. FINEWINE_EMULATE_MODES=0 turns it off.
+- A scaling ratio that does not fit two 16-bit numbers is shortened instead of stopping the
+  program with an assertion: a program may now ask for any size (1366 wide on a 3024 wide
+  display at 192 DPI did not fit).
+
+- FINEWINE_DPI_AWARE=1 runs a program as DPI aware whether it says so or not (Windows:
+  "Override high DPI scaling behaviour: Application"). FineWine sets it for games. Portal goes
+  full screen through SDL, which sizes the window itself: not DPI aware, in a prefix with 192
+  DPI, it was told a screen half the size of the modes it was offered, and its window came
+  out twice the screen.
+
+dlls/winemac.drv/opengl.c
+- A "raw" client surface, which is what win32u asks for when it scales the picture itself,
+  has the size it has on the monitor. The Mac driver gave every surface the program's size,
+  so the scaled blit went past the surface and a corner of the picture was seen, magnified.
+
+dlls/winemac.drv/gdi.c
+- GetDeviceCaps(HORZRES/VERTRES) is no longer doubled in high-resolution (Retina) mode. The
+  doubling dates from when the size below it was in Mac points; it is in the calling
+  thread's own units now, so a DPI aware program was told a screen of 6048x3796. Portal 2
+  centres its window by that number and put it half a screen down and to the right, where
+  it also never became a full-screen window.
+
+dlls/wined3d/swapchain.c
+- The window of an exclusive full-screen swap chain is sized to the mode in real pixels. A
+  program that is not DPI aware, in a prefix with a high DPI, counts in larger units: in its
+  terms the window came out twice the size of the screen it saw, and the pointer reached a
+  quarter of it.
+
+dlls/win32u/window.c
+- With an emulated mode, a picture that would be larger than the real screen is fitted to it.
+
+Checked with Portal and Portal 2 themselves (each fills the Space at 3024x1898) and with
+tests/runtime/d3d9-fullscreen.c as x64 and 32-bit, in Direct3D's exclusive mode and SDL's way: 960x600 fills the Space,
+1024x768 is centred with bars at the sides, the pointer set to the middle of the program's
+screen is at the middle of the Space, and the Mac's display mode does not change.
+
+diff --git a/dlls/win32u/sysparams.c b/dlls/win32u/sysparams.c
+--- a/dlls/win32u/sysparams.c
++++ b/dlls/win32u/sysparams.c
+@@ -320,9 +320,22 @@
+ static struct ratio make_ratio( UINT num, UINT den )
+ {
+     UINT d = gcd( num, den );
+-    struct ratio r = { num / d, den / d };
+-    assert( num / d < 65536 );
+-    assert( den / d < 65536 );
++    struct ratio r;
++
++    /* FineWine: a ratio is kept as two 16-bit numbers, and upstream stops with an assertion
++     * when a size does not reduce that far (1366 wide on a 3024 wide display at 192 DPI does
++     * not). A program may ask for any size, so the fraction is shortened instead: the error
++     * is below one part in 30000. */
++    num /= d;
++    den /= d;
++    while (num >= 65536 || den >= 65536)
++    {
++        num = (num + 1) / 2;
++        den = (den + 1) / 2;
++    }
++    if (!den) den = 1;
++    r.num = num;
++    r.den = den;
+     return r;
+ }
+ 
+@@ -6153,9 +6166,33 @@
+         emulate_modeset = IS_OPTION_TRUE( buffer[0] );
+     /* FineWine: a render size for the prefix is an emulated display mode (see add_modes) */
+     if (finewine_render_scale()) emulate_modeset = TRUE;
++    /* FineWine: with full screen in a Space of its own or as a borderless window
++     * (FINEWINE_FULLSCREEN, see winemac.drv) the Mac's display mode is never changed for a
++     * program: a mode it asks for is emulated, and what it draws at that size is brought to
++     * the size of its window. Changing the real mode resized every other window on the Mac,
++     * took the display away from macOS, and left a game that asked for a small mode
++     * (Direct3D 9 games in exclusive full screen do) in a corner of the screen.
++     * FINEWINE_EMULATE_MODES=0 turns this off. */
++    {
++        const char *fullscreen = getenv( "FINEWINE_FULLSCREEN" ), *emulate = getenv( "FINEWINE_EMULATE_MODES" );
++        if (fullscreen && (!strcmp( fullscreen, "space" ) || !strcmp( fullscreen, "borderless" )) &&
++            !(emulate && emulate[0] == '0'))
++            emulate_modeset = TRUE;
++    }
+ 
+ #undef IS_OPTION_TRUE
+ 
++    /* FineWine: FINEWINE_DPI_AWARE=1 runs a program as if it had declared itself DPI aware
++     * (Windows: "Override high DPI scaling behaviour: Application"). FineWine sets it for
++     * games. A game that is not DPI aware, in a prefix with a high DPI (a Retina prefix has
++     * 192), is told a screen half the size of the display modes it is offered, and sizes its
++     * full-screen window by the mode: twice the screen (Portal, through SDL). Games count in
++     * pixels; scaling a program that is not DPI aware is for desktop programs' sake. */
++    {
++        const char *aware = getenv( "FINEWINE_DPI_AWARE" );
++        if (aware && aware[0] == '1') NtUserSetProcessDpiAwarenessContext( NTUSER_DPI_SYSTEM_AWARE, 0 );
++    }
++
+     if (app_compat_flags)
+     {
+         if (strstr( app_compat_flags, "HIGHDPIAWARE" )) NtUserSetProcessDpiAwarenessContext( NTUSER_DPI_SYSTEM_AWARE, 0 );
+diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -347,7 +347,36 @@
+ 
+     get_win_monitor_dpi( hwnd, &raw_dpi );
+     *monitor_rect = map_dpi_rect( rect, dpi, raw_dpi );
++
++    /* FineWine: with an emulated display mode, a window larger than the screen it thinks it
++     * has would be given a picture larger than the real screen, most of it out of sight.
++     * Direct3D 9's exclusive full screen does this for a program that is not DPI aware in a
++     * prefix with a high DPI: the window is sized to the mode in the program's own units,
++     * which are larger. No picture is larger than the screen: it is fitted to it, keeping
++     * its shape. */
++    if (emulate_modeset)
++    {
++        RECT screen = get_virtual_screen_rect( no_dpi, MDT_RAW_DPI );
++        int screen_w = screen.right - screen.left, screen_h = screen.bottom - screen.top;
++        int w = monitor_rect->right - monitor_rect->left, h = monitor_rect->bottom - monitor_rect->top;
+ 
++        if (screen_w > 0 && screen_h > 0 && w > 0 && h > 0 && (w > screen_w || h > screen_h))
++        {
++            if ((INT64)screen_w * h <= (INT64)screen_h * w)
++            {
++                h = (int)((INT64)h * screen_w / w);
++                w = screen_w;
++            }
++            else
++            {
++                w = (int)((INT64)w * screen_h / h);
++                h = screen_h;
++            }
++            monitor_rect->right = monitor_rect->left + max( 1, w );
++            monitor_rect->bottom = monitor_rect->top + max( 1, h );
++        }
++    }
++
+     /* use toplevel visible rect relative position, so drivers can then assume it */
+     OffsetRect( monitor_rect, monitor_rects.client.left - monitor_rects.visible.left,
+                 monitor_rects.client.top - monitor_rects.visible.top );
+diff --git a/dlls/winemac.drv/gdi.c b/dlls/winemac.drv/gdi.c
+--- a/dlls/winemac.drv/gdi.c
++++ b/dlls/winemac.drv/gdi.c
+@@ -225,8 +225,12 @@
+         pthread_mutex_unlock(&device_data_mutex);
+         dev = GET_NEXT_PHYSDEV( dev, pGetDeviceCaps );
+         ret = dev->funcs->pGetDeviceCaps( dev, cap );
+-        if ((cap == HORZRES || cap == VERTRES) && retina_on)
+-            ret *= 2;
++        /* FineWine: upstream doubles HORZRES and VERTRES here in high-resolution (Retina)
++         * mode. That dates from when the size below this was in Mac points. It is the
++         * display's size in the calling thread's own units now, pixels for a DPI aware
++         * program: doubled, such a program was told a screen twice the real one
++         * (6048x3796), and Portal 2, which centres its window by it, put the window half a
++         * screen down and to the right. */
+         return ret;
+     }
+ 
+diff --git a/dlls/winemac.drv/opengl.c b/dlls/winemac.drv/opengl.c
+--- a/dlls/winemac.drv/opengl.c
++++ b/dlls/winemac.drv/opengl.c
+@@ -1147,7 +1147,12 @@
+     if (drawable && drawable->client)
+     {
+         struct macdrv_client_surface *surface = impl_from_client_surface(drawable->client);
+-        RECT rect = surface->client.virtual_rect;
++        /* FineWine: a raw surface is one win32u scales into itself (an emulated display mode:
++         * it draws the program's picture at its own size off screen and blits it to this
++         * surface at the size it has on the monitor), so the surface has the monitor's size.
++         * Upstream takes the virtual size here always; the blit then reached past the surface
++         * and only a corner of the picture was seen, magnified. */
++        RECT rect = surface->client.raw ? surface->client.monitor_rect : surface->client.virtual_rect;
+         macdrv_make_context_current(context->context, surface->cocoa_view, cgrect_from_rect(rect));
+         return;
+     }
+diff --git a/dlls/wined3d/swapchain.c b/dlls/wined3d/swapchain.c
+--- a/dlls/wined3d/swapchain.c
++++ b/dlls/wined3d/swapchain.c
+@@ -2303,6 +2303,11 @@
+     bool set_style;
+     bool register_topmost_timer;
+     bool set_topmost_timer;
++    /* FineWine: the position and size are a display mode's, in real pixels. A program that is
++     * not DPI aware, in a prefix with a high DPI, counts in larger units: applied in its
++     * terms the window came out twice the size of the mode (192 DPI), and the pointer only
++     * reached a quarter of it. */
++    bool physical_pixels;
+ };
+ 
+ #define WINED3D_WINDOW_TOPMOST_TIMER_ID 0x4242
+@@ -2327,7 +2332,14 @@
+         SetWindowLongW(s->window, GWL_STYLE, s->style);
+         SetWindowLongW(s->window, GWL_EXSTYLE, s->exstyle);
+     }
+-    SetWindowPos(s->window, s->window_pos_after, s->x, s->y, s->width, s->height, s->flags);
++    if (s->physical_pixels)
++    {
++        DPI_AWARENESS_CONTEXT context = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
++        SetWindowPos(s->window, s->window_pos_after, s->x, s->y, s->width, s->height, s->flags);
++        if (context) SetThreadDpiAwarenessContext(context);
++    }
++    else
++        SetWindowPos(s->window, s->window_pos_after, s->x, s->y, s->width, s->height, s->flags);
+ 
+     wined3d_filter_messages(s->window, filter);
+ 
+@@ -2396,6 +2408,7 @@
+     s->y = y;
+     s->width = width;
+     s->height = height;
++    s->physical_pixels = true;
+ 
+     if (state->style || state->exstyle)
+     {
+@@ -2438,6 +2451,7 @@
+ 
+     if (!(s = malloc(sizeof(*s))))
+         return;
++    s->physical_pixels = false;
+ 
+     s->window = window;
+     s->window_pos_after = NULL;
+@@ -2581,8 +2595,13 @@
+ 
+             /* Fullscreen -> fullscreen mode change */
+             filter = wined3d_filter_messages(window, TRUE);
+-            MoveWindow(window, output_desc.desktop_rect.left, output_desc.desktop_rect.top, width,
+-                    height, TRUE);
++            {
++                /* FineWine: a mode's size is in real pixels, see struct wined3d_window_state */
++                DPI_AWARENESS_CONTEXT context = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
++                MoveWindow(window, output_desc.desktop_rect.left, output_desc.desktop_rect.top, width,
++                        height, TRUE);
++                if (context) SetThreadDpiAwarenessContext(context);
++            }
+             ShowWindow(window, SW_SHOW);
+             wined3d_filter_messages(window, filter);
+         }

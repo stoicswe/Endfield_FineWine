@@ -4,15 +4,20 @@ FineWine is a menu bar app for macOS 26 and later that runs Windows programs wit
 manages Wine prefixes, launches the programs installed in them, and makes a small `.app` for each
 program so it can be started from Finder, Launchpad or the Dock.
 
-It sits beside **FineWine Patcher** (`patcher-app/`), which patches a CrossOver install. FineWine
-uses no CrossOver code or files: it drives a Wine runtime of our own. The patcher is unchanged
-and will later become one function of this app.
+It uses no CrossOver code or files and no Rosetta 2: it drives a Wine runtime built from this
+repository. It sits beside **FineWine Patcher** ([`patcher-app/`](../patcher-app/README.md)),
+which patches a CrossOver install instead.
 
-> **Status: early.** FineWine's own runtime boots on a stock Mac and, in tests, runs ARM64 and
-> x64 Windows programs (x64 through FEX) with MSync and Direct3D 11 on Metal (DXMT). No real
-> game has been run on it yet. It is built by `scripts/build-finewine-runtime.sh`,
-> `scripts/build-fex.sh` and `scripts/build-dxmt.sh`, and checked by
-> `scripts/test-finewine-runtime.sh`. See `docs/project-information/20-finewine-runtime-spike.md`.
+> **Status: beta.** The runtime runs ARM64, x64 and 32-bit Windows programs (x64 and 32-bit
+> through FEX) with MSync, Direct3D 10/11 on Metal (DXMT) and Vulkan and Direct3D 12 through
+> MoltenVK. Games have been run on it, with rough edges still. 32-bit support is new: installers,
+> ordinary programs, Direct3D 9 to 11 and OpenGL; Direct3D 12 and Vulkan do not work from a
+> 32-bit program yet. One 32-bit game has been tried: Portal, from Steam, reaches its main menu.
+
+Contents: [What it does](#what-it-does) · [Build](#build) ·
+[Technical architecture](#technical-architecture) · [Runtimes](#runtimes) ·
+[Game profiles](#game-profiles) · [Development](#development) ·
+[Licences](#licences) · [Credits](#credits)
 
 ## What it does
 
@@ -26,131 +31,193 @@ and will later become one function of this app.
 - **Shortcut apps.** "Make Shortcut App" writes `~/Applications/FineWine/<Program>.app` with the
   program's own icon. The app contains no Wine code; it opens a `finewine://launch` link that
   FineWine handles.
-- **Opening programs from Finder.** A `.exe` or `.msi` from outside any prefix gets a new prefix named after what it installs (the program's product name, else its cleaned-up file name), or FineWine asks whether to make one or use an existing prefix: Settings > Windows files > "Auto create prefix" or "Ask Me".
-- **32-bit installers.** The runtime cannot run 32-bit programs, and most installers are 32-bit.
-  One made with NSIS is installed by FineWine itself, from the script inside it, with the
-  status window showing progress; see `docs/project-information/25-32-bit-programs-and-installers.md`.
-  Other 32-bit programs are explained rather than failing silently.
+- **Importing a CrossOver bottle.** "Import CrossOver Bottle…" makes a prefix from a copy of a
+  bottle (a clone on the same drive, so it takes no extra room). The bottle is only read. The
+  C: drive and registry come over, the Windows user folder is renamed, and FineWine's Wine then
+  updates the system files. 32-bit bottles and bottles with programs running are refused.
+- **Steam.** "Install in Steam" (Settings > Steam) adds FineWine to the Mac Steam client's
+  compatibility tools, beside NotProton's or Bridgeplay's, which are what switch that list on;
+  FineWine does not patch Steam. A Windows game started with Play then runs on FineWine's
+  runtime in a prefix of its own, with Steam sign-in and the Steamworks API through the
+  runtime's bridge. See [runtime-extras/steam-bridge](../runtime-extras/steam-bridge/README.md).
+- **Opening programs from Finder.** A `.exe` or `.msi` from outside any prefix gets a new prefix
+  named after what it installs, or FineWine asks whether to make one or use an existing prefix:
+  Settings > Windows files > "Auto create prefix" or "Ask Me". FineWine appears under Open With
+  for these files, and a setting makes it their default app.
+- **32-bit programs and installers.** Most installers are 32-bit, whatever they install. One
+  made with NSIS is installed by FineWine itself, from the script inside it; other 32-bit
+  programs run in the runtime. See
+  [25-32-bit-programs-and-installers.md](../docs/project-information/25-32-bit-programs-and-installers.md).
 - **Right-click a prefix** in the manager's sidebar for its actions: run an installer, find
   programs, configure, Wine tools, show its files or logs, shut down, rename, duplicate, delete.
-- **Discord activity.** With "Show what I'm playing in Discord" on in Settings (it is off by
-  default) and the id of a Discord application of your own entered there, the program you
-  started from FineWine is your Discord activity while it runs; when a launcher starts the
-  game, the game is what is shown. FineWine talks only to the Discord app on the Mac
-  (`DiscordPresence.swift`).
-- **Supporting Wine.** Settings and the menu bar panel link to WineHQ's donation page.
-- **Quitting.** If programs are running in any prefix when FineWine is asked to quit (the power
-  button, Command-Q, logging out), it lists them and asks. On a yes every program is asked to
-  close; whatever has not closed after 5 seconds is ended, and then FineWine quits.
-- **Status window.** While a prefix is set up or changed and while a program starts, a small
-  window in the middle of the display says what FineWine is doing and for how long, so a slow
-  start does not look like a stall. It takes no focus, goes away when the program's own window
-  appears (or the program ends), and a click hides it. It can be turned off in Settings.
 - **External drives.** A prefix can live on any APFS or Mac OS Extended drive, in
-  `FineWine/Prefixes` on it; a default drive is set in Settings. Each prefix says which drive it is
-  on. A drive's prefixes leave the list when it is unplugged (or show greyed out, saying which
-  drive to connect) and come back, ready to run, when it is plugged in again. See
-  [docs/project-information/27-prefixes-on-external-drives.md](../docs/project-information/27-prefixes-on-external-drives.md).
-- **Moving and snapshots.** A prefix moves between this Mac and a drive from its right-click
-  menu or Details tab, with progress and Cancel, and shortcuts keep working. A snapshot saves the
-  whole prefix next to it (an instant APFS clone) or on another drive (a backup). A prefix can be
-  restored from a snapshot, or a snapshot made into a new prefix, even after the prefix was
-  deleted. See
-  [docs/project-information/28-moving-prefixes-and-snapshots.md](../docs/project-information/28-moving-prefixes-and-snapshots.md).
+  `FineWine/Prefixes` on it. A drive's prefixes leave the list when it is unplugged and come
+  back when it is plugged in again. See
+  [27-prefixes-on-external-drives.md](../docs/project-information/27-prefixes-on-external-drives.md).
+- **Moving and snapshots.** A prefix moves between this Mac and a drive with progress and Cancel,
+  and shortcuts keep working. A snapshot saves the whole prefix next to it (an instant APFS
+  clone) or on another drive; a prefix can be restored from one, or a snapshot made into a new
+  prefix. See
+  [28-moving-prefixes-and-snapshots.md](../docs/project-information/28-moving-prefixes-and-snapshots.md).
 - **Configuration.** Windows version and build number, Direct3D backend, Retina mode, DPI,
-  virtual desktop, Metal overlay, full-screen behaviour (a Mac full-screen Space by default), Game Mode (programs that use Direct3D, Vulkan or OpenGL run as games), starting HoYoverse games through a Steam stand-in, DLSS through MetalFX, reporting an NVIDIA GPU (the ids of an RTX 5080, for games that only offer DLSS on NVIDIA), MSync, the hypervisor flag, macOS styling for Windows controls,
-  Mac-style app icons (running programs and shortcut apps get the program's largest icon on a
-  Mac app icon's rounded square), Option-as-Alt, the language for non-Unicode programs (the code page older programs use for
-  Chinese, Japanese and Korean text), DLL overrides,
-  environment variables and Wine debug channels. Changes are written to the prefix's registry
-  when applied.
-- **Wine tools.** Wine Configuration (winecfg), Registry Editor, Control Panel, Add or Remove
-  Programs, Task Manager, File Manager, Command Prompt and Notepad, plus restart, update and
+  virtual desktop, Metal overlay, full-screen behaviour (a Mac full-screen Space by default),
+  Game Mode, automatic MetalFX upscaling and render size, DLSS through MetalFX, reporting an
+  NVIDIA GPU, starting HoYoverse games through a Steam stand-in, MSync, the emulator's settings,
+  macOS styling for Windows controls, Mac-style app icons, Option-as-Alt, the language for
+  non-Unicode programs, DLL overrides, environment variables and Wine debug channels.
+- **Wine tools.** Wine Configuration, Registry Editor, Control Panel, Add or Remove Programs,
+  Task Manager, File Manager, Command Prompt and Notepad, plus restart, update and
   stop-everything.
-- **Windows files.** FineWine appears under Open With for `.exe` and `.msi` files. A setting
-  makes it their default app. A file from outside a prefix is always confirmed first, with a
-  choice of prefix.
+- **Status window.** While a prefix is set up or changed and while a program starts, a small
+  window says what FineWine is doing and for how long. It takes no focus and can be turned off.
+- **Discord activity.** Off by default. With it on and the id of a Discord application of your
+  own entered in Settings, the program you started is your Discord activity while it runs.
+  FineWine talks only to the Discord app on the Mac.
+- **Updates.** FineWine checks this repository's GitHub releases, downloads the new version,
+  checks its checksum and signature, and replaces itself.
+- **Quitting.** If programs are running when FineWine is asked to quit, it lists them and asks.
+  On a yes every program is asked to close; whatever has not closed after 5 seconds is ended.
+- **Languages.** English, Arabic, Japanese, Korean, Simplified Chinese and Traditional Chinese,
+  following the system language or chosen in Settings.
 
 ## Build
+
+Requirements: an Apple Silicon Mac, Xcode 26 or later (the macOS 26 SDK; the interface uses
+Liquid Glass) and, for the runtime, [Homebrew](https://brew.sh). The build scripts install the
+Homebrew tools they need.
+
+**Everything, runtime included** (well over an hour from scratch):
+
+```bash
+./scripts/build-finewine.sh
+```
+
+It builds, in order: MoltenVK (FineWine flavour), the llvm-mingw compiler, the Wine runtime, FEX
+and DXMT, runs the runtime checks, and then builds `FineWine.app` with the runtime inside it.
+`./scripts/build-finewine.sh runtime` stops before the app; `./scripts/build-finewine.sh app`
+builds only the app.
+
+**The app only:**
 
 ```bash
 ./finewine-app/scripts/build-app.sh
 ```
 
 This runs the unit tests, builds a release binary, assembles `finewine-app/build/FineWine.app`
-and signs it ad hoc. It needs the macOS 26 SDK or later (Xcode 26+) to build, because the interface
-uses Liquid Glass; the app runs on macOS 26 and later. The build stamps the real SDK version
-into the binary (`scripts/lib/stamp-sdk-version.sh`): SwiftPM records the deployment target
-there instead, and macOS draws an app whose binary names an SDK older than 26 without Liquid
-Glass. The Wine runtime inside is built for macOS 15 and later and runs on any of them. Environment variables: `VERSION`, `CODESIGN_ID`, `ICON_VARIANT`, `SKIP_TESTS=1`.
+and signs it ad hoc. Environment variables: `VERSION`, `CODESIGN_ID`, `ICON_VARIANT`,
+`SKIP_TESTS=1`.
 
-**The Wine runtime is built into the app.** If `build/finewine-runtime` exists, it is copied to
-`FineWine.app/Contents/Resources/Runtime` (about 860 MB). The app lists it first as "Built in",
-new prefixes use it, and a prefix whose own runtime is missing falls back to it; it cannot be
-removed from the list. Without a runtime in `build/` the app is built without one and says so
-(`BUNDLE_RUNTIME=required` makes that an error, `BUNDLE_RUNTIME=0` skips it, `RUNTIME_DIR`
-picks another folder). `scripts/build-finewine.sh` builds the runtime and then the app with it.
+If `build/finewine-runtime` exists it is copied to `FineWine.app/Contents/Resources/Runtime`
+(about 860 MB) and listed first as "Built in". Without one the app is built without a runtime and
+says so (`BUNDLE_RUNTIME=required` makes that an error, `BUNDLE_RUNTIME=0` skips it,
+`RUNTIME_DIR` picks another folder).
 
-Run the tests on their own with:
+The build stamps the real SDK version into the binary (`scripts/lib/stamp-sdk-version.sh`):
+SwiftPM records the deployment target there instead, and macOS draws an app whose binary names an
+SDK older than 26 without Liquid Glass. The app runs on macOS 26 and later; the runtime is built
+for macOS 15 and later.
+
+**Tests:**
 
 ```bash
 swift test --package-path finewine-app
 ```
 
-One test drives a real Wine runtime and is skipped unless it is told where one is:
+Tests that drive a real Wine runtime are skipped unless they are told where one is:
 
 ```bash
 FINEWINE_TEST_RUNTIME="$PWD/build/finewine-runtime" swift test --package-path finewine-app --filter RuntimeIntegrationTests
 ```
 
-CI builds and tests the app in `.github/workflows/build-finewine.yml` and uploads it as the
-`finewine-app` artifact. That workflow is separate from the Wine and patcher builds.
+`scripts/test-finewine-runtime.sh` checks the runtime itself and
+`scripts/bench-finewine-runtime.sh` measures it.
 
-## Layout
+CI builds and tests the app in `.github/workflows/build-finewine.yml`, and the whole runtime in
+`build-finewine-full.yml`.
+
+## Technical architecture
+
+### The app
 
 | Path | What it holds |
 |---|---|
-| `Sources/FineWineCore` | Everything that isn't interface: prefixes, runtimes, profiles, registry files, launch plans, shortcut apps, icon extraction. Unit-tested. |
-| `Sources/FineWine` | The SwiftUI app: menu bar panel, manager window, settings. |
+| `Sources/FineWineCore` | Everything that isn't interface: prefixes, runtimes, profiles, registry files, launch plans, shortcut apps, icon extraction, bottle import, updates. Unit-tested. |
+| `Sources/FineWine` | The SwiftUI app: menu bar panel, manager window, settings, update window. |
 | `Tests/FineWineCoreTests` | Unit tests for the core library. |
 | `Resources/FW_Icon` | The app icon: the Icon Composer document and its PNG exports. |
 | `Resources/MenuBarIcon.svg` | The menu bar icon, drawn as a template image. |
 | `scripts/build-app.sh` | Builds and assembles the app. |
 | `scripts/make-icns.swift` | Makes the `.icns` from one appearance of the icon exports. |
 
+The app never links Wine. It starts the runtime's loader as a separate process with an
+environment it builds from the runtime's description, the prefix's settings and the program's own
+(`LaunchPlan.swift`). Settings that Windows keeps in the registry are written to the prefix's
+registry files; the rest are environment variables the patched runtime reads. Prefixes are found
+again by a file Wine keeps open in them, which is also how FineWine knows what is running.
+
 The app icon always uses the **dark** appearance of the artwork. `build-app.sh` makes a plain
-`.icns` from the dark exports; it deliberately does not compile the `.icon` document, because
-that icon would switch to the light appearance in light mode.
+`.icns` from the dark exports; it does not compile the `.icon` document, because that icon would
+switch to the light appearance in light mode.
 
-## Runtimes
+### The runtime
 
-A runtime is a folder with `bin/wine`, `bin/wineserver` and `lib/wine`. Add one in Settings:
+A native ARM64 Wine with everything a game needs beside it, built by the scripts in
+[`scripts/`](../scripts/) from the exact commits named in
+[`finewine-sources.lock`](../finewine-sources.lock):
 
-- A folder with a `runtime.json` is a FineWine runtime and is copied into
-  `~/Library/Application Support/FineWine/Runtimes`.
-- Any other Wine folder is used where it is.
+| Layer | What it does | Built by | Our changes |
+|---|---|---|---|
+| **Wine 11.21** | The Windows environment, as native ARM64 code | `build-finewine-runtime.sh` | [`patches/runtime`](../patches/runtime) (47 patches) |
+| **FEX** | Runs x64 and 32-bit Windows code inside Wine's ARM64 processes (`xtajit64.dll` and the ARM64EC library; `xtajit.dll` for 32-bit); no Rosetta | `build-fex.sh` | [`patches/fex`](../patches/fex) |
+| **DXMT** | Direct3D 10 and 11 on Metal, and NVIDIA's NGX (DLSS) as MetalFX | `build-dxmt.sh` | [`patches/dxmt`](../patches/dxmt) |
+| **MoltenVK** | Vulkan on Metal; Direct3D 12 reaches it through Wine's vkd3d | `MVK_FLAVOR=finewine build-moltenvk.sh` | [`patches/moltenvk`](../patches/moltenvk): ray tracing, MetalFX |
+| **GnuTLS, Nettle, GMP, FreeType** | TLS and fonts for Wine | `build-finewine-deps.sh` | none |
+| **Steam stand-in, presence helper** | Small programs of our own | [`runtime-extras`](../runtime-extras) | |
+| **Steam bridge** | Valve's `lsteamclient`, the `steam.exe` helper and the overlay helper, for games started from the Mac Steam client | `build-steam-bridge.sh` | [`runtime-extras/steam-bridge`](../runtime-extras/steam-bridge), runtime patch 0042 |
 
-`runtime.json`:
+What the Wine patches are for:
 
-```json
-{
-  "id": "finewine-11.21-1",
-  "name": "FineWine 11.21",
-  "version": "1",
-  "wineVersion": "11.21",
-  "architecture": "arm64",
-  "graphics": {
-    "dxmt": { "dllPath": "lib/dxmt", "overrides": { "d3d11": "n,b", "dxgi": "n,b", "d3d10core": "n,b" } }
-  }
-}
-```
-
-`graphics` tells FineWine how to switch on each Direct3D backend the runtime ships: a folder to
-add to Wine's DLL path and the load order for its DLLs. A backend the runtime doesn't list has no
-effect, and the Configuration tab says so.
+- **Running on a stock Mac at all.** macOS gives a process no memory below 4 GB and does not
+  preserve the x18 register, both of which Windows ARM64 code relies on. Patches 0002 to 0005
+  work around both without Apple's entitlement
+  ([20-finewine-runtime-spike.md](../docs/project-information/20-finewine-runtime-spike.md)).
+- **32-bit programs.** With no memory below 4 GB, a 32-bit program's 4 GB are a window at 1 TB:
+  Wine's memory manager and call layer and FEX's generated code add the window's base to every
+  32-bit address (patch 0043, FEX patch 0011).
+- **16K pages.** macOS uses 16K memory pages where Windows expects 4K; several Wine and FEX
+  patches make partial pages behave, and keep the emulator from committing memory it never uses
+  ([30-emulator-memory-on-macos.md](../docs/project-information/30-emulator-memory-on-macos.md)).
+- **Speed.** MSync (Mach semaphores for Windows synchronisation), a faster search for free
+  memory, and measured defaults
+  ([22-performance.md](../docs/project-information/22-performance.md),
+  [29-performance-analysis.md](../docs/project-information/29-performance-analysis.md)).
+- **Behaving like a Mac game.** Full-screen Spaces, Game Mode, the Metal HUD, rounded windows,
+  Dock icons, Mac fonts for Chinese, Japanese and Korean text, audio that follows the Mac's
+  output device
+  ([23-behaving-like-a-mac-game.md](../docs/project-information/23-behaving-like-a-mac-game.md)).
+- **Graphics.** DXMT's window interface, MetalFX upscaling, the GPU a prefix reports, ray
+  tracing in MoltenVK
+  ([21-metal4-and-ray-tracing.md](../docs/project-information/21-metal4-and-ray-tracing.md)).
 
 Game-specific fixes are compiled into the runtime and switched on by settings; nothing is
 swapped into a runtime per game.
+
+## Runtimes
+
+A runtime is a Wine build plus a `runtime.json` that says what the build is and how to start it.
+The one inside the app is listed first; others are added in Settings:
+
+- A folder with a `runtime.json` beside `bin/` and `lib/` is copied into
+  `~/Library/Application Support/FineWine/Runtimes`.
+- A folder holding only a `runtime.json` whose `root` names a Wine build elsewhere describes
+  that build where it is.
+- A plain Wine folder with no description is used where it is, with no FineWine features.
+
+A description can also name the loader and server, library folders, environment variables and
+the FineWine features (capabilities) the build has; settings for a feature a runtime lacks are
+greyed out. CrossOver's folder is refused as it is, because its `bin/wine` only works with
+CrossOver's bottles. The whole format:
+[docs/finewine-runtime-format.md](../docs/finewine-runtime-format.md).
 
 ## Game profiles
 
@@ -162,8 +229,8 @@ in `~/Library/Application Support/FineWine/Profiles`:
 {
   "id": "my-game",
   "name": "My Game",
-  "summary": "Windows 10 with DXVK.",
-  "settings": { "windowsVersion": "win10", "graphicsBackend": "dxvk" },
+  "summary": "Windows 10 with DXMT.",
+  "settings": { "windowsVersion": "win10", "graphicsBackend": "dxmt" },
   "executables": ["Game.exe"],
   "launchArguments": ["-dx11"]
 }
@@ -178,10 +245,69 @@ shortcut apps) under that folder instead of the real locations:
 FINEWINE_HOME=/tmp/finewine-dev finewine-app/build/FineWine.app/Contents/MacOS/FineWine
 ```
 
-- **Multilingual support.** Built-in localization with automatic system language detection and dynamic runtime switching in Settings or via the menu bar. Supported languages: English, Simplified Chinese (`zh-Hans`), Traditional Chinese (`zh-Hant`), Korean (`ko`), and Japanese (`ja`).
-- **Development.** Set `FINEWINE_HOME` to an absolute path to keep all of FineWine's data (prefixes, runtimes, logs, shortcut apps) under that folder instead of the real locations:
+## Licences
 
-## Licence
+**FineWine itself** (the Swift sources, the interface, the build scripts, `runtime-extras`):
+[GNU GPL-3.0-or-later](../LICENSE). The icon artwork is supplied by the project owner, who holds
+usage rights for it.
 
-GPL-3.0-or-later, like the rest of this repository. The icon artwork is supplied by the project
-owner, who holds usage rights for it.
+**The patches** are changes to other projects and stay under the licence of the project each one
+changes.
+
+**What a built `FineWine.app` contains**, each under its own licence:
+
+| Component | Licence | Upstream |
+|---|---|---|
+| Wine 11.21 | LGPL-2.1-or-later | [winehq.org](https://www.winehq.org/) · [source](https://gitlab.winehq.org/wine/wine) |
+| FEX | MIT | [FEX-Emu/FEX](https://github.com/FEX-Emu/FEX) |
+| DXMT | LGPL-2.1-or-later | [3Shain/dxmt](https://github.com/3Shain/dxmt) |
+| LLVM 15 (libraries inside DXMT) | Apache-2.0 with LLVM exceptions | [llvm/llvm-project](https://github.com/llvm/llvm-project) |
+| MoltenVK | Apache-2.0 | [KhronosGroup/MoltenVK](https://github.com/KhronosGroup/MoltenVK) |
+| GnuTLS | LGPL-2.1-or-later | [gnutls.org](https://www.gnutls.org/) |
+| Nettle | LGPL-3.0-or-later or GPL-2.0-or-later | [lysator.liu.se/~nisse/nettle](https://www.lysator.liu.se/~nisse/nettle/) |
+| GMP | LGPL-3.0-or-later or GPL-2.0-or-later | [gmplib.org](https://gmplib.org/) |
+| FreeType | FreeType License or GPL-2.0 | [freetype.org](https://freetype.org/) |
+| lsteamclient (Steam bridge) | Steamworks SDK licence | [ValveSoftware/Proton](https://github.com/ValveSoftware/Proton) |
+| steam.exe helper (Steam bridge) | BSD 3-Clause | [ValveSoftware/Proton](https://github.com/ValveSoftware/Proton), macOS port from [NotProton](https://github.com/NotProtonNot/NotProton) |
+
+Windows-side code is compiled with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw), whose
+runtime libraries (mingw-w64, compiler-rt, libc++) are linked into those modules under their own
+permissive licences.
+
+**Corresponding source.** If you distribute a built app, the LGPL components require their
+complete source to be available. For this project that is
+[`finewine-sources.lock`](../finewine-sources.lock), which names every upstream by exact commit
+or checksum, plus the [`patches/`](../patches) applied to them and the scripts that build them.
+GnuTLS, GMP and FreeType are built from CodeWeavers' published
+[CrossOver source archive](https://media.codeweavers.com/pub/crossover/source/), also pinned
+there.
+
+FineWine contains nothing of CrossOver's own code, Apple's Game Porting Toolkit or any game.
+
+## Credits
+
+FineWine exists because of these projects:
+
+- **[Wine](https://www.winehq.org/)** — the foundation. FineWine links to
+  [WineHQ's donation page](https://www.winehq.org/donate) from its settings.
+- **[FEX-Emu](https://fex-emu.com/)** ([source](https://github.com/FEX-Emu/FEX)) — x64
+  emulation on ARM64.
+- **[DXMT](https://github.com/3Shain/dxmt)** by Feifan He — Direct3D 10/11 on Metal.
+- **[MoltenVK](https://github.com/KhronosGroup/MoltenVK)** by the Khronos Group — Vulkan on
+  Metal — and **[SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross)**, its shader
+  translator.
+- **[vkd3d](https://gitlab.winehq.org/wine/vkd3d)** — Direct3D 12 on Vulkan, part of Wine.
+- **[llvm-mingw](https://github.com/mstorsjo/llvm-mingw)** by Martin Storsjö and
+  **[LLVM](https://llvm.org/)** — the Windows compiler.
+- **MSync** by Zebediah Figura and Marc-Aurel Zent — Windows synchronisation on Mach
+  semaphores (runtime patch 0001).
+- **[CodeWeavers](https://www.codeweavers.com/)** — for the Mac work they contribute to Wine
+  and for publishing the sources CrossOver is built from.
+- **[GnuTLS](https://www.gnutls.org/)**, **[Nettle](https://www.lysator.liu.se/~nisse/nettle/)**,
+  **[GMP](https://gmplib.org/)** and **[FreeType](https://freetype.org/)**.
+- **[Valve](https://github.com/ValveSoftware/Proton)** — `lsteamclient` and the Steam helper,
+  from Proton — and **[NotProton](https://github.com/NotProtonNot/NotProton)** and
+  **[Bridgeplay](https://github.com/raymondchins/Bridgeplay)**, whose macOS ports of them the
+  Steam bridge uses and whose Steam Play support it relies on.
+- **[dw-proton / Dawn Winery](https://dawn.wine/)** — the Linux work on these games that showed
+  what they need.

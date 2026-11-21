@@ -213,9 +213,9 @@ else
   else
     fail "could not build tests/runtime/memtrace.c"; tail -n 3 "$WORK/memtrace-build.log"
   fi
-  # 32-bit programs cannot run here (no memory below 4 GB). An installer that starts the 32-bit
-  # setup program of a runtime Wine has built in must see it succeed; any other 32-bit program
-  # must still fail to start, and say so.
+  # An installer that starts the 32-bit setup program of a runtime Wine has built in must see
+  # it succeed without it running (a stand-in runs). Any other 32-bit program runs when the
+  # runtime has a 32-bit side, and otherwise must fail to start and say so.
   MINGW32="$REPO/build/llvm-mingw/bin/i686-w64-mingw32-clang"
   if [ -x "$MINGW32" ] && mkdir -p "$WORK/redist" \
      && "$MINGW32" -O1 -o "$WORK/redist/vc_redist.x64.exe" "$REPO/tests/runtime/x64-hello.c" >"$WORK/redist-build.log" 2>&1 \
@@ -223,7 +223,8 @@ else
      && "$MINGW" -O1 -municode -o "$WORK/redist/start.exe" "$REPO/tests/runtime/start-and-wait.c" >>"$WORK/redist-build.log" 2>&1; then
     one="$("$RT/bin/wine" "$WORK/redist/start.exe" vc_redist.x64.exe </dev/null 2>/dev/null | tr -d '\r')"
     two="$("$RT/bin/wine" "$WORK/redist/start.exe" other32.exe </dev/null 2>/dev/null | tr -d '\r')"
-    case "$one|$two" in "started, exit code 0|could not start"*) pass "32-bit setup programs of built-in runtimes are reported as installed; other 32-bit programs fail to start" ;;
+    if [ -f "$RT/lib/wine/i386-windows/ntdll.dll" ]; then other="hello from x64"; said="run"; else other="could not start"; said="fail to start"; fi
+    case "$one|$two" in "started, exit code 0|$other"*) pass "32-bit setup programs of built-in runtimes are reported as installed; other 32-bit programs $said" ;;
       *) fail "32-bit stand-in: runtime setup gave '$one', another 32-bit program gave '$two'" ;; esac
   else
     echo "  - 32-bit stand-in check skipped: could not build its test programs"
@@ -623,6 +624,54 @@ if [ "${FINEWINE_TEST_FULLSCREEN:-0}" = 1 ] && [ -x "$GAME_LOADER" ]; then
   else
     fail "could not build tests/runtime/fullscreen.c"; tail -n 3 "$WORK/gfx-build.log"
   fi
+  # A Direct3D 9 game in exclusive full screen at a small mode (Portal: 960x600), 32-bit and x64
+  # (patches/runtime/0047): the Mac's own display mode must stay as it is, the program's window
+  # and screen must agree, and the pointer put in the middle of its screen must be in the
+  # middle of the Mac's. Covers the display for a few seconds and moves the pointer and back.
+  cat > "$WORK/macstate.swift" <<'SWIFT'
+import CoreGraphics
+let m = CGDisplayCopyDisplayMode(CGMainDisplayID())!
+let p = CGEvent(source: nil)!.location
+print("\(m.pixelWidth)x\(m.pixelHeight) \(Int(p.x)) \(Int(p.y)) \(m.width) \(m.height)")
+SWIFT
+  if swiftc -O -o "$WORK/macstate" "$WORK/macstate.swift" >"$WORK/d9fs-build.log" 2>&1 \
+     && "$REPO/build/llvm-mingw/bin/x86_64-w64-mingw32-clang" -O1 -o "$WORK/d9fs-x64.exe" "$REPO/tests/runtime/d3d9-fullscreen.c" -ld3d9 >>"$WORK/d9fs-build.log" 2>&1 \
+     && "$REPO/build/llvm-mingw/bin/i686-w64-mingw32-clang" -O1 -o "$WORK/d9fs-32.exe" "$REPO/tests/runtime/d3d9-fullscreen.c" -ld3d9 >>"$WORK/d9fs-build.log" 2>&1; then
+    mac_before="$("$WORK/macstate" | cut -d' ' -f1)"; bad=""
+    # Twice each: Direct3D's exclusive mode, and the way SDL does it (the program sets the mode
+    # and sizes its own window; Portal), which needs the program run as DPI aware, as FineWine
+    # runs games.
+    for run in "d9fs-x64 0 0" "d9fs-32 0 0" "d9fs-x64 2 1" "d9fs-32 2 1"; do
+      set -- $run; exe="$1"; how="$2"; aware="$3"
+      [ -f "$RT/lib/wine/i386-windows/ntdll.dll" ] || [ "$exe" = d9fs-x64 ] || continue
+      FINEWINE_FULLSCREEN=space FINEWINE_DPI_AWARE="$aware" perl -e 'alarm 60; exec @ARGV' "$RT/bin/wine" "$WORK/$exe.exe" 960 600 5 "$how" </dev/null >"$WORK/$exe.txt" 2>/dev/null &
+      during=""
+      for _ in $(seq 1 40); do
+        if grep -q '^state' "$WORK/$exe.txt" 2>/dev/null; then perl -e 'select(undef, undef, undef, 0.5)'; during="$("$WORK/macstate")"; break; fi
+        perl -e 'select(undef, undef, undef, 0.25)'
+      done
+      wait
+      out="$(tr -d '\r' < "$WORK/$exe.txt")"
+      state="$(echo "$out" | sed -n 's/^state: //p')"; pointer="$(echo "$out" | sed -n 's/^pointer: //p')"
+      w="$(echo "$state" | sed -n 's/.* screen \([0-9]*\)x.*/\1/p')"; h="$(echo "$state" | sed -n 's/.* screen [0-9]*x\([0-9]*\).*/\1/p')"
+      exe="$exe/$how"
+      case "$out" in *"d3d9-fullscreen: ok"*) ;; *) bad="$bad $exe/$how:did-not-finish" ;; esac
+      case "$state" in "window 0,0-$w,$h client ${w}x$h mode 960x600 "*) ;; *) bad="$bad $exe/$how:window($state)" ;; esac
+      case "$pointer" in "set $((w/2)),$((h/2)) got $((w/2)),$((h/2)) client middle $((w/2)),$((h/2))") ;; *) bad="$bad $exe/$how:pointer($pointer)" ;; esac
+      set -- $during
+      [ "${1:-}" = "$mac_before" ] || bad="$bad $exe/$how:mac-mode-changed(${1:-none})"
+      # the middle of the Mac's display, within the height of a menu bar
+      if [ -n "${5:-}" ]; then
+        dx=$(( ${2:-0} - $4 / 2 )); dy=$(( ${3:-0} - $5 / 2 ))
+        [ "${dx#-}" -le 4 ] && [ "${dy#-}" -le 40 ] || bad="$bad $exe/$how:mac-pointer(${2:-},${3:-})"
+      fi
+    done
+    "$RT/bin/wineserver" -k 2>/dev/null
+    if [ -z "$bad" ]; then pass "Direct3D 9 full screen at 960x600 fills a Space, in exclusive mode and SDL's way: the Mac's mode is untouched, window and pointer agree (x64 and 32-bit)"
+    else fail "Direct3D 9 full screen in a Space:$bad"; fi
+  else
+    fail "could not build the Direct3D 9 full-screen check"; tail -n 3 "$WORK/d9fs-build.log"
+  fi
 else
   echo "  - full-screen and Game Mode activation not checked: they cover the display (FINEWINE_TEST_FULLSCREEN=1 to run them)"
 fi
@@ -787,6 +836,165 @@ if [ -x "$RT/lib/wine/aarch64-unix/finewine-presence" ] && [ -x "$MINGW" ] \
   else fail "presence stand-in: seen=$seen still-there=$left"; ps -axww -o pid,ppid,etime,command | grep -E "presence|Presence" | grep -v grep | cut -c1-260; fi
 else
   echo "  - presence stand-in not checked: no finewine-presence in this runtime, or no llvm-mingw"
+fi
+
+# A Vulkan swap chain smaller than its window in display pixels is upscaled by MetalFX in
+# MoltenVK (patches/moltenvk/0006), the switch for it can be thrown while the program runs,
+# and a render size makes programs see a smaller screen (runtime patch 0040). The test
+# prefix has Wine's Retina mode off, so on a display with two pixels to the point the
+# program's 480x300 swap chain is half its window. A small window appears for a few seconds.
+UPVKH="$REPO/build/moltenvk-finewine-src/Package/Release/MoltenVK/include"
+if [ ! -x "$MINGW" ] || [ ! -f "$UPVKH/vulkan/vulkan_core.h" ]; then
+  echo "  - Vulkan upscaling not checked: no llvm-mingw, or no Vulkan headers from the MoltenVK build"
+elif ! "$MINGW" -O1 -I"$UPVKH" -o "$WORK/vulkan-upscale.exe" "$REPO/tests/runtime/vulkan-upscale.c" -luser32 -lgdi32 >"$WORK/upscale-build.log" 2>&1; then
+  fail "could not build tests/runtime/vulkan-upscale.c"; tail -n 3 "$WORK/upscale-build.log"
+else
+  up_run(){ # log seconds [env...] -> runs the program, its output and MoltenVK's log in the file
+    local log="$1" secs="$2"; shift 2
+    env FINEWINE_GAME_PRESENCE=0 "$@" "$RT/bin/wine" "$WORK/vulkan-upscale.exe" "$secs" >"$log" 2>&1 </dev/null
+  }
+  up_run "$WORK/up-on.log" 2
+  up_run "$WORK/up-off.log" 2 FINEWINE_METALFX_AUTO=0
+  # started switched off, switched on from outside as the FineWine app does it
+  up_run "$WORK/up-live.log" 6 FINEWINE_METALFX_AUTO=0 &
+  up_pid=$!; live_pid=""
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if grep -aq 'vulkan-upscale: ready' "$WORK/up-live.log" 2>/dev/null; then live_pid="$(pgrep -f 'vulkan-upscale.exe 6' | tail -n 1)"; break; fi
+    perl -e 'select(undef, undef, undef, 0.25)'
+  done
+  [ -n "$live_pid" ] && for p in $(pgrep -f 'vulkan-upscale.exe 6'); do notifyutil -s "finewine.metalfx.$p" 1 >/dev/null 2>&1; done
+  wait "$up_pid" 2>/dev/null
+  base="$(tr -d '\r' <"$WORK/up-on.log" | sed -n 's/.*vulkan-upscale: ok .* screen \([0-9]*\)x\([0-9]*\).*/\1 \2/p')"
+  # a render size: the display's modes are set up when Wine's server starts
+  "$RT/bin/wineserver" -k 2>/dev/null; "$RT/bin/wineserver" -w 2>/dev/null
+  up_run "$WORK/up-size.log" 2 FINEWINE_RENDER_SCALE=75
+  "$RT/bin/wineserver" -k 2>/dev/null; "$RT/bin/wineserver" -w 2>/dev/null
+  sized="$(tr -d '\r' <"$WORK/up-size.log" | sed -n 's/.*vulkan-upscale: ok .* screen \([0-9]*\)x\([0-9]*\).*/\1 \2/p')"
+  bad=""
+  if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] && system_profiler SPDisplaysDataType 2>/dev/null | grep -q Retina; then
+    grep -aq "MetalFX upscales the swapchain's 480 x 300 picture to 960 x 600" "$WORK/up-on.log" || bad="$bad not-upscaled"
+    grep -aq "MetalFX upscales" "$WORK/up-off.log" && bad="$bad upscaled-when-off"
+    grep -aq "upscaling of the swapchain switched on" "$WORK/up-live.log" || bad="$bad not-switched-live"
+  fi
+  for f in on off live size; do grep -aq 'vulkan-upscale: ok' "$WORK/up-$f.log" || bad="$bad program($f)"; done
+  # 75% of the screen in each direction, to within a few pixels of rounding
+  if [ -n "$base" ] && [ -n "$sized" ]; then
+    set -- $base $sized
+    [ $(( $3 * 100 - $1 * 75 )) -gt -1700 ] && [ $(( $3 * 100 - $1 * 75 )) -lt 1700 ] \
+      && [ $(( $4 * 100 - $2 * 75 )) -gt -1700 ] && [ $(( $4 * 100 - $2 * 75 )) -lt 1700 ] || bad="$bad render-size($sized of $base)"
+  else bad="$bad render-size(no sizes)"; fi
+  if [ -z "$bad" ]; then pass "a Vulkan picture smaller than its window is upscaled with MetalFX, switched while running, and a render size shrinks the screen programs see ($sized of $base)"
+  else fail "Vulkan upscaling:$bad"; grep -ah "FineWine\|vulkan-upscale" "$WORK"/up-*.log | tail -n 8; fi
+fi
+
+# Playback follows the Mac's output device (headphones connected while a game runs, patch
+# 0041): a stream is given a new audio unit and must go on playing. The check does not change
+# the Mac's output; it has the driver re-open the stream's device two seconds in, which is the
+# same swap, and looks at how much the device took in each second. Silence is played.
+if [ -x "$MINGW" ] && "$MINGW" -O1 -o "$WORK/audio-follow.exe" "$REPO/tests/runtime/audio-follow.c" -lole32 >"$WORK/audio-build.log" 2>&1; then
+  out="$(FINEWINE_AUDIO_REOPEN_AFTER=2 "$RT/bin/wine" "$WORK/audio-follow.exe" 5 </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+  case "$out" in
+    "audio-follow: no output device") echo "  - audio following the output device not checked: this Mac has no output device" ;;
+    "audio-follow: ok rate "*)
+      rate="$(printf '%s' "$out" | sed -n 's/.* rate \([0-9]*\) .*/\1/p')"
+      slow=""
+      # every second, the one with the swap in it included, the device took most of a second of audio
+      for frames in ${out##*per-second }; do [ "$frames" -ge $(( rate * 3 / 4 )) ] || slow="$slow $frames"; done
+      if [ -n "$rate" ] && [ -z "$slow" ]; then pass "playback carries on when a stream is moved to another audio unit (the Mac's output device changing)"
+      else fail "audio stalled across the swap: $out"; fi ;;
+    *) fail "audio-follow: $out" ;;
+  esac
+else
+  echo "  - audio following the output device not checked: no llvm-mingw, or the test did not build"
+fi
+
+# 32-bit programs. macOS gives an arm64 process no memory below 4 GB, so a 32-bit program's
+# 4 GB are a window higher up (patches/runtime/0043, patches/fex/0011). The suite covers what
+# that touches: memory, threads, exceptions, code written at run time, window messages, a small
+# window with controls shown for a moment, drawing, and starting another 32-bit program.
+MINGW32="$REPO/build/llvm-mingw/bin/i686-w64-mingw32-clang"
+export WINEPREFIX="$WORK/pfx1"
+if [ ! -f "$RT/lib/wine/aarch64-windows/xtajit.dll" ] || [ ! -f "$RT/lib/wine/i386-windows/ntdll.dll" ]; then
+  echo "  - 32-bit checks skipped: this runtime has no 32-bit side (scripts/build-fex.sh and build-finewine-runtime.sh)"
+elif [ ! -x "$MINGW32" ]; then
+  echo "  - 32-bit checks skipped: no llvm-mingw in build/ (scripts/build-fex.sh toolchain)"
+elif "$MINGW32" -O1 -o "$WORK/suite32.exe" "$REPO/tests/runtime/suite32.c" -luser32 -lgdi32 -ladvapi32 >"$WORK/suite32-build.log" 2>&1; then
+  if [ -f "$WINEPREFIX/drive_c/windows/syswow64/kernel32.dll" ]; then
+    pass "a new prefix gets its 32-bit system folder ($(ls "$WINEPREFIX/drive_c/windows/syswow64" | wc -l | tr -d ' ') files)"
+  else fail "a new prefix has no 32-bit system folder (syswow64)"; fi
+  out="$(WINEMSYNC=0 "$RT/bin/wine" "$WORK/suite32.exe" </dev/null 2>/dev/null | tr -d '\r')"
+  case "$out" in *"
+0 failure(s)") pass "32-bit programs: $(echo "$out" | grep -c '^ok ') checks of memory, address space, threads, exceptions, x87, segments, generated code, window messages, drawing, child processes" ;;
+    *) fail "32-bit suite:"; echo "$out" | grep -v '^ok ' | tail -n 8 ;; esac
+  # MSync is decided when a prefix's server starts, so the server is stopped first.
+  "$RT/bin/wineserver" -k 2>/dev/null; "$RT/bin/wineserver" -w 2>/dev/null
+  out="$(WINEMSYNC=1 "$RT/bin/wine" "$WORK/suite32.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+  case "$out" in "0 failure(s)") pass "32-bit programs: the same with MSync on" ;;
+    *) fail "32-bit suite with MSync on: $out" ;; esac
+  "$RT/bin/wineserver" -k 2>/dev/null; "$RT/bin/wineserver" -w 2>/dev/null
+  out="$("$RT/bin/wine" 'C:\windows\syswow64\cmd.exe' /c 'echo %PROCESSOR_ARCHITECTURE%' </dev/null 2>/dev/null | tr -d '\r')"
+  case "$out" in x86) pass "the 32-bit command prompt runs and sees an x86 processor" ;;
+    *) fail "32-bit cmd.exe printed: $out" ;; esac
+  # A library whose imports are missing does not stay mapped (patches/runtime/0046): 32-bit and x64.
+  mkdir -p "$WORK/fl32" "$WORK/fl64"; fl_ok=1
+  for pair in "fl32:$MINGW32" "fl64:$REPO/build/llvm-mingw/bin/x86_64-w64-mingw32-clang"; do
+    d="$WORK/${pair%%:*}"; cc="${pair#*:}"
+    ( cd "$d" && "$cc" -shared -DDEP -o dep.dll "$REPO/tests/runtime/failed-load.c" \
+        && "$cc" -shared -DBIG -o big.dll "$REPO/tests/runtime/failed-load.c" -L. -l:dep.dll \
+        && "$cc" -O1 -o failed-load.exe "$REPO/tests/runtime/failed-load.c" && rm dep.dll ) >"$d/build.log" 2>&1 || fl_ok=0
+  done
+  if [ "$fl_ok" = 1 ]; then
+    one="$(cd "$WORK/fl32" && "$RT/bin/wine" failed-load.exe </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    two="$(cd "$WORK/fl64" && "$RT/bin/wine" failed-load.exe </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$one|$two" in "failed-load: ok|failed-load: ok") pass "a library whose imports are missing is unmapped again: 32-bit and x64" ;;
+      *) fail "a library that failed to load stays mapped (32-bit: '$one', x64: '$two')" ;; esac
+  else
+    fail "could not build tests/runtime/failed-load.c"; tail -n 3 "$WORK/fl32/build.log" "$WORK/fl64/build.log"
+  fi
+  # Direct3D 11 from a 32-bit program, through DXMT's 32-bit Windows side: off screen, then
+  # into a window (a small one appears for a moment).
+  if [ ! -f "$RT/lib/dxmt/i386-windows/d3d11.dll" ]; then
+    echo "  - 32-bit Direct3D 11 checks skipped: DXMT has no 32-bit side in this runtime (scripts/build-dxmt.sh build install)"
+  elif "$MINGW32" -O1 -o "$WORK/d3d-32.exe" "$REPO/tests/runtime/d3d11-clear.c" -ld3d11 -ldxgi -ldxguid -luuid >"$WORK/d3d32-build.log" 2>&1 \
+       && "$MINGW32" -O1 -o "$WORK/d3dwin-32.exe" "$REPO/tests/runtime/d3d11-window.c" -ld3d11 -ldxgi -ldxguid -luuid >>"$WORK/d3d32-build.log" 2>&1; then
+    out="$(WINEDLLPATH="$RT/lib/dxmt" "$RT/bin/wine" "$WORK/d3d-32.exe" </dev/null 2>/dev/null | tr -d '\r')"
+    case "$out" in *"d3d11-clear: ok"*) pass "Direct3D 11 on Metal, 32-bit program ($(echo "$out" | sed -n 's/^adapter: //p'))" ;;
+      *) fail "Direct3D 11 from a 32-bit program: $(echo "$out" | tail -n 1)" ;; esac
+    out="$(WINEDLLPATH="$RT/lib/dxmt" "$RT/bin/wine" "$WORK/d3dwin-32.exe" 0 0 </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$out" in "d3d11-window: ok") pass "Direct3D 11 presents into a window from a 32-bit program" ;;
+      *) fail "Direct3D 11 could not present into a window from a 32-bit program: '$out'" ;; esac
+  else
+    fail "could not build the Direct3D 11 test programs as 32-bit"; tail -n 3 "$WORK/d3d32-build.log"
+  fi
+  # Direct3D 9 from a 32-bit program, which is what most 32-bit games use. It goes through
+  # WineD3D's OpenGL renderer and Wine's OpenGL call layer (patches/runtime/0044): a device and a
+  # clear, then buffers, a texture, a draw from memory, a read-back and presenting into a window
+  # (a small one appears for a moment). The OpenGL program checks the arguments that are an
+  # address or an offset into a buffer; it and the drawing test are also run as x64.
+  if "$MINGW32" -O1 -o "$WORK/d3d9-32.exe" "$REPO/tests/runtime/d3d9-clear.c" -ld3d9 >"$WORK/d3d9-32-build.log" 2>&1 \
+     && "$MINGW32" -O1 -o "$WORK/d3d9draw-32.exe" "$REPO/tests/runtime/d3d9-draw.c" -ld3d9 >>"$WORK/d3d9-32-build.log" 2>&1 \
+     && "$MINGW32" -O1 -o "$WORK/glo-32.exe" "$REPO/tests/runtime/gl-buffer-offsets.c" -lopengl32 -lgdi32 >>"$WORK/d3d9-32-build.log" 2>&1 \
+     && "$REPO/build/llvm-mingw/bin/x86_64-w64-mingw32-clang" -O1 -o "$WORK/d3d9draw-x64.exe" "$REPO/tests/runtime/d3d9-draw.c" -ld3d9 >>"$WORK/d3d9-32-build.log" 2>&1 \
+     && "$REPO/build/llvm-mingw/bin/x86_64-w64-mingw32-clang" -O1 -o "$WORK/glo-x64.exe" "$REPO/tests/runtime/gl-buffer-offsets.c" -lopengl32 -lgdi32 >>"$WORK/d3d9-32-build.log" 2>&1; then
+    # With a time limit: closing an OpenGL context in the Mac driver hangs once in a while (a
+    # known fault, see docs/project-information/25), and the script must not hang with it.
+    # perl's alarm stands in for `timeout`, which macOS does not have.
+    last(){ perl -e 'alarm 90; exec @ARGV' "$RT/bin/wine" "$1" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1
+            pkill -f "$(basename "$1")" 2>/dev/null || true; }
+    out="$(last "$WORK/d3d9-32.exe")"
+    case "$out" in "d3d9-clear: ok") pass "Direct3D 9, 32-bit program: device, clear, read back" ;;
+      *) fail "Direct3D 9 from a 32-bit program: '$out'" ;; esac
+    one="$(last "$WORK/d3d9draw-x64.exe")"; two="$(last "$WORK/d3d9draw-32.exe")"
+    case "$one|$two" in "d3d9-draw: ok|d3d9-draw: ok") pass "Direct3D 9 draws from buffers, a texture and memory, and presents into a window: x64 and 32-bit" ;;
+      *) fail "Direct3D 9 drawing (x64: '$one', 32-bit: '$two')" ;; esac
+    one="$(last "$WORK/glo-x64.exe")"; two="$(last "$WORK/glo-32.exe")"
+    case "$one|$two" in "gl-buffer-offsets: ok|gl-buffer-offsets: ok") pass "OpenGL arguments that are an address or a buffer offset: x64 and 32-bit" ;;
+      *) fail "OpenGL addresses and buffer offsets (x64: '$one', 32-bit: '$two')" ;; esac
+  else
+    fail "could not build the Direct3D 9 and OpenGL test programs"; tail -n 3 "$WORK/d3d9-32-build.log"
+  fi
+else
+  fail "could not build tests/runtime/suite32.c"; tail -n 3 "$WORK/suite32-build.log"
 fi
 
 export WINEPREFIX="$WORK/pfx2" WINEMSYNC=1 WINEDEBUG=-all

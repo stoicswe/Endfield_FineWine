@@ -147,9 +147,10 @@ jobs:
     uses: ./.github/workflows/build-finewine-full.yml
     with:
       runner: "xcode-27"
-      # Blank on purpose: FineWine.app keeps the version its own build script gives it, and
-      # the beta's number is in the release it is attached to.
-      app_version: ""
+      # The app reports the beta it was released as, like the patcher.
+      app_version: beta-${{ needs.plan.outputs.number }}
+      # The app's update check starts on the Beta channel in a beta build.
+      channel: "beta"
 
   release:
     name: Beta pre-release

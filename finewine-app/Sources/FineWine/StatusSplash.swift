@@ -144,7 +144,12 @@ final class StatusSplash: ObservableObject {
         panel.isMovableByWindowBackground = true
         // Over whatever is in front, full-screen apps included, and in every Space.
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        let host = NSHostingView(rootView: StatusSplashView().environmentObject(self))
+        let host = NSHostingView(
+            rootView: StatusSplashView()
+                .environmentObject(self)
+                .environment(\.layoutDirection, LanguageManager.shared.layoutDirection)
+                .environment(\.locale, Locale(identifier: LanguageManager.shared.activeLanguageCode))
+        )
         host.frame = panel.contentLayoutRect
         host.autoresizingMask = [.width, .height]
         panel.contentView = host

@@ -4,8 +4,10 @@
 #   1. MoltenVK, FineWine flavour (ray tracing, MetalFX)     scripts/build-moltenvk.sh
 #   2. the Windows compiler for x64 parts (llvm-mingw)       scripts/build-fex.sh toolchain
 #   3. the Wine runtime, from a fresh source tree            scripts/build-finewine-runtime.sh all
-#   4. FEX (x64 programs)                                    scripts/build-fex.sh all
-#   5. DXMT (Direct3D 10 and 11 on Metal)                    scripts/build-dxmt.sh all
+#      (with the bridge to the Mac's Steam client           scripts/build-steam-bridge.sh)
+#   4. FEX (x64 and 32-bit programs: two builds)            scripts/build-fex.sh all
+#   5. DXMT (Direct3D 10 and 11 on Metal; its Windows DLLs   scripts/build-dxmt.sh all
+#      twice, for 64-bit and for 32-bit programs)
 #   6. the runtime checks                                    scripts/test-finewine-runtime.sh
 #   7. the runtime's release archive                         scripts/build-finewine-runtime.sh archive
 #   8. FineWine.app, with the runtime inside it              finewine-app/scripts/build-app.sh
@@ -63,6 +65,17 @@ if [ "$TARGET" != "app" ]; then
   "$REPO/scripts/build-fex.sh" all
   log "5/8 DXMT"
   "$REPO/scripts/build-dxmt.sh" all
+  # The runtime runs ARM64, x64 and 32-bit programs. Each script above skips the 32-bit part
+  # with a note when a piece it needs is missing; here, where everything was just built, a
+  # missing part is an error.
+  for part in lib/wine/aarch64-windows/xtajit64.dll lib/wine/aarch64-windows/xtajit.dll \
+              lib/wine/i386-windows/ntdll.dll lib/wine/i386-windows/winemetal.dll \
+              lib/dxmt/aarch64-windows/d3d11.dll lib/dxmt/i386-windows/d3d11.dll \
+              lib/wine/aarch64-unix/winemetal.so \
+              lib/steam-bridge/wine/lsteamclient.dll lib/steam-bridge/wine/i386-windows/lsteamclient.dll \
+              lib/steam-bridge/wine/aarch64-unix/lsteamclient.so; do
+    [ -e "$REPO/build/finewine-runtime/$part" ] || { echo "ERROR: the runtime is missing $part" >&2; exit 1; }
+  done
   # Everything that ships, now that FEX and DXMT are in: the runtime runs on macOS 15 and later.
   "$REPO/scripts/lib/check-macos-compat.sh" 15.0 "$REPO/build/finewine-runtime/bin" "$REPO/build/finewine-runtime/lib"
   if [ "${SKIP_TESTS:-0}" != "1" ]; then

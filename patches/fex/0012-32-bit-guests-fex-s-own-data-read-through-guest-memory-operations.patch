@@ -1,0 +1,104 @@
+32-bit guests: FEX's own data read through guest memory operations
+
+Follows 0011, where every guest memory operation in generated code goes through the guest's
+window (FEX_GUEST_BASE). Two places used a guest memory operation on FEX's own data. They
+worked while FEX's allocations happened to land inside the window (Wine runtime patch 0045
+stopped that), and faulted afterwards:
+
+- the x87 stack's slow path (the top of stack not known when a block is compiled) loaded and
+  stored the x87 registers in the CPU state with LoadMem/StoreMem on an address formed from
+  the state register. With a guest base it uses LoadContextIndexed/StoreContextIndexed, which
+  go through the state register. The ARM64EC build (no guest base) is unchanged.
+- loading a segment register reads the segment's descriptor with LoadMem from the thread's
+  descriptor table, which was allocated with new[]. The WOW64 front end allocates it inside
+  the window (64 KB of the guest's address space a thread).
+
+Found with Portal: a write fault at an x87 load while a library initialised, and a read fault
+at "pop %es" in the Miles sound library. Checked with tests/runtime/suite32.c.
+
+Local patch only: FEX does not take AI-written code.
+
+diff --git a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
+--- a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
++++ b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
+@@ -1,4 +1,5 @@
+ // SPDX-License-Identifier: MIT
++#include <FEXCore/Core/GuestBase.h>
+ #include "FEXCore/Utils/LogManager.h"
+ #include "Interface/Core/Interpreter/Fallbacks/FallbackOpHandler.h"
+ #include "Interface/IR/IR.h"
+@@ -472,7 +473,14 @@
+   OrderedNode* TopOffsetAddress = GetOffsetTopAddressWithCache_Slow(Offset);
+   auto Size = ReducedPrecisionMode ? OpSize::i64Bit : OpSize::i128Bit;
+   if (!TopValueCache[Offset]) {
+-    TopValueCache[Offset] = IREmit->_LoadMemFPR(Size, TopOffsetAddress, IREmit->_InlineConstant(MMBaseOffset()), Size, MemOffsetType::SXTX, 1);
++    if (FEX_GUEST_BASE) {
++      // FineWine 32-bit: LoadMem is a guest memory access and goes through the guest's window;
++      // the x87 registers are FEX's own state, outside it, so they are reached through the
++      // state register instead.
++      TopValueCache[Offset] = IREmit->_LoadContextIndexed(GetOffsetTopWithCache_Slow(Offset), Size, MMBaseOffset(), 16, RegClass::FPR);
++    } else {
++      TopValueCache[Offset] = IREmit->_LoadMemFPR(Size, TopOffsetAddress, IREmit->_InlineConstant(MMBaseOffset()), Size, MemOffsetType::SXTX, 1);
++    }
+   }
+   return TopValueCache[Offset];
+ }
+@@ -619,7 +627,12 @@
+   for (size_t i = 0; i < FlushValuesPending.size(); i++) {
+     if (FlushValuesPending[i]) {
+       OrderedNode* TopOffsetAddress = GetOffsetTopAddressWithCache_Slow(i);
+-      IREmit->_StoreMemFPR(Size, TopValueCache[i], TopOffsetAddress, IREmit->_InlineConstant(MMBaseOffset()), Size, MemOffsetType::SXTX, 1);
++      if (FEX_GUEST_BASE) {
++        // FineWine 32-bit: see LoadStackValueAtOffset_Slow.
++        IREmit->_StoreContextIndexed(TopValueCache[i], GetOffsetTopWithCache_Slow(i), Size, MMBaseOffset(), 16, RegClass::FPR);
++      } else {
++        IREmit->_StoreMemFPR(Size, TopValueCache[i], TopOffsetAddress, IREmit->_InlineConstant(MMBaseOffset()), Size, MemOffsetType::SXTX, 1);
++      }
+       // store
+       FlushValuesPending[i] = false;
+     }
+diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
+--- a/Source/Windows/WOW64/Module.cpp
++++ b/Source/Windows/WOW64/Module.cpp
+@@ -707,7 +707,20 @@
+ 
+   // Default segment setup.
+   auto Frame = Thread->CurrentFrame;
+-  auto NewSegments = new FEXCore::Core::CPUState::gdt_segment[32]();
++  // FineWine 32-bit: generated code reads a segment's descriptor with an ordinary guest
++  // memory load, which goes through the guest's window (FEX_GUEST_BASE). The table is FEX's
++  // own, so it is put inside the window, where such a load reaches it. (64 KB of the guest's
++  // address space a thread; the allocation is zeroed.)
++  FEXCore::Core::CPUState::gdt_segment* NewSegments {};
++  if (FEX_GUEST_BASE) {
++    SIZE_T SegmentsSize = sizeof(FEXCore::Core::CPUState::gdt_segment) * 32;
++    void* SegmentsAddr = nullptr;
++    NtAllocateVirtualMemory(NtCurrentProcess(), &SegmentsAddr, (1U << 31) - 1, &SegmentsSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
++    NewSegments = reinterpret_cast<FEXCore::Core::CPUState::gdt_segment*>(SegmentsAddr);
++  }
++  if (!NewSegments) {
++    NewSegments = new FEXCore::Core::CPUState::gdt_segment[32]();
++  }
+ 
+   // Setup initial code-segment GDT
+   auto& GDT = NewSegments[DefaultWow64CS];
+@@ -785,7 +798,18 @@
+   delete GetFrontendThreadData(ThreadState);
+ 
+   // GDT and LDT are mirrored, only free one.
+-  delete[] ThreadState->CurrentFrame->State.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT];
++  {
++    auto Segments = ThreadState->CurrentFrame->State.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT];
++    const auto SegmentsHost = reinterpret_cast<uint64_t>(Segments);
++    if (FEX_GUEST_BASE && SegmentsHost >= FEX_GUEST_BASE && SegmentsHost < FEX_GUEST_BASE + 0x1'0000'0000ULL) {
++      // From NtAllocateVirtualMemory in BTCpuThreadInit.
++      void* SegmentsAddr = Segments;
++      SIZE_T SegmentsSize = 0;
++      NtFreeVirtualMemory(NtCurrentProcess(), &SegmentsAddr, &SegmentsSize, MEM_RELEASE);
++    } else {
++      delete[] Segments;
++    }
++  }
+ 
+   FEX::Windows::CallRetStack::DestroyThread(ThreadState);
+   CTX->DestroyThread(ThreadState);

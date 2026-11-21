@@ -281,9 +281,26 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// Give windows that have no Mac title bar (launchers, games in a window) a Mac window's
     /// round corners.
     public var roundedWindows: Bool = true
-    /// Upscale a Direct3D 10 or 11 picture that is smaller than its window to the window's
-    /// display pixels with MetalFX, instead of leaving the stretch to the window server.
+    /// Upscale a picture that is smaller than its window to the window's display pixels with
+    /// MetalFX, instead of leaving the stretch to the window server: Direct3D 10 and 11
+    /// through DXMT, Vulkan and Direct3D 12 through MoltenVK. This is how upscaling starts;
+    /// it can be switched while a program runs (the program's View menu, FineWine's menu).
     public var metalFXUpscaling: Bool = true
+    /// Make programs see a smaller screen, `renderScale` percent of the real one in each
+    /// direction, and upscale what they draw with MetalFX. Only used while
+    /// `metalFXUpscaling` is off: the two are different ways to the same end, one following
+    /// the resolution a game is set to and one setting it from outside.
+    public var renderSizeEnabled: Bool = false
+    /// The render size in percent, 50 to 95.
+    public var renderScale: Int = 75
+    public static let renderScaleRange = 50...95
+    /// The render size as it is used: nil when it is not in effect.
+    public var effectiveRenderScale: Int? {
+        guard !metalFXUpscaling, renderSizeEnabled else { return nil }
+        return min(max(renderScale, Self.renderScaleRange.lowerBound), Self.renderScaleRange.upperBound)
+    }
+    /// Whether upscaling is on when a program starts.
+    public var upscalesAtStart: Bool { metalFXUpscaling || effectiveRenderScale != nil }
     /// Draw programs' icons in the Dock (and their shortcut apps' icons) as Mac app icons: a
     /// rounded square on Apple's icon grid. See `MacIconStyle`. On by default.
     public var macStyleIcons: Bool = true
@@ -300,6 +317,12 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     public var macAppearance: Bool = true
     /// Wine debug channels (`WINEDEBUG`). `-all` is silent and fastest.
     public var debugChannels: String = "-all"
+    /// Have NVIDIA's Streamline, the layer games reach DLSS and frame generation through, write
+    /// its detailed log: each check it makes for a feature and which one fails. The switch is
+    /// Streamline's own (`SL_LOG_LEVEL` and friends), so it works in any game that ships it.
+    public var streamlineLog: Bool = false
+    /// The log's file name, at the top of the prefix's C: drive.
+    public static let streamlineLogName = "streamline.log"
 
     public init() {}
 
@@ -326,6 +349,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         zeroPages = try c.decodeIfPresent(Bool.self, forKey: .zeroPages) ?? d.zeroPages
         compactBlockRecords = try c.decodeIfPresent(Bool.self, forKey: .compactBlockRecords) ?? d.compactBlockRecords
         debugChannels = try c.decodeIfPresent(String.self, forKey: .debugChannels) ?? d.debugChannels
+        streamlineLog = try c.decodeIfPresent(Bool.self, forKey: .streamlineLog) ?? d.streamlineLog
         macAppearance = try c.decodeIfPresent(Bool.self, forKey: .macAppearance) ?? d.macAppearance
         dlssThroughMetalFX = try c.decodeIfPresent(Bool.self, forKey: .dlssThroughMetalFX) ?? d.dlssThroughMetalFX
         reportNvidiaGPU = try c.decodeIfPresent(Bool.self, forKey: .reportNvidiaGPU) ?? d.reportNvidiaGPU
@@ -333,6 +357,8 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         steamForHoYoverse = try c.decodeIfPresent(Bool.self, forKey: .steamForHoYoverse) ?? d.steamForHoYoverse
         roundedWindows = try c.decodeIfPresent(Bool.self, forKey: .roundedWindows) ?? d.roundedWindows
         metalFXUpscaling = try c.decodeIfPresent(Bool.self, forKey: .metalFXUpscaling) ?? d.metalFXUpscaling
+        renderSizeEnabled = try c.decodeIfPresent(Bool.self, forKey: .renderSizeEnabled) ?? d.renderSizeEnabled
+        renderScale = try c.decodeIfPresent(Int.self, forKey: .renderScale) ?? d.renderScale
         fullScreenMode = try c.decodeIfPresent(FullScreenMode.self, forKey: .fullScreenMode) ?? d.fullScreenMode
         macStyleIcons = try c.decodeIfPresent(Bool.self, forKey: .macStyleIcons) ?? d.macStyleIcons
         // An unknown value (from a newer FineWine) falls back to automatic.
@@ -441,28 +467,44 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
 
     /// The environment variables these settings add to every Wine process in the prefix. The
     /// user's own variables come last so they can override anything above them.
-    public func environmentVariables() -> [(name: String, value: String)] {
+    /// `capabilities` are the FineWine features the runtime has (`WineRuntime.capabilities`):
+    /// a setting for one it lacks is left out, as nothing in that runtime would read it.
+    public func environmentVariables(supporting capabilities: Set<RuntimeCapability> = Set(RuntimeCapability.allCases))
+        -> [(name: String, value: String)] {
+        func has(_ capability: RuntimeCapability) -> Bool { capabilities.contains(capability) }
         var out: [(String, String)] = [("WINEDEBUG", debugChannels.isEmpty ? "-all" : debugChannels)]
         switch syncMode {
         case .standard: break
-        case .msync: out.append(("WINEMSYNC", "1"))
+        case .msync: if has(.msync) { out.append(("WINEMSYNC", "1")) }
         }
         // Metal only has its performance overlay in a process started with this set, so it is
         // always set: the overlay can then be shown and hidden while a game runs (View > Metal
         // HUD, or Option-F12). The setting decides whether it starts out shown.
         out.append(("MTL_HUD_ENABLED", "1"))
-        out.append(("FINEWINE_METAL_HUD", metalHUD ? "1" : "0"))
-        out.append(("FINEWINE_FULLSCREEN", fullScreenMode.rawValue))
-        if !roundedWindows { out.append(("FINEWINE_ROUNDED_WINDOWS", "0")) }
-        if !metalFXUpscaling { out.append(("FINEWINE_METALFX_AUTO", "0")) }
-        if !macStyleIcons { out.append(("FINEWINE_MAC_ICONS", "0")) }
-        if hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
-        if zeroPages { out.append(("FINEWINE_ZERO_PAGES", "1")) }
-        if compactBlockRecords { out.append(("FEX_COMPACTBLOCKRECORDS", "1")) }
+        if has(.metalHUD) { out.append(("FINEWINE_METAL_HUD", metalHUD ? "1" : "0")) }
+        if has(.fullScreenModes) { out.append(("FINEWINE_FULLSCREEN", fullScreenMode.rawValue)) }
+        if has(.roundedWindows), !roundedWindows { out.append(("FINEWINE_ROUNDED_WINDOWS", "0")) }
+        // Upscaling starts on with "automatic" or with a render size; a render size also makes
+        // the program see a smaller screen (runtime patch 0040).
+        if has(.upscaling) {
+            if let scale = effectiveRenderScale { out.append(("FINEWINE_RENDER_SCALE", String(scale))) }
+            else if !metalFXUpscaling { out.append(("FINEWINE_METALFX_AUTO", "0")) }
+        }
+        if has(.macIcons), !macStyleIcons { out.append(("FINEWINE_MAC_ICONS", "0")) }
+        if has(.emulator), hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
+        if has(.zeroPages), zeroPages { out.append(("FINEWINE_ZERO_PAGES", "1")) }
+        if has(.emulator), compactBlockRecords { out.append(("FEX_COMPACTBLOCKRECORDS", "1")) }
+        if streamlineLog {
+            out.append(("SL_LOG_LEVEL", "2"))       // 2: verbose
+            out.append(("SL_LOG_PATH", "C:\\"))
+            out.append(("SL_LOG_NAME", Self.streamlineLogName))
+        }
         // Wine takes the ANSI code page from LC_CTYPE, and the interface language from
         // LC_MESSAGES or LANG (or, with neither, the Mac's language), which stay as they are.
         // LC_ALL would override LC_CTYPE, so the environment drops it (LaunchPlanner).
         if let locale = nonUnicodeLanguage.unixLocale { out.append(("LC_CTYPE", locale)) }
+        let dlssThroughMetalFX = dlssThroughMetalFX && has(.dlss)
+        let reportNvidiaGPU = reportNvidiaGPU && has(.gpuIdentity)
         if dlssThroughMetalFX {
             // Lets nvngx.dll load for Direct3D 12 and Vulkan programs, whose DLSS calls it
             // turns into MetalFX work in MoltenVK.

@@ -16,6 +16,8 @@ struct FineWinePatcherApp: App {
                 .environmentObject(engine)
                 .environmentObject(setup)
                 .environmentObject(l10n)
+                .environment(\.layoutDirection, l10n.layoutDirection)
+                .environment(\.locale, Locale(identifier: l10n.activeLanguageCode))
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
@@ -27,6 +29,8 @@ struct FineWinePatcherApp: App {
             ModChainView()
                 .environmentObject(engine)
                 .environmentObject(l10n)
+                .environment(\.layoutDirection, l10n.layoutDirection)
+                .environment(\.locale, Locale(identifier: l10n.activeLanguageCode))
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
@@ -35,6 +39,8 @@ struct FineWinePatcherApp: App {
             NotProtonView()
                 .environmentObject(engine)
                 .environmentObject(l10n)
+                .environment(\.layoutDirection, l10n.layoutDirection)
+                .environment(\.locale, Locale(identifier: l10n.activeLanguageCode))
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
@@ -43,6 +49,8 @@ struct FineWinePatcherApp: App {
             SikarugirView()
                 .environmentObject(engine)
                 .environmentObject(l10n)
+                .environment(\.layoutDirection, l10n.layoutDirection)
+                .environment(\.locale, Locale(identifier: l10n.activeLanguageCode))
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
@@ -51,6 +59,8 @@ struct FineWinePatcherApp: App {
             MetalHUDView()
                 .environmentObject(engine)
                 .environmentObject(l10n)
+                .environment(\.layoutDirection, l10n.layoutDirection)
+                .environment(\.locale, Locale(identifier: l10n.activeLanguageCode))
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
@@ -59,6 +69,8 @@ struct FineWinePatcherApp: App {
             BottleSettingsView()
                 .environmentObject(engine)
                 .environmentObject(l10n)
+                .environment(\.layoutDirection, l10n.layoutDirection)
+                .environment(\.locale, Locale(identifier: l10n.activeLanguageCode))
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)

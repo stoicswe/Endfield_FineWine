@@ -34,8 +34,13 @@ public enum WindowsPath {
         let fm = FileManager.default
         var url = prefix.appendingPathComponent("dosdevices/\(drive):")
         if !fm.fileExists(atPath: url.path) {
-            guard drive == "c" else { return nil }
-            url = prefix.appendingPathComponent("drive_c", isDirectory: true)
+            // What Wine sets these two up as, for a prefix whose links are not there (yet):
+            // `windowsPath(for:inPrefix:)` writes paths with them either way.
+            switch drive {
+            case "c": url = prefix.appendingPathComponent("drive_c", isDirectory: true)
+            case "z": url = URL(fileURLWithPath: "/", isDirectory: true)
+            default: return nil
+            }
         }
         url = url.resolvingSymlinksInPath()
         for component in components(String(windowsPath.dropFirst(2))) {
@@ -49,6 +54,20 @@ public enum WindowsPath {
             url = url.appendingPathComponent(match ?? component)
         }
         return url
+    }
+
+    /// The folder a file panel should open in to replace a Windows path: the folder the path
+    /// is in, or the nearest one above it that exists, or `drive_c` when the path leads nowhere.
+    public static func folderToBrowse(from windowsPath: String, inPrefix prefix: URL) -> URL {
+        let fm = FileManager.default
+        let driveC = prefix.appendingPathComponent("drive_c", isDirectory: true)
+        guard var url = macURL(for: windowsPath.trimmingCharacters(in: .whitespaces), inPrefix: prefix) else { return driveC }
+        var isDir: ObjCBool = false
+        while url.path != "/" {
+            if fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue { return url }
+            url.deleteLastPathComponent()
+        }
+        return driveC
     }
 
     /// The Windows path for a Mac file: `C:\…` when it is inside the prefix's `drive_c`,

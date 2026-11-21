@@ -72,6 +72,14 @@ struct PrefixDetailView: View {
                             Pill(text: l10n.tr("detail.no_runtime"), symbol: "exclamationmark.triangle", tint: .orange)
                         }
                         if let profile = model.profile(for: prefix) { Pill(text: profile.name, symbol: "gamecontroller") }
+                        if let appID = prefix.metadata.steamAppID {
+                            // made by the Steam tool for a game in the Steam library
+                            Pill(text: l10n.tr("steam.prefix_pill"), symbol: "gamecontroller.fill", tint: Look.accent)
+                                .help(l10n.tr("steam.prefix_pill_help", appID))
+                        }
+                        if let size = model.sizeText(for: prefix) {
+                            Pill(text: size, symbol: "internaldrive").help(l10n.tr("prefix.size_help"))
+                        }
                         if model.isRunning(prefix) { Pill(text: l10n.tr("app.running"), symbol: "play.fill", tint: .green) }
                         if prefix.metadata.settings != prefix.metadata.appliedSettings {
                             Pill(text: l10n.tr("detail.settings_not_applied"), symbol: "clock.arrow.circlepath", tint: .orange)
@@ -253,11 +261,67 @@ private struct ProgramEditor: View {
     let prefix: Prefix
     @State var program: Program
     @State private var arguments: String
+    @State private var icon: NSImage?
+    private let original: Program
 
     init(prefix: Prefix, program: Program) {
         self.prefix = prefix
+        original = program
         _program = State(initialValue: program)
         _arguments = State(initialValue: program.arguments.map { $0.contains(" ") ? "\"\($0)\"" : $0 }.joined(separator: " "))
+    }
+
+    /// Finder's panel, opened where the executable is now. The field stays editable for a
+    /// path that cannot be picked.
+    private func chooseExecutable() {
+        let start = WindowsPath.folderToBrowse(from: program.windowsPath, inPrefix: prefix.directory)
+        guard let url = Panels.chooseExecutable(in: start, message: l10n.tr("dialog.choose_program_in_prefix")) else { return }
+        program.windowsPath = WindowsPath.windowsPath(for: url, inPrefix: prefix.directory)
+    }
+
+    /// The program as it will be saved. A new executable brings its own icon: the icon file
+    /// the old one had is let go, unless another was chosen in this sheet.
+    private var edited: Program {
+        var result = program
+        if result.windowsPath != original.windowsPath, result.iconPath == original.iconPath { result.iconPath = nil }
+        return result
+    }
+
+    /// Finder's panel for an icon file, opened at the current icon file, else at the executable.
+    private func chooseIcon() {
+        let start = WindowsPath.folderToBrowse(from: edited.iconPath ?? program.windowsPath, inPrefix: prefix.directory)
+        guard let url = Panels.chooseIcon(in: start, message: l10n.tr("editor.choose_icon_msg")) else { return }
+        guard ICNS.data(fromIconFile: url) != nil else {
+            model.alert = AppAlert(title: l10n.tr("editor.no_icon_title"), message: l10n.tr("editor.no_icon_msg", url.lastPathComponent))
+            return
+        }
+        program.iconPath = WindowsPath.windowsPath(for: url, inPrefix: prefix.directory)
+    }
+
+    private var iconRow: some View {
+        HStack {
+            Text(l10n.tr("editor.icon_label")).frame(width: 90, alignment: .leading)
+            Group {
+                if let icon {
+                    Image(nsImage: icon).resizable()
+                } else {
+                    Image(systemName: "macwindow").font(.system(size: 20, weight: .medium)).foregroundStyle(Look.accent)
+                }
+            }
+            .frame(width: 40, height: 40)
+            Text(edited.iconPath.map(WindowsPath.lastComponent) ?? l10n.tr("editor.icon_own"))
+                .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            Spacer()
+            if edited.iconPath != nil {
+                Button(l10n.tr("editor.icon_reset")) { program.iconPath = nil }.fwButton()
+            }
+            Button(l10n.tr("editor.choose_executable")) { chooseIcon() }.fwButton()
+        }
+        .task(id: [edited.iconPath ?? "", edited.windowsPath]) {
+            let program = edited, prefix = prefix
+            let data = await Task.detached(priority: .userInitiated) { PrefixService.iconData(for: program, in: prefix) }.value
+            icon = data.flatMap(NSImage.init(data:))
+        }
     }
 
     var body: some View {
@@ -265,7 +329,11 @@ private struct ProgramEditor: View {
             Text(l10n.tr("editor.title")).font(.title2.weight(.semibold))
             Card(title: l10n.tr("editor.program_card"), symbol: "macwindow") {
                 LabeledField(l10n.tr("editor.name_label"), text: $program.name)
-                LabeledField(l10n.tr("editor.executable_label"), text: $program.windowsPath)
+                HStack {
+                    LabeledField(l10n.tr("editor.executable_label"), text: $program.windowsPath)
+                    Button(l10n.tr("editor.choose_executable")) { chooseExecutable() }.fwButton()
+                }
+                iconRow
                 LabeledField(l10n.tr("editor.args_label"), text: $arguments, prompt: l10n.tr("editor.args_prompt"))
                 LabeledField(l10n.tr("editor.start_in_label"), text: $program.workingDirectory, prompt: l10n.tr("editor.start_in_prompt"))
             }
@@ -277,6 +345,7 @@ private struct ProgramEditor: View {
                 Spacer()
                 Button(l10n.tr("app.cancel")) { dismiss() }.fwButton().keyboardShortcut(.cancelAction)
                 Button(l10n.tr("app.save")) {
+                    var program = edited
                     program.arguments = ProgramScanner.splitArguments(arguments)
                     program.name = program.name.trimmingCharacters(in: .whitespaces)
                     model.update(program, in: prefix)

@@ -197,7 +197,7 @@ static void bench_jit(void)
     if (!page) { printf("%-34s unavailable\n", "generated code (20k rewrites)"); return; }
     double t0 = now_ms(); uint64_t s = 0;
     for (uint32_t i = 0; i < 20000; i++) {
-#if defined(_M_X64) || defined(__x86_64__)
+#if defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__)
         page[0] = 0xB8; memcpy(page + 1, &i, 4); page[5] = 0xC3;                       /* mov eax, i; ret */
 #else
         uint32_t code[2] = { 0x52800000u | ((i & 0xFFFF) << 5), 0xD65F03C0u };         /* movz w0, #i; ret */

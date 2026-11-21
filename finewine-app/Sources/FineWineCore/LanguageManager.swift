@@ -9,6 +9,7 @@ public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
     case zhHant = "zh-Hant"
     case ko = "ko"
     case ja = "ja"
+    case ar = "ar"
 
     public var id: String { rawValue }
 
@@ -26,6 +27,8 @@ public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
             return "한국어"
         case .ja:
             return "日本語"
+        case .ar:
+            return "العربية"
         }
     }
 }
@@ -71,6 +74,9 @@ public final class LanguageManager: ObservableObject, @unchecked Sendable {
             }
             if lower.hasPrefix("ja") {
                 return "ja"
+            }
+            if lower.hasPrefix("ar") {
+                return "ar"
             }
             if lower.hasPrefix("en") {
                 return "en"
@@ -144,10 +150,43 @@ public final class LanguageManager: ObservableObject, @unchecked Sendable {
     public func tr(_ key: String, _ args: CVarArg...) -> String {
         tr(key, args: args)
     }
+
+    /// Whether the currently active language requires a Right-to-Left (RTL) layout direction (e.g. Arabic).
+    public var isRTL: Bool {
+        let code = selectedLanguage == .system ? Self.detectSystemLanguageCode() : selectedLanguage.rawValue
+        return Self.isRightToLeft(languageCode: code)
+    }
+
+    /// Determines whether a language code represents a Right-to-Left script direction.
+    public static func isRightToLeft(languageCode: String) -> Bool {
+        if #available(macOS 13, iOS 16, tvOS 16, watchOS 9, *) {
+            return Locale.Language(identifier: languageCode).characterDirection == .rightToLeft
+        } else {
+            return Locale.characterDirection(forLanguage: languageCode) == .rightToLeft
+        }
+    }
+
+    /// Wraps intrinsically LTR text (paths, URLs, commands, code) in Unicode Left-to-Right Isolates (LRI...PDI)
+    /// to avoid bidirectional reordering artifacts in RTL text, per Apple HIG.
+    public static func bidiIsolated(_ string: String) -> String {
+        "\u{2066}\(string)\u{2069}"
+    }
 }
 
 /// Convenience global translation function.
 public func tr(_ key: String, _ args: CVarArg...) -> String {
     LanguageManager.shared.tr(key, args: args)
 }
+
+#if canImport(SwiftUI)
+import SwiftUI
+
+extension LanguageManager {
+    /// SwiftUI LayoutDirection matching the active language's script direction per Apple HIG.
+    public var layoutDirection: LayoutDirection {
+        isRTL ? .rightToLeft : .leftToRight
+    }
+}
+#endif
+
 

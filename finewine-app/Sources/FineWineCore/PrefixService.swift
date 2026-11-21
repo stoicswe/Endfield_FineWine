@@ -48,7 +48,7 @@ public struct PrefixService {
                       profile: profiles.profile(id: prefix.metadata.profileID))
     }
 
-    private func runChecked(_ plan: LaunchPlan, what: String) throws {
+    func runChecked(_ plan: LaunchPlan, what: String) throws {
         let result = try runner.run(plan)
         guard result.status == 0 else {
             let tail = result.output.split(separator: "\n").suffix(6).joined(separator: "\n")
@@ -285,6 +285,18 @@ public struct PrefixService {
 
     // MARK: Shortcuts
 
+    /// A program's icon as `.icns` data: the one chosen for it or named by the installer's
+    /// shortcut (`iconPath`), else the executable's own; `nil` when neither has one. Drawn as
+    /// a Mac app icon when the prefix's programs are, so the shortcut and the program it
+    /// starts look alike in the Dock.
+    public static func iconData(for program: Program, in prefix: Prefix) -> Data? {
+        let macStyle = prefix.metadata.settings.macStyleIcons
+        return program.iconPath.flatMap { WindowsPath.macURL(for: $0, inPrefix: prefix.directory) }
+            .flatMap { ICNS.data(fromIconFile: $0, macStyle: macStyle) }
+            ?? WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory)
+            .flatMap { ICNS.data(fromExecutable: $0, macStyle: macStyle) }
+    }
+
     /// Makes the program's shortcut app, with the executable's own icon when it has one.
     @discardableResult
     public func createShortcut(for programID: UUID, in prefix: Prefix) throws -> Prefix {
@@ -292,14 +304,7 @@ public struct PrefixService {
             throw FineWineError("That program is no longer in “\(prefix.name)”.")
         }
         let program = prefix.metadata.programs[index]
-        // The icon the installer's shortcut named, if it named one; else the program's own.
-        // Drawn as a Mac app icon when the prefix's programs are, so the shortcut and the
-        // program it starts look alike in the Dock.
-        let macStyle = prefix.metadata.settings.macStyleIcons
-        let icon = program.iconPath.flatMap { WindowsPath.macURL(for: $0, inPrefix: prefix.directory) }
-            .flatMap { ICNS.data(fromIconFile: $0, macStyle: macStyle) }
-            ?? WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory)
-            .flatMap { ICNS.data(fromExecutable: $0, macStyle: macStyle) }
+        let icon = Self.iconData(for: program, in: prefix)
         let url = try shortcuts.build(for: program, in: prefix, icon: icon)
         var updated = prefix
         updated.metadata.programs[index].shortcutPath = url.path
@@ -414,15 +419,27 @@ public struct PrefixService {
     @discardableResult
     public func refreshEmulator(in prefix: Prefix, from runtime: WineRuntime) -> Bool {
         let fm = FileManager.default
-        let source = runtime.root.appendingPathComponent("lib/wine/aarch64-windows/xtajit64.dll")
-        let target = prefix.directory.appendingPathComponent("drive_c/windows/system32/xtajit64.dll")
-        guard fm.fileExists(atPath: source.path), fm.fileExists(atPath: target.path),
-              !fm.contentsEqual(atPath: source.path, andPath: target.path) else { return false }
-        let staging = target.appendingPathExtension("new")
-        try? fm.removeItem(at: staging)
-        guard (try? fm.copyItem(at: source, to: staging)) != nil,
-              (try? fm.replaceItemAt(target, withItemAt: staging)) != nil else { return false }
-        return true
+        let system32 = prefix.directory.appendingPathComponent("drive_c/windows/system32")
+        var changed = false
+        // xtajit64.dll runs x64 programs, xtajit.dll 32-bit ones. The second is also put into
+        // a prefix made before the runtime had it, once Wine has given the prefix its 32-bit
+        // system folder (which it does by itself when the runtime changes).
+        for (name, addIfMissing) in [("xtajit64.dll", false), ("xtajit.dll", true)] {
+            let source = runtime.root.appendingPathComponent("lib/wine/aarch64-windows/\(name)")
+            let target = system32.appendingPathComponent(name)
+            guard fm.fileExists(atPath: source.path), fm.fileExists(atPath: system32.path) else { continue }
+            let present = fm.fileExists(atPath: target.path)
+            guard present ? !fm.contentsEqual(atPath: source.path, andPath: target.path) : addIfMissing else { continue }
+            let staging = target.appendingPathExtension("new")
+            try? fm.removeItem(at: staging)
+            guard (try? fm.copyItem(at: source, to: staging)) != nil else { continue }
+            if present {
+                if (try? fm.replaceItemAt(target, withItemAt: staging)) != nil { changed = true }
+            } else if (try? fm.moveItem(at: staging, to: target)) != nil {
+                changed = true
+            }
+        }
+        return changed
     }
 
     // MARK: The Windows desktop

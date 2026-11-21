@@ -28,6 +28,21 @@ final class AppModel: ObservableObject {
     @Published var selection: UUID?
     /// Live process ids started from FineWine, per prefix.
     @Published var running: [UUID: Set<Int32>] = [:]
+    /// The prefixes that have processes right now, however they were started: a launcher
+    /// FineWine started ends once it has started the game, and programs are also started from
+    /// their Mac apps or were running before FineWine was opened. Looked up every few seconds.
+    @Published var alive: Set<UUID> = []
+    /// MetalFX upscaling as it was switched from FineWine's menu while a prefix runs; a
+    /// prefix that is not here goes by its settings. Forgotten when the prefix stops.
+    @Published var liveUpscaling: [UUID: Bool] = [:]
+    /// The space each prefix takes on its drive, in bytes, once it has been measured. Walking
+    /// a prefix with a large game in it takes a few seconds, so it is done in the background,
+    /// one prefix at a time, and again only after a while.
+    @Published var prefixSizes: [UUID: Int64] = [:]
+    private var sizesMeasuredAt: [UUID: Date] = [:]
+    private var sizeMeasuringUnderWay = false
+    private var aliveTimer: Timer?
+    private var aliveLookupUnderWay = false
     /// What a prefix is busy with ("Setting up…"), shown in place of its controls.
     @Published var busy: [UUID: String] = [:]
     /// Copies under way (a move, snapshot or restore), by prefix, so they can be cancelled.
@@ -104,6 +119,26 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Leave the prefixes FineWine made for Steam games out of its lists. They are run from
+    /// Steam, which is where a user looks for them; hidden, they still exist and still run.
+    static let hideSteamPrefixesKey = "HideSteamPrefixes"
+    var hidesSteamPrefixes: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.hideSteamPrefixesKey) }
+        set {
+            objectWillChange.send()
+            UserDefaults.standard.set(newValue, forKey: Self.hideSteamPrefixesKey)
+            // a hidden prefix cannot stay the one that is shown
+            if newValue, let current = prefix(selection), current.metadata.steamAppID != nil {
+                selection = listedPrefixes.first?.id
+            }
+        }
+    }
+
+    /// The prefixes the sidebar and the menu bar list.
+    var listedPrefixes: [Prefix] {
+        hidesSteamPrefixes ? prefixes.filter { $0.metadata.steamAppID == nil } : prefixes
+    }
+
     /// Prefixes on drives that are not plugged in, as FineWine last saw them.
     var disconnectedPrefixes: [(drive: PrefixDrive, prefix: KnownPrefix)] {
         drives.filter { !connectedDrives.contains($0.uuid) }
@@ -177,6 +212,7 @@ final class AppModel: ObservableObject {
     // MARK: State
 
     func reload() {
+        defer { watchRunningPrefixes(); measurePrefixSizes() }
         service.prefixes.refreshDrives()
         prefixes = service.prefixes.list()
         drives = service.prefixes.drives.drives
@@ -208,7 +244,112 @@ final class AppModel: ObservableObject {
     func prefix(_ id: UUID?) -> Prefix? { prefixes.first { $0.id == id } }
     func runtime(for prefix: Prefix) -> WineRuntime? { runtimes.first { $0.id == prefix.metadata.runtimeID } }
     func profile(for prefix: Prefix) -> GameProfile? { profiles.first { $0.id == prefix.metadata.profileID } }
-    func isRunning(_ prefix: Prefix) -> Bool { !(running[prefix.id] ?? []).isEmpty }
+    func isRunning(_ prefix: Prefix) -> Bool { !(running[prefix.id] ?? []).isEmpty || alive.contains(prefix.id) }
+
+    /// Whether MetalFX upscaling is on in a prefix's running programs, as far as FineWine
+    /// knows: what its menu last switched it to, else how the prefix starts programs. (A
+    /// program's own View menu can switch it too; that is not followed here.)
+    func isUpscalingOn(_ prefix: Prefix) -> Bool {
+        liveUpscaling[prefix.id] ?? prefix.metadata.settings.upscalesAtStart
+    }
+
+    /// Switches MetalFX upscaling in everything the prefix is running, without restarting it.
+    func toggleUpscaling(_ prefix: Prefix) {
+        let on = !isUpscalingOn(prefix)
+        liveUpscaling[prefix.id] = on
+        let service = UncheckedBox(service)
+        Task.detached(priority: .userInitiated) {
+            LiveUpscaling.set(on, processIDs: service.value.findProcesses(prefix.directory))
+        }
+    }
+
+    /// A prefix's size as text ("12.4 GB"), nil until it has been measured.
+    func sizeText(for prefix: Prefix) -> String? {
+        prefixSizes[prefix.id].map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+    }
+
+    /// Measures the prefixes that have not been measured in the last `maxAge` seconds (all of
+    /// them with 0). Links are not followed: a prefix's z: drive points at the whole Mac.
+    func measurePrefixSizes(maxAge: TimeInterval = 300) {
+        guard !sizeMeasuringUnderWay else { return }
+        let now = Date()
+        let due = prefixes.filter { prefix in
+            guard let last = sizesMeasuredAt[prefix.id] else { return true }
+            return now.timeIntervalSince(last) >= maxAge
+        }
+        for id in prefixSizes.keys where !prefixes.contains(where: { $0.id == id }) {
+            prefixSizes[id] = nil
+            sizesMeasuredAt[id] = nil
+        }
+        guard !due.isEmpty else { return }
+        sizeMeasuringUnderWay = true
+        Task { @MainActor in
+            for prefix in due {
+                let folder = prefix.directory
+                let bytes = await Task.detached(priority: .utility) { FolderCopy.measure(folder).allocated }.value
+                // a prefix that was deleted or unplugged meanwhile measures as nothing
+                if FileManager.default.fileExists(atPath: folder.path) { prefixSizes[prefix.id] = bytes }
+                sizesMeasuredAt[prefix.id] = Date()
+            }
+            sizeMeasuringUnderWay = false
+        }
+    }
+
+    /// Whether anything is running in any prefix, however it was started.
+    var hasRunningPrograms: Bool { !alive.isEmpty || runningCount > 0 }
+
+    /// Closes everything in every prefix, as quitting FineWine does, so that the app (and the
+    /// Wine runtime inside it, which the programs run from) can be replaced by an update.
+    /// Set when the updater quits the app to start the new version: nothing is asked then.
+    var quittingForUpdate = false
+
+    func closeEverythingForUpdate() async {
+        let all = prefixes
+        let service = UncheckedBox(service)
+        await Task.detached(priority: .userInitiated) {
+            let running = all.filter { !service.value.findProcesses($0.directory).isEmpty }
+            if !running.isEmpty { service.value.closeEverything(in: running) }
+        }.value
+        running = [:]
+        alive = []
+    }
+
+    /// Starts looking, every few seconds, for which prefixes have processes.
+    func watchRunningPrefixes() {
+        guard aliveTimer == nil else { return }
+        let timer = Timer(timeInterval: 4, repeats: true) { _ in
+            Task { @MainActor in AppModel.shared.refreshAlive() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        aliveTimer = timer
+        refreshAlive()
+    }
+
+    /// Looks once for which prefixes have processes. The looking runs `lsof` and `ps`, so it
+    /// is done off the main thread, and never twice at the same time.
+    func refreshAlive() {
+        guard !aliveLookupUnderWay else { return }
+        aliveLookupUnderWay = true
+        let all = prefixes
+        let service = UncheckedBox(service)
+        Task { @MainActor in
+            let switched = liveUpscaling
+            let found = await Task.detached(priority: .utility) { () -> Set<UUID> in
+                var found: Set<UUID> = []
+                for prefix in all {
+                    let pids = service.value.findProcesses(prefix.directory)
+                    guard !pids.isEmpty else { continue }
+                    found.insert(prefix.id)
+                    // programs started since the switch was thrown are told as well
+                    if let on = switched[prefix.id] { LiveUpscaling.set(on, processIDs: pids) }
+                }
+                return found
+            }.value
+            aliveLookupUnderWay = false
+            if found != alive { alive = found }
+            for id in liveUpscaling.keys where !found.contains(id) { liveUpscaling[id] = nil }
+        }
+    }
     var runningCount: Int { running.values.reduce(0) { $0 + $1.count } }
 
     private func replace(_ prefix: Prefix) {
@@ -297,6 +438,8 @@ final class AppModel: ObservableObject {
             try $0.deletePrefix(prefix)
         }
         running[prefix.id] = nil
+        alive.remove(prefix.id)
+        refreshAlive()
         reload()
     }
 
@@ -305,6 +448,8 @@ final class AppModel: ObservableObject {
             try $0.stopAll(in: prefix)
         }
         running[prefix.id] = nil
+        alive.remove(prefix.id)
+        refreshAlive()
     }
 
     /// Asks every program in the prefix to close, as shutting Windows down does.
@@ -313,6 +458,8 @@ final class AppModel: ObservableObject {
             try $0.shutDown(prefix)
         }
         running[prefix.id] = nil
+        alive.remove(prefix.id)
+        refreshAlive()
     }
 
     /// Ends everything in the prefix at once, frozen programs included.
@@ -321,6 +468,8 @@ final class AppModel: ObservableObject {
             try $0.forceShutDown(prefix)
         }
         running[prefix.id] = nil
+        alive.remove(prefix.id)
+        refreshAlive()
     }
 
     // MARK: Discord
@@ -459,6 +608,43 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: Steam
+
+    /// Goes up when the Steam tool is installed or removed, so the settings read it again.
+    @Published var steamRevision = 0
+    @Published var steamBusy = false
+
+    var steamClient: SteamClient { .standard() }
+    var steamTool: SteamTool { SteamTool(client: steamClient) }
+    var steamRuntime: WineRuntime? { service.steamRuntime() }
+
+    /// Installs the tool in Steam's tools folder and gets Valve's client files ready, so the
+    /// first game does not have to wait for them.
+    func installSteamTool() {
+        let tool = steamTool, client = steamClient
+        let valve = ValveClientFiles(directory: service.paths.valveClientFiles)
+        let app = Bundle.main.bundleURL
+        steamBusy = true
+        Task {
+            let failure: String? = await Task.detached(priority: .userInitiated) {
+                do {
+                    try tool.install(app: app)
+                    try valve.ensure(adoptingFrom: client.valveFileSources)
+                    return nil
+                } catch { return error.localizedDescription }
+            }.value
+            steamBusy = false
+            steamRevision += 1
+            if let failure { alert = AppAlert(title: tr("steam.err_install_title"), message: failure) }
+        }
+    }
+
+    func removeSteamTool() {
+        do { try steamTool.remove() }
+        catch { show(error, title: tr("steam.err_remove_title")) }
+        steamRevision += 1
+    }
+
     // MARK: Programs and shortcuts
 
     func addProgram(_ program: Program, to prefix: Prefix) {
@@ -499,11 +685,15 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Goes up whenever a shortcut app is made again, so views showing its icon read it again.
+    @Published var iconRevision = 0
+
     func createShortcut(for programID: UUID, in prefix: Prefix) {
         do {
             let updated = try service.createShortcut(for: programID, in: prefix)
             replace(updated)
             // An ad-hoc signature keeps macOS from treating the generated app as damaged.
+            iconRevision += 1
             if let path = updated.program(id: programID)?.shortcutPath {
                 let sign = Process()
                 sign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
@@ -613,7 +803,18 @@ final class AppModel: ObservableObject {
 
     /// Runs an installer, then looks for the programs it added.
     func runInstaller(_ url: URL, in prefix: Prefix) {
-        if WindowsExecutable.is32BitProgram(url) { return install32Bit(url, in: prefix) }
+        // A 32-bit installer made with NSIS is carried out by FineWine itself, as before. Any
+        // other 32-bit program is run when the prefix's runtime can run 32-bit programs, and
+        // explained when it cannot.
+        if WindowsExecutable.is32BitProgram(url) {
+            let runsIt = (try? service.runtime(for: prefix))?.runs32BitPrograms == true
+            if !runsIt || NSISArchive.isNSISInstaller(url) { return install32Bit(url, in: prefix) }
+        }
+        startInstaller(url, in: prefix)
+    }
+
+    /// Starts the installer as a Windows program.
+    private func startInstaller(_ url: URL, in prefix: Prefix) {
         let box = PIDBox()
         let prefixID = prefix.id
         let status = startingStatus(url.deletingPathExtension().lastPathComponent, in: prefix)
@@ -630,9 +831,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// A 32-bit program cannot run in FineWine's runtime. Most installers are 32-bit all the
-    /// same, whatever they install; one made with NSIS is carried out by FineWine itself, from
-    /// the script inside it. Anything else is explained to the user.
+    /// Most installers are 32-bit, whatever they install. One made with NSIS is carried out by
+    /// FineWine itself, from the script inside it; if that fails and the runtime runs 32-bit
+    /// programs, the installer is started instead. With a runtime that cannot run 32-bit
+    /// programs, any other installer is explained to the user.
     private func install32Bit(_ url: URL, in prefix: Prefix) {
         let name = url.deletingPathExtension().lastPathComponent
         guard NSISArchive.isNSISInstaller(url) else {
@@ -656,6 +858,12 @@ final class AppModel: ObservableObject {
             switch outcome {
             case .failure(let error):
                 StatusSplash.shared.hide(token)
+                // A runtime that runs 32-bit programs lets the installer do the work itself.
+                if let current = self.prefix(prefixID),
+                   (try? self.service.runtime(for: current))?.runs32BitPrograms == true {
+                    startInstaller(url, in: current)
+                    return
+                }
                 alert = AppAlert(title: tr("dialog.32bit_install_failed_title", name),
                                  message: tr("dialog.32bit_install_failed_msg", error.localizedDescription))
                 openMainWindow()
@@ -731,7 +939,7 @@ final class AppModel: ObservableObject {
         do {
             switch runtime.kind {
             case .managed: try service.runtimes.removeManaged(id: runtime.id)
-            case .external: try service.runtimes.removeExternal(runtime.root)
+            case .external: try service.runtimes.removeExternal(runtime.folder)
             case .bundled: break   // part of the app; the list offers no way to remove it
             }
             reload()
@@ -1001,6 +1209,17 @@ enum Panels {
         guard let id = popup.selectedItem?.representedObject as? UUID,
               let prefix = prefixes.first(where: { $0.id == id }) else { return .new }
         return .existing(prefix)
+    }
+
+    /// Asks for a file to take a program's icon from: a picture, or a Windows program,
+    /// library or `.ico` with an icon in it.
+    @MainActor static func chooseIcon(in directory: URL? = nil, message: String) -> URL? {
+        let panel = NSOpenPanel()
+        panel.message = message
+        panel.allowedContentTypes = [.image, .icns, .ico] + ["exe", "dll"].compactMap { .init(filenameExtension: $0) }
+        panel.canChooseDirectories = false
+        panel.directoryURL = directory
+        return panel.runModal() == .OK ? panel.url : nil
     }
 
     @MainActor static func chooseFolder(message: String) -> URL? {

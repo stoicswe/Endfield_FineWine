@@ -16,11 +16,12 @@ final class LanguageManagerTests: XCTestCase {
         XCTAssertTrue(cases.contains(.zhHant))
         XCTAssertTrue(cases.contains(.ko))
         XCTAssertTrue(cases.contains(.ja))
+        XCTAssertTrue(cases.contains(.ar))
     }
 
     func testSystemDetectionFallbackToEnglish() {
         let detected = LanguageManager.detectSystemLanguageCode()
-        XCTAssertTrue(["en", "zh-Hans", "zh-Hant", "ko", "ja"].contains(detected))
+        XCTAssertTrue(["en", "zh-Hans", "zh-Hant", "ko", "ja", "ar"].contains(detected))
     }
 
     func testEnglishTranslationKeys() {
@@ -91,6 +92,34 @@ final class LanguageManagerTests: XCTestCase {
 
         let count = manager.tr("main.program_count_multiple", 5)
         XCTAssertEqual(count, "5 個のアプリ")
+    }
+
+    func testArabicTranslation() {
+        let manager = LanguageManager.shared
+        manager.selectedLanguage = .ar
+
+        let name = manager.tr("app.name")
+        XCTAssertEqual(name, "FineWine")
+
+        let manage = manager.tr("menu.manage_prefixes")
+        XCTAssertEqual(manage, "إدارة الحاويات")
+
+        let count = manager.tr("main.program_count_multiple", 5)
+        XCTAssertTrue(count.contains("5") || count.contains("٥"))
+        XCTAssertTrue(count.contains("برامج"))
+    }
+
+    func testRTLSupport() {
+        let manager = LanguageManager.shared
+        manager.selectedLanguage = .ar
+        XCTAssertTrue(manager.isRTL)
+        XCTAssertEqual(LanguageManager.isRightToLeft(languageCode: "ar"), true)
+        XCTAssertEqual(LanguageManager.isRightToLeft(languageCode: "en"), false)
+        XCTAssertEqual(LanguageManager.isRightToLeft(languageCode: "ja"), false)
+
+        let isolated = LanguageManager.bidiIsolated("C:\\Program Files\\Game")
+        XCTAssertTrue(isolated.hasPrefix("\u{2066}"))
+        XCTAssertTrue(isolated.hasSuffix("\u{2069}"))
     }
 
     func testMissingKeyFallback() {

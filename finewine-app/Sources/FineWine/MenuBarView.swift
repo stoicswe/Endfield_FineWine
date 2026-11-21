@@ -17,6 +17,7 @@ struct MenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
+            UpdateBanner()
             if let name = model.settingUpPrefixName {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
@@ -25,7 +26,7 @@ struct MenuBarView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .glassCard(padding: 12)
             }
-            if model.prefixes.isEmpty {
+            if model.listedPrefixes.isEmpty {
                 Text(model.usableRuntimes.isEmpty
                      ? l10n.tr("menu.empty_no_runtimes")
                      : l10n.tr("menu.empty_has_runtimes"))
@@ -41,7 +42,7 @@ struct MenuBarView: View {
                 ScrollView {
                     FWGlassContainer(spacing: 10) {
                         VStack(spacing: 10) {
-                            ForEach(model.prefixes) { prefix in
+                            ForEach(model.listedPrefixes) { prefix in
                                 MenuPrefixCard(prefix: prefix)
                             }
                             if model.showsDisconnectedPrefixes, !model.disconnectedPrefixes.isEmpty {
@@ -176,6 +177,18 @@ private struct MenuPrefixCard: View {
                     .fixedSize()
                     .help(l10n.tr("menu.shut_down_help"))
                 }
+                if model.busy[prefix.id] == nil, model.isRunning(prefix),
+                   model.runtime(for: prefix)?.supports(.upscaling) ?? true {
+                    // MetalFX upscaling, switched while the prefix runs
+                    Button {
+                        model.toggleUpscaling(prefix)
+                    } label: {
+                        Image(systemName: model.isUpscalingOn(prefix) ? "sparkles.rectangle.stack.fill" : "sparkles.rectangle.stack")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(model.isUpscalingOn(prefix) ? Color.accentColor : Color.secondary)
+                    .help(model.isUpscalingOn(prefix) ? l10n.tr("menu.upscaling_on_help") : l10n.tr("menu.upscaling_off_help"))
+                }
                 Button {
                     model.show(prefixID: prefix.id, section: "configuration")
                 } label: {
@@ -213,4 +226,33 @@ private struct MenuPrefixCard: View {
 private struct ListHeightKey: PreferenceKey {
     static let defaultValue: Double = 0
     static func reduce(value: inout Double, nextValue: () -> Double) { value = max(value, nextValue()) }
+}
+
+
+/// A line in the menu bar panel while an update is waiting to be installed.
+private struct UpdateBanner: View {
+    @ObservedObject private var updates = UpdateModel.shared
+    @ObservedObject private var l10n = LanguageManager.shared
+
+    var body: some View {
+        if updates.phase == .available, let offer = updates.offer {
+            Button {
+                updates.openUpdateWindow()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.down.circle.fill").foregroundStyle(Look.accent)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(l10n.tr("update.banner_title")).font(.callout.weight(.semibold))
+                        Text(offer.release.name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.forward").font(.caption).foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .glassCard(padding: 12)
+        }
+    }
 }

@@ -5,8 +5,10 @@
 # everything the app runs Windows programs with, from source, with the one script a developer
 # uses for the same thing (scripts/build-finewine.sh all):
 #
-#   MoltenVK (FineWine flavour) · the llvm-mingw compiler · Wine with patches/runtime ·
-#   FEX · DXMT (which needs LLVM 15, built once and cached) · FineWine.app with the lot inside
+#   MoltenVK (FineWine flavour) · the llvm-mingw compiler · Wine with patches/runtime (its
+#   Windows side for ARM64, x64 and 32-bit x86) · FEX (twice: for x64 and for 32-bit programs) ·
+#   DXMT (which needs LLVM 15, built once and cached; its Windows DLLs for 64-bit and for 32-bit
+#   programs) · FineWine.app with the lot inside
 #
 # Every source it downloads is pinned to an exact commit in finewine-sources.lock, and the
 # build stops if what it fetched is not that; Homebrew's tools are checked by major version.
@@ -38,6 +40,11 @@ on:
         required: false
         default: ""
         type: string
+      channel:
+        description: Which kind of build this is, for the app's update check (release, beta, nightly; dev = offered every newer build)
+        required: false
+        default: "dev"
+        type: string
   workflow_call:
     inputs:
       runner:
@@ -49,6 +56,11 @@ on:
         description: CFBundleShortVersionString for FineWine.app (blank = build-app.sh default)
         required: false
         default: ""
+        type: string
+      channel:
+        description: Which kind of build this is, for the app's update check (release, beta, nightly; dev = offered every newer build)
+        required: false
+        default: "dev"
         type: string
 
 permissions:
@@ -175,6 +187,10 @@ jobs:
         shell: bash
         env:
           FINEWINE_VERSION: ${{ inputs.app_version }}
+          # Written into the app's Info.plist by finewine-app/scripts/build-app.sh: the app's
+          # update check compares releases with the commit and time it was built from.
+          FINEWINE_CHANNEL: ${{ inputs.channel }}
+          FINEWINE_COMMIT: ${{ github.sha }}
           SKIP_TESTS: "1"     # see the note at the top; the unit tests ran above
           SKIP_ARCHIVE: "1"   # the runtime ships inside the app here, not as its own archive
         run: |
@@ -200,6 +216,23 @@ jobs:
                       lib/wine/aarch64-unix/winemetal.so; do
             [ -e "$RT/$part" ] || fail "the runtime in the app is missing $part"
           done
+          # 32-bit programs: Wine's 32-bit Windows side, the emulator's 32-bit front end, and
+          # DXMT's 32-bit Windows DLLs.
+          for part in lib/wine/i386-windows/ntdll.dll lib/wine/i386-windows/kernel32.dll \
+                      lib/wine/i386-windows/d3d9.dll lib/wine/i386-windows/opengl32.dll \
+                      lib/wine/aarch64-windows/wow64.dll lib/wine/aarch64-windows/xtajit.dll \
+                      lib/dxmt/i386-windows/d3d11.dll lib/dxmt/i386-windows/dxgi.dll \
+                      lib/wine/i386-windows/winemetal.dll \
+                      lib/steam-bridge/wine/i386-windows/lsteamclient.dll \
+                      lib/steam-bridge/wine/aarch64-unix/lsteamclient.so; do
+            [ -e "$RT/$part" ] || fail "the runtime in the app is missing $part (32-bit programs)"
+          done
+          file "$RT/lib/wine/i386-windows/ntdll.dll" | grep -q 'Intel 80386\|Intel i386' || fail "the 32-bit ntdll.dll is not a 32-bit x86 file"
+          file "$RT/lib/dxmt/i386-windows/d3d11.dll" | grep -q 'Intel 80386\|Intel i386' || fail "DXMT's 32-bit d3d11.dll is not a 32-bit x86 file"
+          # The Steam bridge's modules belong in lib/steam-bridge only.
+          for stray in lib/wine/aarch64-windows/steam.exe lib/wine/i386-windows/steam.exe lib/wine/i386-windows/lsteamclient.dll; do
+            [ ! -e "$RT/$stray" ] || fail "the runtime in the app has a stray $stray"
+          done
           ls "$RT"/lib/libMoltenVK*.dylib >/dev/null 2>&1 || fail "the runtime in the app has no MoltenVK"
           lipo -archs "$RT/bin/wine" | grep -qw arm64 || fail "the runtime's loader is not arm64"
           echo "bundle OK: $(du -sh "$APP" | cut -f1)"
@@ -219,14 +252,25 @@ jobs:
           out="$(perl -e 'alarm 420; exec @ARGV' "$RT/bin/wine" cmd /c echo finewine-ok 2>/dev/null | tr -d '\r' | tail -n 1 || true)"
           "$RT/bin/wineserver" -k 2>/dev/null || true
           echo "console program said: '$out'"
-          [ "$out" = "finewine-ok" ]
+          # The same from the 32-bit command prompt, which goes through the 32-bit Windows side
+          # and the emulator's 32-bit front end.
+          out32="$(perl -e 'alarm 240; exec @ARGV' "$RT/bin/wine" 'C:\windows\syswow64\cmd.exe' /c 'echo %PROCESSOR_ARCHITECTURE%' 2>/dev/null | tr -d '\r' | tail -n 1 || true)"
+          "$RT/bin/wineserver" -k 2>/dev/null || true
+          echo "32-bit console program said: '$out32'"
+          [ "$out" = "finewine-ok" ] && [ "$out32" = "x86" ]
 
       - name: Zip
         shell: bash
+        env:
+          WANTED_VERSION: ${{ inputs.app_version }}
         run: |
           set -euo pipefail
           mkdir -p dist
           VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' finewine-app/build/FineWine.app/Contents/Info.plist)"
+          # The version that was asked for is the one the app must report.
+          if [ -n "$WANTED_VERSION" ] && [ "$VER" != "$WANTED_VERSION" ]; then
+            echo "::error::FineWine.app reports version '$VER', not '$WANTED_VERSION'"; exit 1
+          fi
           echo "APP_VER=$VER" >> "$GITHUB_ENV"
           # ditto keeps the code signature and the symbolic links inside the bundle intact
           ditto -c -k --keepParent finewine-app/build/FineWine.app "dist/FineWine-$VER-$SHORT_SHA.zip"

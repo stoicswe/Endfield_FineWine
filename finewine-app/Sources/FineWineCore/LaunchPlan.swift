@@ -121,7 +121,13 @@ public struct LaunchPlanner {
         env["WINEPREFIX"] = prefix.directory.path
         if let server = runtime.wineserverBinary { env["WINESERVER"] = server.path }
         // The runtime's own dylibs (MoltenVK, GStreamer, …) first, then the system default.
-        env["DYLD_FALLBACK_LIBRARY_PATH"] = runtime.root.appendingPathComponent("lib").path + ":/usr/local/lib:/usr/lib"
+        env["DYLD_FALLBACK_LIBRARY_PATH"] = (runtime.libraryDirectories.map(\.path) + ["/usr/local/lib", "/usr/lib"])
+            .joined(separator: ":")
+        // What the runtime's description asks for; the prefix's own variables come after.
+        for (name, value) in runtime.manifest.environment ?? [:]
+        where EnvironmentVariable.isValidName(name) && !RuntimeManifest.reservedVariables.contains(name) {
+            env[name] = runtime.expand(value, prefix: prefix.directory)
+        }
 
         // FineWine makes its own shortcut apps, so Wine's menu builder is switched off.
         var overrides = ["winemenubuilder.exe=d"]
@@ -135,7 +141,8 @@ public struct LaunchPlanner {
         if prefix.metadata.settings.nonUnicodeLanguage.unixLocale != nil { env.removeValue(forKey: "LC_ALL") }
 
         var userOverrides: String?
-        for (name, value) in prefix.metadata.settings.environmentVariables() + extra.map({ ($0.name, $0.value) }) {
+        for (name, value) in prefix.metadata.settings.environmentVariables(supporting: runtime.capabilities)
+            + extra.map({ ($0.name, $0.value) }) {
             guard EnvironmentVariable.isValidName(name) else { continue }
             if name == "WINEDLLOVERRIDES" { userOverrides = value } else { env[name] = value }
         }
@@ -186,10 +193,25 @@ public struct LaunchPlanner {
     /// executable whether an app is a game, so a game is run with the loader that says it is;
     /// every program is given the marker to create if it turns out to render after all.
     public func gameModeEnvironment(for program: Program) -> [String: String] {
-        guard prefix.metadata.settings.gameMode, runtime.hasGameLoader else { return [:] }
+        guard prefix.metadata.settings.gameMode, runtime.supports(.gameMode), runtime.hasGameLoader else { return [:] }
         var env = [Self.gameMarkerVariable: gameMarker(for: program).path]
         if isGame(program) { env[Self.loaderVariable] = WineRuntime.gameLoaderName }
         return env
+    }
+
+    /// The variable that makes the runtime treat a program as DPI aware (Windows: "Override
+    /// high DPI scaling behaviour: Application"). See `dpiAwareEnvironment`.
+    public static let dpiAwareVariable = "FINEWINE_DPI_AWARE"
+
+    /// A game is run as DPI aware whether it says so or not. One that does not, in a prefix
+    /// with a high DPI (a Retina prefix has 192), is told a screen half the size of the display
+    /// modes it is offered and sizes its full-screen window by the mode, so the window comes
+    /// out twice the screen (Portal). Only for a program that draws with a rendering API
+    /// itself: a launcher that starts a game is a desktop program, and scaling is for those.
+    public func dpiAwareEnvironment(for program: Program) -> [String: String] {
+        guard let exe = WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory),
+              PEImports.usesRenderingAPI(at: exe) else { return [:] }
+        return [Self.dpiAwareVariable: "1"]
     }
 
     // MARK: Steam stand-in
@@ -197,7 +219,8 @@ public struct LaunchPlanner {
     /// The Steam id to start the program with, if it is one that is started through the
     /// runtime's stand-in for Steam, the prefix allows it and the runtime has the stand-in.
     public func steamAppID(for program: Program) -> String? {
-        guard prefix.metadata.settings.steamForHoYoverse, runtime.steamStandIn != nil else { return nil }
+        guard prefix.metadata.settings.steamForHoYoverse, runtime.supports(.steamStandIn),
+              runtime.steamStandIn != nil else { return nil }
         return SteamStandIn.appID(forWindowsPath: program.windowsPath)
     }
 
@@ -233,6 +256,7 @@ public struct LaunchPlanner {
         }
         // The program's own variables keep the last word, as everywhere else.
         for (name, value) in gameModeEnvironment(for: program) where env[name] == nil { env[name] = value }
+        for (name, value) in dpiAwareEnvironment(for: program) where env[name] == nil { env[name] = value }
         if let memoryTraceFolder { env[Self.memoryTraceVariable] = memoryTraceFolder.path }
         return LaunchPlan(executable: try wine(), arguments: arguments,
                           environment: env, workingDirectory: cwd ?? prefix.directory)
@@ -259,7 +283,11 @@ public struct LaunchPlanner {
             // the two DLLs off for this one run skips the offer; nothing is installed or removed.
             env["WINEDLLOVERRIDES"] = (env["WINEDLLOVERRIDES"].map { $0 + ";" } ?? "") + "mscoree=d;mshtml=d"
         }
-        return LaunchPlan(executable: try wine(), arguments: ["wineboot", action.rawValue],
+        var arguments = ["wineboot", action.rawValue]
+        if action == .initialize, let setup = runtime.manifest.prefixSetup, !setup.isEmpty {
+            arguments = setup.map { runtime.expand($0, prefix: prefix.directory) }
+        }
+        return LaunchPlan(executable: try wine(), arguments: arguments,
                           environment: env, workingDirectory: prefix.directory)
     }
 

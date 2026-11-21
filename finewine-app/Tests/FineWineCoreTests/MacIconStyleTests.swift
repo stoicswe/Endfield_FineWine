@@ -94,4 +94,38 @@ final class MacIconStyleTests: XCTestCase {
         XCTAssertTrue(settings.environmentVariables().contains { $0.0 == "FINEWINE_MAC_ICONS" && $0.1 == "0" })
         XCTAssertTrue(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).macStyleIcons)
     }
+
+    func testAProgramsIconComesFromTheChosenFileAndTheShortcutCarriesIt() throws {
+        let sandbox = Sandbox()
+        let service = PrefixService(paths: sandbox.paths, runner: RecordingRunner())
+        XCTAssertTrue(sandbox.paths.shortcuts.path.hasPrefix(sandbox.root.path))
+        var prefix = try service.prefixes.create(name: "Icons", runtimeID: "none", profile: nil)
+        sandbox.write("not a program", to: prefix.directory.appendingPathComponent("drive_c/Game/game.exe"))
+        let picture = sandbox.root.appendingPathComponent("art/logo.png")
+        try FileManager.default.createDirectory(at: picture.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try XCTUnwrap(ICNS.png(from: roundLogo, pixelSize: 256)).write(to: picture)
+
+        var program = Program(name: "Game", windowsPath: #"C:\Game\game.exe"#)
+        // no icon in the executable and none chosen
+        XCTAssertNil(PrefixService.iconData(for: program, in: prefix))
+        // a picture from anywhere on the Mac
+        program.iconPath = WindowsPath.windowsPath(for: picture, inPrefix: prefix.directory)
+        let icon = try XCTUnwrap(PrefixService.iconData(for: program, in: prefix))
+        XCTAssertEqual(String(decoding: icon.prefix(4), as: UTF8.self), "icns")
+        // a chosen file that has gone falls back to the executable
+        var gone = program
+        gone.iconPath = #"C:\Game\missing.ico"#
+        XCTAssertNil(PrefixService.iconData(for: gone, in: prefix))
+
+        // the shortcut app is made with the icon, and made again when the icon is taken away
+        prefix.metadata.programs = [program]
+        try service.prefixes.save(prefix)
+        prefix = try service.createShortcut(for: program.id, in: prefix)
+        let app = try XCTUnwrap(prefix.metadata.programs[0].shortcutPath)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: app + "/Contents/Resources/AppIcon.icns")), icon)
+        prefix.metadata.programs[0].iconPath = nil
+        prefix = try service.createShortcut(for: program.id, in: prefix)
+        XCTAssertEqual(prefix.metadata.programs[0].shortcutPath, app)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: app + "/Contents/Resources/AppIcon.icns"))
+    }
 }

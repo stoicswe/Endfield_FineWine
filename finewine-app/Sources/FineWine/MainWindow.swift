@@ -8,6 +8,7 @@ struct MainWindow: View {
     @ObservedObject private var l10n = LanguageManager.shared
     @Environment(\.openSettings) private var openSettings
     @State private var showingNewPrefix = false
+    @State private var showingBottleImport = false
 
     var body: some View {
         NavigationSplitView {
@@ -32,6 +33,9 @@ struct MainWindow: View {
             }
         }
         .frame(minWidth: 860, minHeight: 560)
+        .sheet(isPresented: $showingBottleImport) {
+            ImportBottleSheet().environmentObject(model)
+        }
         .sheet(isPresented: $showingNewPrefix) {
             NewPrefixSheet().environmentObject(model)
         }
@@ -51,7 +55,7 @@ struct MainWindow: View {
     private var sidebar: some View {
         List(selection: $model.selection) {
             Section(l10n.tr("main.prefixes")) {
-                ForEach(model.prefixes) { prefix in
+                ForEach(model.listedPrefixes) { prefix in
                     HStack(spacing: 8) {
                         Image(systemName: "shippingbox")
                             .foregroundStyle(Look.accent)
@@ -61,8 +65,31 @@ struct MainWindow: View {
                             Label(model.placeName(prefix.place), systemImage: model.placeSymbol(prefix.place))
                                 .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                                 .help(l10n.tr("drive.stored_on", model.placeName(prefix.place)))
+                            if let appID = prefix.metadata.steamAppID {
+                                // made by the Steam tool for a game in the Steam library
+                                Text(l10n.tr("steam.prefix_pill"))
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(Look.accent)
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Look.accent.opacity(0.15), in: Capsule())
+                                    .help(l10n.tr("steam.prefix_pill_help", appID))
+                            }
                         }
                         Spacer()
+                        if let size = model.sizeText(for: prefix) {
+                            // how much space the prefix takes on its drive
+                            Text(size)
+                                .font(.caption2.weight(.medium).monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .fixedSize()
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.quaternary, in: Capsule())
+                                .help(l10n.tr("prefix.size_help"))
+                        }
                         if model.busy[prefix.id] != nil {
                             ProgressView().controlSize(.small)
                         } else if model.isRunning(prefix) {
@@ -91,7 +118,7 @@ struct MainWindow: View {
         // Only prefixes that are here can be selected; anything else goes back to one that is.
         .onChange(of: model.selection) { _, selected in
             guard let selected, model.prefix(selected) == nil else { return }
-            model.selection = model.prefixes.first?.id
+            model.selection = model.listedPrefixes.first?.id
         }
         .safeAreaInset(edge: .bottom) {
             HStack {
@@ -101,6 +128,14 @@ struct MainWindow: View {
                     Label(l10n.tr("main.new_prefix"), systemImage: "plus")
                 }
                 .fwButton()
+                Button {
+                    showingBottleImport = true
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .fwButton()
+                .help(l10n.tr("bottle.import_btn"))
+                .disabled(model.usableRuntimes.isEmpty)
                 Spacer()
                 Button {
                     openSettings()
@@ -122,7 +157,7 @@ struct MainWindow: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let prefix = model.prefix(model.selection) ?? model.prefixes.first {
+        if let prefix = model.prefix(model.selection) ?? model.listedPrefixes.first {
             PrefixDetailView(prefix: prefix).id(prefix.id)
         } else if model.usableRuntimes.isEmpty {
             EmptyState(symbol: "wineglass", title: l10n.tr("main.add_runtime_title"),
@@ -139,6 +174,8 @@ struct MainWindow: View {
                 Button(l10n.tr("main.first_prefix_btn")) { showingNewPrefix = true }
                     .fwProminentButton().tint(Look.wine)
                     .controlSize(.large)
+                Button(l10n.tr("bottle.import_btn")) { showingBottleImport = true }
+                    .fwButton()
             }
         }
     }
@@ -352,8 +389,11 @@ struct SettingsView: View {
                     .fwButton()
                 }
 
+                UpdatesCard()
                 DrivesCard()
                 SnapshotsSettingsCard()
+
+                SteamCard()
 
                 Card(title: l10n.tr("settings.discord_card"), symbol: "bubble.left.and.bubble.right",
                      footnote: l10n.tr("settings.discord_footnote")) {
@@ -649,6 +689,57 @@ struct DrivesCard: View {
                 Button(l10n.tr("drive.forget")) { model.forgetDrive(drive.uuid) }
                     .fwButton()
                     .help(l10n.tr("drive.forget_help", drive.name))
+            }
+        }
+    }
+}
+
+
+/// Steam: FineWine as a compatibility tool in the Mac Steam client.
+struct SteamCard: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var l10n = LanguageManager.shared
+
+    private var status: String {
+        _ = model.steamRevision
+        let client = model.steamClient
+        if !client.isInstalled { return l10n.tr("steam.status_no_steam") }
+        if model.steamRuntime == nil { return l10n.tr("steam.status_no_bridge") }
+        let enablers = client.steamPlayEnablers
+        if enablers.isEmpty { return l10n.tr("steam.status_no_enabler") }
+        if model.steamTool.isInstalled { return l10n.tr("steam.status_installed", enablers.joined(separator: ", ")) }
+        return l10n.tr("steam.status_ready", enablers.joined(separator: ", "))
+    }
+
+    var body: some View {
+        let installed = model.steamTool.isInstalled
+        Card(title: l10n.tr("steam.card"), symbol: "gamecontroller", footnote: l10n.tr("steam.footnote")) {
+            Row(label: l10n.tr("steam.tool_label"), detail: status) {
+                if model.steamBusy { ProgressView().controlSize(.small) }
+                if installed {
+                    Button(l10n.tr("steam.install_again")) { model.installSteamTool() }.fwButton().disabled(model.steamBusy)
+                    Button(l10n.tr("app.remove"), role: .destructive) { model.removeSteamTool() }.fwButton().disabled(model.steamBusy)
+                } else {
+                    Button(l10n.tr("steam.install")) { model.installSteamTool() }.fwButton()
+                        .disabled(model.steamBusy || !model.steamClient.isInstalled || model.steamRuntime == nil)
+                }
+            }
+            Divider()
+            Toggle(isOn: Binding(get: { model.hidesSteamPrefixes }, set: { model.hidesSteamPrefixes = $0 })) {
+                Text(l10n.tr("steam.hide_prefixes_title"))
+                Text(l10n.tr("steam.hide_prefixes_desc"))
+            }
+            // Games set to FineWine that Steam cannot start because of their launch options.
+            let problems = installed ? model.steamClient.launchOptionProblems(forTool: SteamTool.name) : []
+            if !problems.isEmpty {
+                Label {
+                    Text(l10n.tr("steam.launch_options_problem", problems.map(\.name).joined(separator: ", ")))
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                .padding(.top, 4)
             }
         }
     }

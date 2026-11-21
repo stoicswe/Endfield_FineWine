@@ -172,6 +172,43 @@ This directory does not contain Wine itself — only diffs to be applied to a Wi
 Applied by `scripts/build-finewine-runtime.sh` on top of `patches/ARM` (minus the two x86-only
 kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21.
 
+- `0047-win32u-winemac-wined3d-a-display-mode-a-program-asks-for-is-emulated-in-a-space.patch`:
+  with full screen in a Space or as a borderless window, a program that sets a display mode
+  (Direct3D 9 games in exclusive full screen do; Portal asks for 960x600) no longer changes the
+  Mac's real mode: the mode is emulated and the picture brought to the size of the Space, by
+  MetalFX for Direct3D 10/11 and Vulkan and by Wine's blit for OpenGL. For that the Mac driver
+  gives Wine an OpenGL surface of the real size when Wine scales, WineD3D sizes its full-screen
+  window in real pixels (programs that are not DPI aware got a window twice their screen), and
+  a scaling ratio that does not fit 16 bits is shortened instead of asserting.
+  `FINEWINE_EMULATE_MODES=0` turns the emulation off.
+- `0046-ntdll-a-library-whose-imports-fail-is-unmapped-steam-bridge-for-32-bit-games.patch`: a
+  native library whose imports cannot be resolved was left mapped (so upstream); a Steam game
+  that cannot load Steam's client library retries thousands of times, and a 32-bit one ran out
+  of address space. It is unmapped now, with its thread-local slot released. Also the Steam
+  redirect of 0042 for 32-bit games: `steamclient.dll` to the 32-bit `lsteamclient.dll`.
+- `0045-ntdll-wow64-32-bit-programs-keep-their-address-space-to-themselves.patch`: found with
+  Portal's "Out of memory". The 64-bit side's own allocations (the emulator's tables for each
+  thread) were served from the 32-bit program's window, 150 to 500 MB a thread; only requests
+  confined to the window are now. `VirtualAlloc2` from a 32-bit program with requirements that
+  give no upper limit (mimalloc) gets the program's limit. And for every program: the physical
+  memory size was counted in 16K pages and reported in 4K ones (24 GB shown as 6 GB).
+- `0044-opengl32-32-bit-programs-pointers-sizes-and-buffer-offsets.patch`: Direct3D 9 and older
+  (WineD3D's OpenGL renderer) and OpenGL from 32-bit programs. With 0043 the 32-bit thunks of
+  the OpenGL call layer must tell addresses from numbers: a context the 32-bit side allocated
+  is a pointer; sizes and offsets are not; and an argument that is an address or an offset into
+  the bound buffer object (vertex array pointers, draw indices, pixel data) gets the base only
+  while no buffer is bound. Changes the generated `unix_thunks.c` directly.
+- `0043-32-bit-programs-in-a-window-above-4-gb.patch` runs 32-bit Windows programs. macOS gives
+  an ARM64 process no memory below 4 GB, so a 32-bit process's 4 GB are a window at 1 TB
+  (`0x10000000000`, a multiple of 4 GB: a real address cut to 32 bits is the program's address).
+  The memory manager places a 32-bit process's memory inside it and maps the shared user data
+  page there a second time; `ULongToPtr`/`UlongToPtr` add the base in the 32-to-64 call layer
+  (`wow64`, `wow64win`) and, through `include/basetsd.h` and `__wine_wow_window_base` exported
+  by `ntdll.so`, in every library's Mac-side 32-bit thunks; pointer-carrying window messages
+  and `NtUserCall…Param` codes are converted. The base is zero in every other process. Needs
+  FEX patch 0011 and the i386 Windows side (`--enable-archs=arm64ec,aarch64,i386`). Write-up:
+  [25-32-bit-programs-and-installers.md](../docs/project-information/25-32-bit-programs-and-installers.md).
+
 - `0001-msync-mach-semaphore-synchronization.patch` adds MSync as the macOS implementation of
   Wine's in-process synchronisation interface. The code comes from the Wine tree CodeWeavers
   publishes for CrossOver 26.3 (LGPL-2.1-or-later), with this project's fixes, moved from Wine
@@ -231,6 +268,15 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
   `finewine-presence` (`runtime-extras/presence-helper`) next to it under the Windows file
   name: no Dock icon, one clear pixel of window, gone when the program ends.
   `FINEWINE_GAME_PRESENCE=0` turns it off.
+- `0040-winemac-win32u-a-menu-switch-for-metalfx-upscaling-and-a-render-size.patch`: View >
+  MetalFX Upscaling (Control-Command-U) switches upscaling while a program runs.
+  `FINEWINE_RENDER_SCALE=<percent>` makes programs see a smaller screen through Wine's display
+  mode emulation, so games draw fewer pixels and MetalFX upscales; sizes are snapped to ones
+  Wine's 16-bit scaling fractions can hold.
+- `0041-winecoreaudio-playback-follows-the-mac-s-output-device.patch`: a playback stream opened on
+  the Mac's output device moves to the new one when macOS changes it (headphones connected while
+  a game runs), by getting a new audio unit there; its buffer and position are untouched.
+  `FINEWINE_AUDIO_FOLLOW_OUTPUT=0` turns it off.
 - `0033-winemac-read-the-displays-again-on-activation-only-when-they-changed.patch`: switching
   to a Wine program made Wine read every display again (modes, EDID, GPUs, registry keys) on the
   program's message thread, 2.4 seconds in a game. Now only when the displays differ from what
@@ -315,12 +361,12 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
   files beside them (CEF, Electron) get `--in-process-gpu --disable-gpu --disable-gpu-compositing`: neither DXMT nor the Mac driver
   can draw into a window from a process that does not own it, which is what Chromium's GPU process does.
   `FINEWINE_CHROMIUM_FLAGS` names other switches, or `none`.
-- `0014-ntdll-run-a-do-nothing-program-in-place-of-32-bit-runtime-setup-programs.patch`: the
-  runtime cannot run 32-bit Windows programs (a native ARM64 Mac process has no memory below
-  4 GB). When a program starts the 32-bit setup program of the Visual C++ or DirectX runtime
+- `0014-ntdll-run-a-do-nothing-program-in-place-of-32-bit-runtime-setup-programs.patch`: written
+  when the runtime could not run 32-bit Windows programs, and kept because the runtime has those
+  libraries already. When a program starts the 32-bit setup program of the Visual C++ or DirectX runtime
   (`vc_redist*`, `vcredist*`, `dxsetup`, `dxwebsetup`, `directx_*`, `ue4prereqsetup*`,
   `ueprereqsetup*`), a built-in program that does nothing and succeeds runs in its place, so
-  the installer that started it carries on. Other 32-bit programs still fail to start.
+  the installer that started it carries on. Other 32-bit programs run (0043).
 - `0013-ntdll-keep-a-file-in-the-prefix-open-so-its-processes-can-be-found.patch` makes every
   Wine process hold `<prefix>/.finewine-alive` open, so that a frozen program can be traced to
   its prefix and ended (Force Shut Down). `ps` cannot do it: Wine overwrites a process's
@@ -363,6 +409,11 @@ builds for the CrossOver payloads do not get these. Apache-2.0, like MoltenVK.
 - `0005-pipeline-cache-header-carries-the-reported-gpu-ids.patch`: with another GPU reported,
   the pipeline cache header still carried Apple's ids, so Unity (Endfield) dropped its cache and
   stopped saving it. The header now carries the reported ids.
+- `0006-upscale-a-swapchain-smaller-than-its-window-with-metalfx.patch`: a swapchain smaller than
+  its layer is in display pixels (a lower resolution in a game, a render size, Retina mode off)
+  is drawn off screen and upscaled into the drawable with MetalFX's spatial scaler at present:
+  what `patches/dxmt/0004` does for Direct3D 11, for Vulkan and Direct3D 12. Same switches as
+  DXMT (`FINEWINE_METALFX_AUTO`, `finewine.metalfx.<process id>`, `FINEWINE_METALFX_SWAPCHAIN=0`).
 
 The patches apply as a series on `0001`. Details and limits are in
 [`docs/project-information/21-metal4-and-ray-tracing.md`](../docs/project-information/21-metal4-and-ray-tracing.md).
@@ -370,7 +421,20 @@ The patches apply as a series on `0001`. Details and limits are in
 ## `fex/` — the x64 emulator
 
 Applied by `scripts/build-fex.sh` to FEX at the commit pinned in `finewine-sources.lock`.
-FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`.
+FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`, and its WOW64 build
+(for 32-bit programs) as `xtajit.dll`.
+
+- `0012-32-bit-guests-fex-s-own-data-read-through-guest-memory-operations.patch`: two places
+  in the 32-bit build read FEX's own data with a guest memory operation, which 0011 sends
+  through the guest's window: the x87 stack's slow path (now through the state register) and
+  the segment descriptor table read when a segment register is loaded (now allocated inside
+  the window). They worked only while FEX's memory happened to be inside the window.
+- `0011-32-bit-guests-in-a-window-above-4-gb.patch`: the WOW64 build reaches all guest memory
+  through a base (`FEX_GUEST_BASE`, 1 TB; see runtime patch 0043). Generated code adds it on
+  every guest memory access, using x19 and x24, which are taken out of register allocation for
+  32-bit guests; the decoder, the syscall bridge and the invalidation tracker convert between
+  guest and host addresses (`FEXCore/Core/GuestBase.h`). The ARM64EC build has a base of zero
+  at compile time and generates the code it did before.
 
 - `0001-arm64ec-read-the-teb-from-thread-specific-data-on-macos.patch` replaces FEX's ten reads
   of the TEB through x18 with the thread-specific data lookup the runtime uses.
@@ -440,5 +504,21 @@ FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`.
   `NvAPI_GetLogicalGPUFromPhysicalGPU`, where NVIDIA's Streamline stopped at startup in Endfield
   with the GPU reported as NVIDIA, and makes DXGI and NVAPI report Wine's adapter LUID so it
   agrees with `D3DKMTEnumAdapters2` and Vulkan. Whether the game then offers DLSS is untested.
+- `0006-dxgi-register-nvngx-under-the-name-newer-ngx-sdks-read.patch`: the NGX SDK inside
+  Streamline 2.10 reads the folder of `nvngx.dll` from the value `NGXPath` (driver service key,
+  then the global key), not `FullPath`. Both are now written. Without it every NGX call came
+  back "not implemented" and Endfield offered no DLSS.
+- `0007-d3d11-winemetal-upscaling-follows-a-switch-that-can-be-thrown-while-running.patch`: the
+  Direct3D 11 upscaling of `0004` can be switched while a program runs. `FINEWINE_METALFX_AUTO=0`
+  only says it starts off; the notification state `finewine.metalfx.<process id>` (1 on, 2 off)
+  overrides it. `FINEWINE_METALFX_SWAPCHAIN=0` turns the mechanism off.
+- `0008-winemetal-pointers-of-32-bit-programs-in-finewine-s-memory-window.patch`: DXMT for
+  32-bit programs. `scripts/build-dxmt.sh` builds DXMT's Windows DLLs a second time for 32-bit
+  x86 (DXMT's own `build-win32.txt`) into `lib/dxmt/i386-windows` and
+  `lib/wine/i386-windows/winemetal.dll`; they call the same `winemetal.so`. Its 32-bit side
+  passes pointers as 32-bit values in 64-bit fields, and the Mac side now adds the base of the
+  program's memory window to them (runtime patch 0043) and takes it off a buffer's contents
+  pointer that lies inside the window. The base is 0 in every other process. The NVIDIA
+  stand-ins (DLSS as MetalFX) stay 64-bit only.
 - `build-arm64ec-finewine.txt` is the meson cross file `scripts/build-dxmt.sh` builds DXMT with.
   It is DXMT's own ARM64EC cross file plus one linker flag (see the comment in the file).

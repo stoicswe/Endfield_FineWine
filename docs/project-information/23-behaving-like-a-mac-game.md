@@ -141,3 +141,50 @@ it starts and the game inherits its launcher's loader. The "Genshin Impact" entr
 A program is now started as a game also when another entry for the same executable has a marker,
 and always when it is a HoYoverse game or HoYoPlay (the programs the Steam stand-in recognises),
 so their first launch is in Game Mode too. Tested by `GameModeLaunchTests`.
+
+## A game that sets its own display mode (2026-11-21)
+
+Older games, and every Direct3D 9 game in "exclusive" full screen, set a display mode of
+their own choice: Portal asks for 960x600. Until runtime patch 0047 that changed the Mac's
+real mode even with full screen in a Space: every other window on the Mac was resized, macOS
+lost the display for the duration, the game's picture sat in a corner, and putting the mode
+back failed afterwards.
+
+In the Space and borderless modes a mode is now only emulated (Wine's `EmulateModeset`). The
+program sees the screen it asked for; its picture is brought to the size of the Space, keeping
+its shape (a 4:3 mode is centred with bars at the sides):
+
+| Picture drawn with | Brought to size by |
+|---|---|
+| Direct3D 10/11 (DXMT), Vulkan and Direct3D 12 (MoltenVK) | MetalFX, as for a render size |
+| OpenGL, which Direct3D 9 and older are (WineD3D) | Wine's own blit into a surface of the real size |
+
+Two things had to agree with that. The Mac driver gave every OpenGL surface the program's
+size, also when Wine scales the picture itself and needs one of the real size. And WineD3D
+sized the full-screen window in the program's units instead of real pixels: for a program that
+is not DPI aware in a prefix with 192 DPI (a Retina prefix) the window came out twice the size
+of the screen the program saw, and the pointer reached a quarter of it.
+
+**Games are run as DPI aware.** Portal does not use Direct3D's exclusive mode: through SDL
+it sets the mode and sizes its own window. It does not declare itself DPI aware, and in a
+Retina prefix (192 DPI) Wine then tells it a screen half the size of the display modes it is
+offered; sized by the mode, its window came out twice the screen. Windows has the same trap
+and the same way out ("Override high DPI scaling behaviour: Application"). FineWine does that
+for games: `FINEWINE_DPI_AWARE=1`, set for a program that draws with a rendering API itself
+and for everything Steam starts (`LaunchPlanner.dpiAwareEnvironment`). A launcher is left
+alone: scaling a program that is not DPI aware is what makes desktop programs readable.
+
+**The screen size a DPI aware program is told.** Portal 2 then came up half a screen down
+and to the right, with three quarters of its window off the screen. The Mac driver doubled
+the size `GetDeviceCaps` reports for the screen in high-resolution mode, which was right when
+the size underneath was in Mac points and is wrong now that it is in the program's own units:
+a DPI aware program was told 6048x3796, and Portal 2 centres its window by that. The doubling
+is gone.
+
+`FINEWINE_EMULATE_MODES=0` goes back to changing the real mode. With "exclusive" chosen as the
+prefix's full-screen mode nothing changes: there the Mac's mode is the game's.
+
+Checked with Portal (its main menu fills the Space at 3024x1898, seen in a capture of its
+window) and with `tests/runtime/d3d9-fullscreen.c` (in the test script with
+`FINEWINE_TEST_FULLSCREEN=1`). Not checked: a window being resized by hand while a game draws,
+and switching away from a game and back.

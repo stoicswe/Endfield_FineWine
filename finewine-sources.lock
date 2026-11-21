@@ -56,3 +56,17 @@ NETTLE_SHA256=b4c518adb174e484cb4acea54118f02380c7133771e7e9beb98a0787194ee47c
 BREW_LLVM_MAJOR=23
 BREW_LLD_MAJOR=23
 BREW_BISON_MAJOR=3
+
+# The Steam bridge (scripts/build-steam-bridge.sh): Valve's lsteamclient, from
+# github.com/ValveSoftware/Proton at this commit, with the files in
+# runtime-extras/steam-bridge/lsteamclient copied over it. The digest is of the extracted
+# lsteamclient folder (names and contents), because the archive's own bytes can change.
+STEAM_BRIDGE_PROTON_COMMIT=164e0ccd2ea2b1ec2e5d08dc97f65b184c2539ca
+STEAM_BRIDGE_LSTEAMCLIENT_DIGEST=b286df1df46a70d9e2cc674676afcc6e08b1a56ce472e5add0932b86940657bf
+# Headers the steam.exe helper is compiled against, each from its own Valve repository at the
+# commit Proton 9.0 uses (Proton's archive has those folders empty).
+STEAM_BRIDGE_OPENVR_COMMIT=f51d87ecf8f7903e859b0aa4d617ff1e5f33db5a
+STEAM_BRIDGE_OPENVR_H_SHA256=4f1242febb91d23e1a8317b988dbecec63476603f67458872d3b916cd347df32
+STEAM_BRIDGE_IVRCLIENTCORE_H_SHA256=07c8ce981a59fb7cd1dc30572f0c9972d98e6275e95527f0f7a74a18bc0cf846
+STEAM_BRIDGE_VALVE_WINE_COMMIT=015230dc0f78a543032dea0907f6c97304b25ca3
+STEAM_BRIDGE_WINE_HEAP_H_SHA256=e51df7c87744e3cbea4cd03d1e08573205252eb275166c0d01f87340991550e7

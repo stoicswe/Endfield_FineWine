@@ -11,6 +11,8 @@
 #   build    native arm64 Mac side; Windows side as ARM64X (--enable-archs=arm64ec,aarch64),
 #            the same shape CrossOver ARM uses, so x64 programs can load the DLLs once an
 #            x64 emulator is present
+#            and as 32-bit x86 (i386) for 32-bit programs, which run in a window above 4 GB
+#            (patches/runtime/0043) through FEX's 32-bit front end
 #
 # Usage:
 #   scripts/build-finewine-runtime.sh deps       # Homebrew build dependencies
@@ -26,6 +28,9 @@
 # output is added by `package` whenever it exists:
 #   scripts/build-fex.sh all    x64 programs, through the FEX emulator
 #   scripts/build-dxmt.sh all   Direct3D 10 and 11, through DXMT on Metal
+# The bridge to the Mac's Steam client (scripts/build-steam-bridge.sh) is built with the runtime:
+# `apply` places its sources in the Wine tree, `build` builds it, `package` installs it.
+# STEAM_BRIDGE=0 leaves it out.
 # scripts/test-finewine-runtime.sh checks the result.
 #
 # The runtime is always built the same way: compiled with debug information, then stripped, with
@@ -124,6 +129,12 @@ cmd_apply(){
   # The server protocol changed (MSync adds a reply field): regenerate the files derived from it.
   ( cd "$SRC" && perl tools/make_requests )
   echo "applied $n patches"
+  # The bridge to the Mac's Steam is two more modules in the Wine tree (see
+  # scripts/build-steam-bridge.sh). They go in before configure, which lists what is built.
+  if [ "${STEAM_BRIDGE:-1}" != 0 ]; then
+    "$REPO/scripts/build-steam-bridge.sh" fetch
+    "$REPO/scripts/build-steam-bridge.sh" place
+  fi
 }
 
 cmd_configure(){
@@ -145,18 +156,19 @@ cmd_configure(){
   # Wine's exception-handling code with it ("Failed to evaluate function length in SEH unwind info").
   local PE_CFLAGS="-g -O2 -march=armv8.4-a"
   ( cd "$OBJ" && "$SRC/configure" --build=aarch64-apple-darwin --host=aarch64-apple-darwin \
-        x86_64_CC=clang \
+        x86_64_CC=clang i386_CC=clang \
         aarch64_CFLAGS="$PE_CFLAGS" arm64ec_CFLAGS="$PE_CFLAGS" \
         CC="/usr/bin/clang -arch arm64" CXX="/usr/bin/clang++ -arch arm64" OBJC="/usr/bin/clang -arch arm64" \
         PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$hb/lib/pkgconfig" CPPFLAGS="-I$DEPS/include -I$hb/include" \
         LDFLAGS="-L$DEPS/lib -L$hb/lib" --without-sdl \
-        --enable-archs=arm64ec,aarch64 --prefix=/ --disable-tests \
+        --enable-archs=arm64ec,aarch64,i386 --prefix=/ --disable-tests \
         --without-x --without-krb5 --without-gstreamer --without-gphoto --without-sane --without-pcap \
         --without-usb --without-cups --without-opencl --without-pcsclite --without-dbus --without-netapi
   ) > "$BUILD_DIR/configure-runtime.log" 2>&1 || die "configure failed, see $BUILD_DIR/configure-runtime.log"
   # configure looks for libvulkan; on macOS Vulkan is MoltenVK, which the runtime bundles.
   sed -i '' 's|/\* #undef SONAME_LIBMOLTENVK \*/|#define SONAME_LIBMOLTENVK "libMoltenVK.dylib"|' "$OBJ/include/config.h"
   grep -q '^x86_64_CC = clang' "$OBJ/Makefile" || die "configure did not take clang as the x86_64 compiler"
+  grep -q '^i386_CC = clang' "$OBJ/Makefile" || die "configure did not take clang as the 32-bit compiler: 32-bit programs would not be built"
   grep -q '^aarch64_CFLAGS = .*-march=armv8.4-a' "$OBJ/Makefile" || die "configure did not take the Windows-side compiler flags"
   echo "configured: $OBJ"
 }
@@ -173,6 +185,7 @@ cmd_build(){
   make -C "$OBJ" -j"$JOBS" > "$BUILD_DIR/build-runtime.log" 2>&1 \
     || { grep -n ' error: \|Error [0-9]' "$BUILD_DIR/build-runtime.log" | tail -5; die "build failed, see $BUILD_DIR/build-runtime.log"; }
   [ -x "$OBJ/loader/wine" ] && [ -x "$OBJ/server/wineserver" ] || die "the build produced no wine or wineserver"
+  if [ -d "$SRC/dlls/lsteamclient" ]; then "$REPO/scripts/build-steam-bridge.sh" build; fi
 }
 
 # Copies a Homebrew dylib and the Homebrew dylibs it needs into the runtime's lib folder, and
@@ -210,10 +223,10 @@ strip_runtime(){
     rel="${f#$OUT/}"
     mkdir -p "$symbols/$(dirname "$rel")"; cp -p "$f" "$symbols/$rel"
     case "$f" in
-      */aarch64-windows/*) llvm-strip --strip-debug "$f" 2>/dev/null || true ;;
+      */aarch64-windows/*|*/i386-windows/*) llvm-strip --strip-debug "$f" 2>/dev/null || true ;;
       *) strip -S -x "$f" 2>/dev/null || true ;;
     esac
-  done < <(find "$OUT/lib/wine/aarch64-windows" "$OUT/lib/wine/aarch64-unix" "$OUT/bin" -type f \
+  done < <(find "$OUT/lib/wine/aarch64-windows" "$OUT/lib/wine/i386-windows" "$OUT/lib/wine/aarch64-unix" "$OUT/bin" -type f \
              \( -name '*.dll' -o -name '*.exe' -o -name '*.sys' -o -name '*.drv' -o -name '*.ocx' -o -name '*.cpl' \
                 -o -name '*.acm' -o -name '*.ax' -o -name '*.tlb' -o -name '*.so' -o -name '*.com' -o -name '*.ds' \
                 -o -name '*.msstyles' -o -perm -u+x \) ! -name '*.a' ! -name '*.pl')
@@ -326,6 +339,15 @@ JSON
     "$REPO/scripts/build-dxmt.sh" install | tail -n 1
   else
     echo "note: no DXMT build; Direct3D 10 and 11 will not work (scripts/build-dxmt.sh all)"
+  fi
+  # Always run when the bridge was placed: it also takes its two modules out of Wine's own.
+  if [ -f "$OBJ/programs/steam.exe/arm64ec-windows/steam.exe" ]; then
+    "$REPO/scripts/build-steam-bridge.sh" install | tail -n 1
+  else
+    rm -f "$OUT/lib/wine/aarch64-windows/steam.exe" "$OUT/lib/wine/aarch64-windows/lsteamclient.dll" \
+          "$OUT/lib/wine/aarch64-unix/lsteamclient.so" \
+          "$OUT/lib/wine/i386-windows/steam.exe" "$OUT/lib/wine/i386-windows/lsteamclient.dll"
+    echo "note: no Steam bridge; games started from Steam will not reach it (scripts/build-steam-bridge.sh all)"
   fi
   echo "runtime: $OUT ($id, $(du -sh "$OUT" | cut -f1))"
   # Every Mac binary in the runtime must run on macOS $MACOS_MIN.
