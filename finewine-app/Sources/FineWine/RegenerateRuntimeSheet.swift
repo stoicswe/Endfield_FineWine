@@ -277,13 +277,13 @@ struct RegenerateRuntimeSheet: View {
             } else if finishedSuccessfully {
                 Spacer()
                 Button(l10n.tr("app.done")) { dismiss() }
-                    .fwProminentButton().tint(Look.accent)
+                    .fwProminentButton()
             } else {
                 Button(l10n.tr("app.cancel")) { dismiss() }
                     .fwButton()
                 Spacer()
                 Button(l10n.tr("runtime_regen.start_button")) { startRegeneration() }
-                    .fwProminentButton().tint(Look.accent)
+                    .fwProminentButton()
                     .disabled(repoURL == nil || (placeChoiceID == "custom" && customFolderURL == nil))
             }
         }

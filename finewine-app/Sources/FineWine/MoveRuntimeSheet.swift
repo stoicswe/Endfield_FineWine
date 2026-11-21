@@ -111,7 +111,7 @@ struct MoveRuntimeSheet: View {
                 .disabled(isMoving)
             Spacer()
             Button(l10n.tr("runtime_move.action_button")) { startMoving() }
-                .fwProminentButton().tint(Look.accent)
+                .fwProminentButton()
                 .disabled(isMoving || (placeChoiceID == "custom" && customFolderURL == nil))
         }
         .padding(16)

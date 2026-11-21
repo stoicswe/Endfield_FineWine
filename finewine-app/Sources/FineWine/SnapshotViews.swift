@@ -170,7 +170,7 @@ struct TakeSnapshotSheet: View {
                     dismiss()
                     Task { await model.takeSnapshot(of: prefix, note: note, onChoice: choice) }
                 }
-                .fwProminentButton().tint(Look.wine)
+                .fwProminentButton()
                 .keyboardShortcut(.defaultAction)
             }
         }

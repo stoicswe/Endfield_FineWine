@@ -63,7 +63,7 @@ struct ImportBottleSheet: View {
                 .fwButton()
                 .keyboardShortcut(.cancelAction)
                 Button(l10n.tr("bottle.import")) { start() }
-                    .fwProminentButton().tint(Look.wine)
+                    .fwProminentButton()
                     .keyboardShortcut(.defaultAction)
                     .disabled(bottle?.is64Bit != true || runtime == nil || importing != nil
                               || name.trimmingCharacters(in: .whitespaces).isEmpty)

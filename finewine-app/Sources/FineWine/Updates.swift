@@ -297,6 +297,7 @@ struct UpdateWindow: View {
         }
         .padding(20)
         .frame(minWidth: 560, idealWidth: 640, minHeight: 420, idealHeight: 560)
+        .background { Backdrop() }
     }
 
     private func header(_ title: String, symbol: String) -> some View {

@@ -26,10 +26,16 @@ enum Look {
 
 /// FineWine's own palette. Unlike `NSColor.controlAccentColor`, this only changes FineWine and
 /// does not alter the user's macOS-wide preference.
+///
+/// Wine is FineWine's own and the default. The others are the accent colours of Minimalist
+/// (the same author's editor), by the same names. Each is one base colour there; here every
+/// use needs a deep tone (a button's fill under white text, symbols on a light window) and a
+/// light one (symbols on a dark window), so both are worked out from the base.
 enum AccentPalette: String, CaseIterable, Identifiable {
-    case wine, grape, ocean, emerald, sunset
+    case wine, matcha, sakura, ai, kintsugi, hinoki, yugen, shibui, sumi, ataraxia
 
     static let defaultsKey = "FineWineAccentPalette"
+    /// A stored name that is no longer a palette (the first set had other names) gives Wine.
     static var stored: AccentPalette {
         AccentPalette(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .wine
     }
@@ -38,52 +44,79 @@ enum AccentPalette: String, CaseIterable, Identifiable {
     var name: String {
         switch self {
         case .wine: return "Wine"
-        case .grape: return "Grape"
-        case .ocean: return "Ocean"
-        case .emerald: return "Emerald"
-        case .sunset: return "Sunset"
+        case .matcha: return "Matcha"
+        case .sakura: return "Sakura"
+        case .ai: return "Ai"
+        case .kintsugi: return "Kintsugi"
+        case .hinoki: return "Hinoki"
+        case .yugen: return "Yūgen"
+        case .shibui: return "Shibui"
+        case .sumi: return "Sumi"
+        case .ataraxia: return "Ataraxia"
         }
     }
 
+    /// The colour as Minimalist has it (Wine: the tone its two accents are drawn from).
+    var base: NSColor {
+        func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> NSColor { NSColor(srgbRed: r, green: g, blue: b, alpha: 1) }
+        switch self {
+        case .wine: return rgb(0.62, 0.13, 0.29)
+        case .matcha: return rgb(0.55, 0.72, 0.42)
+        case .sakura: return rgb(0.91, 0.65, 0.71)
+        case .ai: return rgb(0.36, 0.49, 0.65)
+        case .kintsugi: return rgb(0.83, 0.63, 0.33)
+        case .hinoki: return rgb(0.79, 0.57, 0.37)
+        case .yugen: return rgb(0.48, 0.42, 0.58)
+        case .shibui: return rgb(0.43, 0.64, 0.59)
+        case .sumi: return rgb(0.30, 0.32, 0.36)
+        case .ataraxia: return rgb(0.50, 0.62, 0.72)
+        }
+    }
+
+    /// What a picker shows for the palette.
+    var swatch: Color { Color(nsColor: base) }
     var primary: Color { Color(nsColor: lightAccent) }
     var secondary: Color { Color(nsColor: darkAccent) }
+
+    private func toned(saturation: (CGFloat) -> CGFloat, brightness: (CGFloat) -> CGFloat, hueShift: CGFloat = 0) -> NSColor {
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        base.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        let hue = (h + hueShift).truncatingRemainder(dividingBy: 1)
+        return NSColor(colorSpace: .sRGB, hue: hue, saturation: min(max(saturation(s), 0), 1),
+                       brightness: min(max(brightness(b), 0), 1), alpha: 1)
+    }
+
+    /// The third glow of the window background, a neighbour of the accent.
     var backdropHighlight: Color {
-        switch self {
-        case .wine: return .indigo
-        case .grape: return Color(red: 0.26, green: 0.16, blue: 0.62)
-        case .ocean: return Color(red: 0.00, green: 0.60, blue: 0.70)
-        case .emerald: return Color(red: 0.08, green: 0.63, blue: 0.52)
-        case .sunset: return Color(red: 0.96, green: 0.54, blue: 0.04)
-        }
+        if self == .wine { return .indigo }
+        return Color(nsColor: toned(saturation: { $0 * 1.2 }, brightness: { max($0, 0.6) }, hueShift: 0.08))
     }
+    /// Deep enough for white text on it and to read on a light window.
     var lightAccent: NSColor {
-        switch self {
-        case .wine: return NSColor(red: 0.62, green: 0.13, blue: 0.29, alpha: 1)
-        case .grape: return NSColor(red: 0.38, green: 0.20, blue: 0.70, alpha: 1)
-        case .ocean: return NSColor(red: 0.00, green: 0.39, blue: 0.68, alpha: 1)
-        case .emerald: return NSColor(red: 0.00, green: 0.43, blue: 0.31, alpha: 1)
-        case .sunset: return NSColor(red: 0.75, green: 0.24, blue: 0.08, alpha: 1)
-        }
+        if self == .wine { return base }
+        return toned(saturation: { $0 * 1.45 }, brightness: { min($0, 0.50) })
     }
+    /// Light enough to read on a dark window.
     var darkAccent: NSColor {
-        switch self {
-        case .wine: return NSColor(red: 0.96, green: 0.52, blue: 0.62, alpha: 1)
-        case .grape: return NSColor(red: 0.72, green: 0.59, blue: 1.00, alpha: 1)
-        case .ocean: return NSColor(red: 0.36, green: 0.73, blue: 1.00, alpha: 1)
-        case .emerald: return NSColor(red: 0.28, green: 0.83, blue: 0.61, alpha: 1)
-        case .sunset: return NSColor(red: 1.00, green: 0.64, blue: 0.34, alpha: 1)
-        }
+        if self == .wine { return NSColor(srgbRed: 0.96, green: 0.52, blue: 0.62, alpha: 1) }
+        // Sumi is an ink grey: it stays a grey rather than turning into a pale blue
+        if self == .sumi { return toned(saturation: { $0 }, brightness: { _ in 0.80 }) }
+        return toned(saturation: { min($0, 0.50) }, brightness: { _ in 0.92 })
     }
 }
 
 /// The window background: the system colour with two blurred glows for the glass to refract.
 struct Backdrop: View {
     @Environment(\.colorScheme) private var colorScheme
+    // read so the glows are drawn again when another accent is chosen
+    @AppStorage(AccentPalette.defaultsKey) private var accentPalette = AccentPalette.wine.rawValue
+    /// Off where there is a material behind already (the menu bar panel): only the glows.
+    var opaque = true
 
     var body: some View {
         let strength = colorScheme == .dark ? 0.42 : 0.26
         ZStack {
-            Color(nsColor: .windowBackgroundColor)
+            if opaque { Color(nsColor: .windowBackgroundColor) }
             GeometryReader { geo in
                 let side = max(geo.size.width, geo.size.height)
                 Circle().fill(Look.wine.opacity(strength))
@@ -131,11 +164,12 @@ extension View {
         return glass
     }
 
-    /// A glass button.
-    func fwButton() -> some View { self.buttonStyle(.glass) }
+    /// A glass button. Plain glass whatever the accent: the window's tint would fill it with
+    /// the accent's light tone, next to prominent buttons in its deep one.
+    func fwButton() -> some View { self.buttonStyle(.glass).tint(nil) }
 
-    /// A prominent glass button.
-    func fwProminentButton() -> some View { self.buttonStyle(.glassProminent) }
+    /// A prominent glass button, in the accent's deep tone everywhere.
+    func fwProminentButton() -> some View { self.buttonStyle(.glassProminent).tint(Look.wine) }
 }
 
 /// Groups glass shapes so they blend into each other.
@@ -265,6 +299,10 @@ struct EmptyState<Actions: View>: View {
             actions()
         }
         .padding(32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // The sizes are stated: asked how tall it would like to be at a narrow width, the
+        // message (one word a line) answered some 1650 points, a split view took that as the
+        // height of its columns, and what sits at the bottom of the sidebar was pushed out
+        // of the window (2026-11-21).
+        .frame(minWidth: 0, idealWidth: 480, maxWidth: .infinity, minHeight: 0, idealHeight: 360, maxHeight: .infinity)
     }
 }

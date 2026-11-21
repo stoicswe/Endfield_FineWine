@@ -337,7 +337,7 @@ struct ConfigurationTab: View {
             Button(l10n.tr("app.apply")) {
                 Task { await model.apply(edited, runtimeID: runtimeID, to: prefix) }
             }
-            .fwProminentButton().tint(Look.wine)
+            .fwProminentButton()
             .disabled(!hasChanges || !problems.isEmpty)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

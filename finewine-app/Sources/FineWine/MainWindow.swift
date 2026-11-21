@@ -57,8 +57,6 @@ struct MainWindow: View {
     }
 
     private var sidebar: some View {
-        // The buttons sit under the list, not in it, so they are there with no prefixes too.
-        VStack(spacing: 0) {
         List(selection: $model.selection) {
             Section(l10n.tr("main.prefixes")) {
                 ForEach(model.listedPrefixes) { prefix in
@@ -125,6 +123,7 @@ struct MainWindow: View {
             guard let selected, !model.listedPrefixes.contains(where: { $0.id == selected }) else { return }
             model.selection = model.listedPrefixes.first?.id
         }
+        .safeAreaInset(edge: .bottom) {
             HStack {
                 Button {
                     showingNewPrefix = true
@@ -175,7 +174,7 @@ struct MainWindow: View {
                 Button(l10n.tr("runtime_regen.action_btn")) {
                     showingRegenerateRuntime = true
                 }
-                .fwProminentButton().tint(Look.wine)
+                .fwProminentButton()
                 .controlSize(.large)
                 Button(l10n.tr("main.add_runtime_btn")) {
                     if let folder = Panels.chooseFolder(message: l10n.tr("dialog.choose_runtime_folder")) { model.addRuntime(from: folder) }
@@ -186,7 +185,7 @@ struct MainWindow: View {
             EmptyState(symbol: "shippingbox", title: l10n.tr("main.first_prefix_title"),
                        message: l10n.tr("main.first_prefix_desc")) {
                 Button(l10n.tr("main.first_prefix_btn")) { showingNewPrefix = true }
-                    .fwProminentButton().tint(Look.wine)
+                    .fwProminentButton()
                     .controlSize(.large)
                 Button(l10n.tr("bottle.import_btn")) { showingBottleImport = true }
                     .fwButton()
@@ -339,7 +338,7 @@ struct NewPrefixSheet: View {
                         if await model.createPrefix(name: name, runtime: runtime, profile: profile, place: place) { dismiss() }
                     }
                 }
-                .fwProminentButton().tint(Look.wine)
+                .fwProminentButton()
                 .keyboardShortcut(.defaultAction)
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || runtime == nil || model.isCreatingPrefix || (driveChoice == "__custom__" && customFolderURL == nil))
             }
@@ -398,7 +397,7 @@ struct SettingsView: View {
                                 Label {
                                     Text(palette.name)
                                 } icon: {
-                                    Circle().fill(palette.primary).frame(width: 12, height: 12)
+                                    Circle().fill(palette.swatch).frame(width: 12, height: 12)
                                 }
                                 .tag(palette.rawValue)
                             }
@@ -415,7 +414,6 @@ struct SettingsView: View {
                         Spacer()
                         Button("Prominent button") { }
                             .fwProminentButton()
-                            .tint(Look.wine)
                             .controlSize(.small)
                     }
                 }
@@ -468,7 +466,7 @@ struct SettingsView: View {
                      footnote: l10n.tr("settings.support_footnote")) {
                     Row(label: l10n.tr("settings.donate_row_label"), detail: l10n.tr("settings.donate_row_desc")) {
                         Button(l10n.tr("menu.donate")) { NSWorkspace.shared.open(Links.wineDonate) }
-                            .fwProminentButton().tint(Look.wine)
+                            .fwProminentButton()
                             .help(l10n.tr("settings.donate_tooltip"))
                     }
                 }
@@ -517,6 +515,8 @@ struct SettingsView: View {
         .frame(width: 560, height: 560)
         .background { Backdrop() }
         .onAppear { model.reload() }
+        // Views read the palette as plain values, so they are told when another is chosen.
+        .onChange(of: accentPalette) { _, _ in model.objectWillChange.send() }
         .alert(item: $model.alert) { alert in
             Alert(title: Text(alert.title), message: Text(alert.message), dismissButton: .default(Text(l10n.tr("app.ok"))))
         }

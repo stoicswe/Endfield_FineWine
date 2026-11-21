@@ -145,7 +145,7 @@ private struct ProgramsTab: View {
                 } label: {
                     Label(l10n.tr("detail.run_installer"), systemImage: "arrow.down.circle")
                 }
-                .fwProminentButton().tint(Look.wine)
+                .fwProminentButton()
                 Button {
                     addProgram()
                 } label: {
@@ -242,7 +242,7 @@ private struct ProgramCard: View {
             } label: {
                 Label(l10n.tr("app.play"), systemImage: "play.fill")
             }
-            .fwProminentButton().tint(Look.wine)
+            .fwProminentButton()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(padding: 14)
@@ -351,7 +351,7 @@ private struct ProgramEditor: View {
                     model.update(program, in: prefix)
                     dismiss()
                 }
-                .fwProminentButton().tint(Look.wine)
+                .fwProminentButton()
                 .keyboardShortcut(.defaultAction)
                 .disabled(program.name.trimmingCharacters(in: .whitespaces).isEmpty || program.windowsPath.isEmpty)
             }

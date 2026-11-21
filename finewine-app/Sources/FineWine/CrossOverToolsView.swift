@@ -116,7 +116,7 @@ struct CrossOverToolsView: View {
             Divider()
             HStack {
                 Button("Apply to Bottle", action: saveSettings)
-                    .fwProminentButton().tint(Look.wine)
+                    .fwProminentButton()
                     .disabled(selectedBottle == nil || working)
                 Text("A backup is kept beside cxbottle.conf before the first change.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -147,7 +147,7 @@ struct CrossOverToolsView: View {
             Divider()
             HStack {
                 Button(efmiFolder.map(CrossOverTools.efmiApplied) == true ? "Reapply chain" : "Apply chain", action: applyEFMI)
-                    .fwProminentButton().tint(Look.wine)
+                    .fwProminentButton()
                     .disabled(selectedBottle == nil || efmiFolder == nil || patchedApp == nil || working)
                 Button("Revert", action: revertEFMI)
                     .fwButton()
@@ -167,7 +167,7 @@ struct CrossOverToolsView: View {
                 Button(enabled ? "Disable HUD" : "Enable HUD") {
                     settings.metalHUD.toggle(); saveSettings()
                 }
-                .fwProminentButton().tint(Look.wine)
+                .fwProminentButton()
                 .disabled(selectedBottle == nil || working)
             }
             Picker("D3DMetal FPS cap", selection: Binding(get: { settings.fpsCap ?? "uncapped" }, set: { settings.fpsCap = $0 == "uncapped" ? nil : $0 })) {
@@ -197,7 +197,7 @@ struct CrossOverToolsView: View {
             }
             HStack {
                 Button(status.isRegistered ? "Update registration" : "Register in Steam Play", action: registerNotProton)
-                    .fwProminentButton().tint(Look.wine)
+                    .fwProminentButton()
                     .disabled(patchedApp == nil || !status.steamInstalled || working)
                 if status.isRegistered {
                     Button("Unregister", role: .destructive, action: unregisterNotProton).fwButton().disabled(working)

@@ -80,6 +80,8 @@ struct MenuBarView: View {
         }
         .padding(14)
         .frame(width: 380)
+        // the same glows as the windows, so the panel carries the accent too
+        .background { Backdrop(opaque: false) }
         .onAppear { model.reload() }
     }
 
@@ -111,7 +113,7 @@ struct MenuBarView: View {
         HStack(spacing: 10) {
             Image(systemName: "wineglass.fill")
                 .font(.title3)
-                .foregroundStyle(Look.wine)
+                .foregroundStyle(Look.accent)
             Text("FineWine").font(.headline)
             Spacer()
             if model.runningCount > 0 {
@@ -127,7 +129,7 @@ struct MenuBarView: View {
             } label: {
                 Label(l10n.tr("menu.manage_prefixes"), systemImage: "square.grid.2x2")
             }
-            .fwProminentButton().tint(Look.wine)
+            .fwProminentButton()
             Spacer()
             Button(l10n.tr("menu.donate")) { NSWorkspace.shared.open(Links.wineDonate) }
                 .fwButton()
