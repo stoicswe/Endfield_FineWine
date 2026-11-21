@@ -645,3 +645,5 @@
 "steam.err_no_runtime" = "FineWine 的執行階段都不包含 Steam 橋接。請更新 FineWine 後再試一次。";
 "steam.err_valve_download" = "無法從 Valve 下載 Steam 的 Windows 用戶端檔案（%@）。請檢查網路連線後再試一次。";
 "steam.err_valve_checksum" = "來自 Valve 的「%@」不是 FineWine 預期的檔案，因此未使用。";
+"steam.prefix_pill" = "Steam 前置環境";
+"steam.prefix_pill_help" = "FineWine 為從 Steam 啟動的遊戲建立的前置環境（Steam 應用程式 %@）。Steam 的「開始遊戲」按鈕會使用它。";

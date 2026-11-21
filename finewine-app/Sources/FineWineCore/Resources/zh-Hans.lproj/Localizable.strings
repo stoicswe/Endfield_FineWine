@@ -645,3 +645,5 @@
 "steam.err_no_runtime" = "FineWine 的运行时都不带 Steam 桥接。请更新 FineWine 后重试。";
 "steam.err_valve_download" = "无法从 Valve 下载 Steam 的 Windows 客户端文件（%@）。请检查网络连接后重试。";
 "steam.err_valve_checksum" = "来自 Valve 的“%@”不是 FineWine 预期的文件，因此未使用。";
+"steam.prefix_pill" = "Steam 前缀";
+"steam.prefix_pill_help" = "FineWine 为从 Steam 启动的游戏创建的前缀（Steam 应用 %@）。Steam 的“开始游戏”按钮会使用它。";

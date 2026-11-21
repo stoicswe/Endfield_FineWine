@@ -645,3 +645,5 @@
 "steam.err_no_runtime" = "FineWine의 런타임에 Steam 브리지가 없습니다. FineWine을 업데이트한 뒤 다시 시도하세요.";
 "steam.err_valve_download" = "Valve에서 Steam의 Windows 클라이언트 파일을 다운로드할 수 없습니다(%@). 인터넷 연결을 확인하고 다시 시도하세요.";
 "steam.err_valve_checksum" = "Valve에서 받은 “%@”은(는) FineWine이 예상한 파일이 아니어서 사용하지 않았습니다.";
+"steam.prefix_pill" = "Steam 프리픽스";
+"steam.prefix_pill_help" = "Steam에서 시작한 게임을 위해 FineWine이 만든 프리픽스입니다(Steam 앱 %@). Steam의 플레이 버튼이 이 프리픽스를 사용합니다.";

@@ -645,3 +645,5 @@
 "steam.err_no_runtime" = "FineWine のランタイムに Steam ブリッジがありません。FineWine をアップデートしてからもう一度お試しください。";
 "steam.err_valve_download" = "Steam の Windows クライアントファイルを Valve からダウンロードできませんでした（%@）。インターネット接続を確認してもう一度お試しください。";
 "steam.err_valve_checksum" = "Valve から取得した“%@”は FineWine が想定するファイルではないため、使用しませんでした。";
+"steam.prefix_pill" = "Steam プレフィックス";
+"steam.prefix_pill_help" = "Steam から起動したゲーム用に FineWine が作成したプレフィックスです（Steam アプリ %@）。Steam の「プレイ」ボタンがこれを使います。";

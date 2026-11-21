@@ -645,3 +645,5 @@
 "steam.err_no_runtime" = "لا تحتوي أي من بيئات تشغيل FineWine على جسر Steam. حدّث FineWine ثم حاول مرة أخرى.";
 "steam.err_valve_download" = "تعذّر تنزيل ملفات عميل Steam لنظام Windows من Valve (%@). تحقق من اتصال الإنترنت وحاول مرة أخرى.";
 "steam.err_valve_checksum" = "الملف «%@» من Valve ليس الملف الذي يتوقعه FineWine، لذلك لم يُستخدم.";
+"steam.prefix_pill" = "حاوية Steam";
+"steam.prefix_pill_help" = "أنشأ FineWine هذه الحاوية للعبة تم تشغيلها من Steam (تطبيق Steam %@). يستخدمها زر التشغيل في Steam.";

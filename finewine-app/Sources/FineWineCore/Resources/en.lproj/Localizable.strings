@@ -645,3 +645,5 @@
 "steam.err_no_runtime" = "None of FineWine's runtimes has the Steam bridge. Update FineWine, then try again.";
 "steam.err_valve_download" = "Steam's Windows client files couldn't be downloaded from Valve (%@). Check the internet connection and try again.";
 "steam.err_valve_checksum" = "“%@” from Valve isn't the file FineWine expects, so it wasn't used.";
+"steam.prefix_pill" = "Steam Prefix";
+"steam.prefix_pill_help" = "FineWine made this prefix for a game started from Steam (Steam app %@). Steam's Play button uses it.";
