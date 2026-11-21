@@ -7,6 +7,7 @@ struct MenuBarView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject private var l10n = LanguageManager.shared
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
     /// How tall the list of prefixes may get, as the user last set it.
     @AppStorage("MenuPanelListHeight") private var listLimit: Double = 520
     @State private var dragOffset: Double = 0
@@ -131,6 +132,17 @@ struct MenuBarView: View {
             Button(l10n.tr("menu.donate")) { NSWorkspace.shared.open(Links.wineDonate) }
                 .fwButton()
                 .help(l10n.tr("menu.donate_help"))
+            Menu {
+                Button("Bottle Settings…") { openWindow(id: "bottle-settings"); NSApp.activate() }
+                Button("Mod Framework (EFMI)…") { openWindow(id: "efmi-tools"); NSApp.activate() }
+                Button("Steam / NotProton…") { openWindow(id: "notproton-tools"); NSApp.activate() }
+                Button("Metal HUD…") { openWindow(id: "metal-hud"); NSApp.activate() }
+            } label: {
+                Image(systemName: "wrench.and.screwdriver")
+            }
+            .menuStyle(.button)
+            .fwButton()
+            .help("CrossOver tools")
             Button {
                 openSettings()
                 NSApp.activate()

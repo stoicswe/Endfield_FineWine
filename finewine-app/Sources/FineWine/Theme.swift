@@ -6,15 +6,74 @@ import AppKit
 
 enum Look {
     static let cardRadius: CGFloat = 20
-    static let wine = Color(red: 0.62, green: 0.13, blue: 0.29)
-    static let rose = Color(red: 0.93, green: 0.42, blue: 0.52)
+    /// The app-level colour choice, independently persisted from macOS's system accent.
+    /// Keeping it here means the background, glass tints and prominent controls all change
+    /// together rather than only recolouring one kind of button.
+    static var palette: AccentPalette { AccentPalette.stored }
+    static var wine: Color { palette.primary }
+    static var rose: Color { palette.secondary }
+    /// The third backdrop glow used to be a fixed indigo, which made the background remain
+    /// pink/purple after choosing another accent. It is now part of every palette too.
+    static var backdropHighlight: Color { palette.backdropHighlight }
     /// For symbols and small accents: wine on light backgrounds, a lighter rose on dark ones,
     /// where wine itself is too dim to read.
-    static let accent = Color(nsColor: NSColor(name: nil) { appearance in
+    static var accent: Color { Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(red: 0.96, green: 0.52, blue: 0.62, alpha: 1)
-            : NSColor(red: 0.62, green: 0.13, blue: 0.29, alpha: 1)
-    })
+            ? palette.darkAccent
+            : palette.lightAccent
+    }) }
+}
+
+/// FineWine's own palette. Unlike `NSColor.controlAccentColor`, this only changes FineWine and
+/// does not alter the user's macOS-wide preference.
+enum AccentPalette: String, CaseIterable, Identifiable {
+    case wine, grape, ocean, emerald, sunset
+
+    static let defaultsKey = "FineWineAccentPalette"
+    static var stored: AccentPalette {
+        AccentPalette(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .wine
+    }
+
+    var id: String { rawValue }
+    var name: String {
+        switch self {
+        case .wine: return "Wine"
+        case .grape: return "Grape"
+        case .ocean: return "Ocean"
+        case .emerald: return "Emerald"
+        case .sunset: return "Sunset"
+        }
+    }
+
+    var primary: Color { Color(nsColor: lightAccent) }
+    var secondary: Color { Color(nsColor: darkAccent) }
+    var backdropHighlight: Color {
+        switch self {
+        case .wine: return .indigo
+        case .grape: return Color(red: 0.26, green: 0.16, blue: 0.62)
+        case .ocean: return Color(red: 0.00, green: 0.60, blue: 0.70)
+        case .emerald: return Color(red: 0.08, green: 0.63, blue: 0.52)
+        case .sunset: return Color(red: 0.96, green: 0.54, blue: 0.04)
+        }
+    }
+    var lightAccent: NSColor {
+        switch self {
+        case .wine: return NSColor(red: 0.62, green: 0.13, blue: 0.29, alpha: 1)
+        case .grape: return NSColor(red: 0.38, green: 0.20, blue: 0.70, alpha: 1)
+        case .ocean: return NSColor(red: 0.00, green: 0.39, blue: 0.68, alpha: 1)
+        case .emerald: return NSColor(red: 0.00, green: 0.43, blue: 0.31, alpha: 1)
+        case .sunset: return NSColor(red: 0.75, green: 0.24, blue: 0.08, alpha: 1)
+        }
+    }
+    var darkAccent: NSColor {
+        switch self {
+        case .wine: return NSColor(red: 0.96, green: 0.52, blue: 0.62, alpha: 1)
+        case .grape: return NSColor(red: 0.72, green: 0.59, blue: 1.00, alpha: 1)
+        case .ocean: return NSColor(red: 0.36, green: 0.73, blue: 1.00, alpha: 1)
+        case .emerald: return NSColor(red: 0.28, green: 0.83, blue: 0.61, alpha: 1)
+        case .sunset: return NSColor(red: 1.00, green: 0.64, blue: 0.34, alpha: 1)
+        }
+    }
 }
 
 /// The window background: the system colour with two blurred glows for the glass to refract.
@@ -35,7 +94,7 @@ struct Backdrop: View {
                     .frame(width: side * 0.6, height: side * 0.6)
                     .blur(radius: side * 0.2)
                     .position(x: geo.size.width, y: geo.size.height)
-                Circle().fill(Color.indigo.opacity(strength * 0.45))
+                Circle().fill(Look.backdropHighlight.opacity(strength * 0.45))
                     .frame(width: side * 0.5, height: side * 0.5)
                     .blur(radius: side * 0.18)
                     .position(x: geo.size.width * 0.75, y: geo.size.height * 0.1)
