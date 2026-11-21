@@ -82,6 +82,7 @@ extension PrefixStore {
         switch place {
         case .thisMac: return tr("drive.this_mac")
         case .drive(let uuid): return drives.drive(uuid)?.name ?? tr("drive.unknown")
+        case .customFolder(let url): return url.lastPathComponent
         }
     }
 
@@ -143,7 +144,7 @@ extension PrefixStore {
         guard Self.activity.isIdle else { return }
         let fm = FileManager.default
         var folders = availableFolders().map(\.folder)
-        for place in [PrefixPlace.thisMac] + drives.drives.map({ PrefixPlace.drive($0.uuid) }) {
+        for place in [PrefixPlace.thisMac] + drives.drives.map({ PrefixPlace.drive($0.uuid) }) + drives.customFolders.map({ PrefixPlace.customFolder($0) }) {
             guard let snapshots = snapshotsFolder(for: place) else { continue }
             folders.append(snapshots)
             folders += ((try? fm.contentsOfDirectory(at: snapshots, includingPropertiesForKeys: nil)) ?? [])
@@ -215,6 +216,12 @@ extension PrefixStore {
                 $0.root.appendingPathComponent(PrefixDriveStore.folderName, isDirectory: true)
                     .appendingPathComponent(Self.snapshotsName, isDirectory: true)
             }
+        case .customFolder(let url):
+            if let volume = drives.volumes.volume(containing: url) {
+                return volume.root.appendingPathComponent(PrefixDriveStore.folderName, isDirectory: true)
+                    .appendingPathComponent(Self.snapshotsName, isDirectory: true)
+            }
+            return paths.root.appendingPathComponent(Self.snapshotsName, isDirectory: true)
         }
     }
 
@@ -222,7 +229,7 @@ extension PrefixStore {
     public func snapshots() -> [PrefixSnapshot] {
         let fm = FileManager.default
         var out: [PrefixSnapshot] = []
-        for place in [PrefixPlace.thisMac] + drives.drives.map({ PrefixPlace.drive($0.uuid) }) {
+        for place in [PrefixPlace.thisMac] + drives.drives.map({ PrefixPlace.drive($0.uuid) }) + drives.customFolders.map({ PrefixPlace.customFolder($0) }) {
             guard let root = snapshotsFolder(for: place) else { continue }
             for group in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
             where !group.lastPathComponent.hasPrefix(".") {
@@ -344,7 +351,7 @@ extension PrefixStore {
     /// Deletes a snapshot for good. Refuses anything outside a Snapshots folder of FineWine's.
     public func deleteSnapshot(_ snapshot: PrefixSnapshot) throws {
         let path = snapshot.directory.standardizedFileURL.path
-        let roots = ([PrefixPlace.thisMac] + drives.drives.map { PrefixPlace.drive($0.uuid) }).compactMap(snapshotsFolder(for:))
+        let roots = ([PrefixPlace.thisMac] + drives.drives.map { PrefixPlace.drive($0.uuid) } + drives.customFolders.map { PrefixPlace.customFolder($0) }).compactMap(snapshotsFolder(for:))
         guard roots.contains(where: { path.hasPrefix($0.standardizedFileURL.path + "/") }),
               FileManager.default.fileExists(atPath: snapshot.directory.appendingPathComponent(Self.snapshotInfoName).path) else {
             throw FineWineError(tr("snapshot.err_outside"))

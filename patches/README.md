@@ -255,8 +255,8 @@ kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21
 - `0036-ntdll-zero-pages-for-macos-behind-a-switch.patch`: with `FINEWINE_ZERO_PAGES=1`,
   memory from NtAllocateVirtualMemory and thread stacks is backed by private mappings of one
   32 MB file of zeroes instead of anonymous memory, so reading memory that was never written
-  costs nothing, as on Linux. The first write to a page is about 1 µs slower. Off by default
-  until it has been run with games.
+  costs nothing, as on Linux. The first write to a page is about 1 µs slower. On by default
+  in FineWine prefixes (PrefixSettings); can be toggled off if a program misbehaves.
 - `0037-ntdll-a-switch-to-commit-the-arm64ec-code-map-whole.patch`: `FINEWINE_EAGER_CODE_MAP=1`
   commits the map whole again, as before `0035`. Costs up to 4 GB; for finding a fault only.
 - `0038-win32u-report-hardware-gpu-scheduling.patch`: `D3DKMTQueryAdapterInfo` answers
@@ -470,8 +470,9 @@ FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`, and i
 - `0008-lookup-cache-a-compact-record-of-each-threads-cached-blocks.patch`: with
   `FEX_COMPACTBLOCKRECORDS=1`, each thread's record of the blocks it has cached is a sorted
   array of 32-bit offsets for each page of guest code instead of a hash set (about 60 bytes a
-  block). Off by default; the original record is untouched. In a 32-thread test FEX's heap
-  went from 103 MB to 56 MB. Tested either way by `tests/runtime/code-rewrite.c`.
+  block). On by default in FineWine prefixes; can be toggled off if a game misbehaves. In a
+  32-thread test FEX's heap went from 103 MB to 56 MB. Tested either way by
+  `tests/runtime/code-rewrite.c`.
 - `0009-lookup-cache-remove-the-overcommit-mark-before-freeing-the-tables.patch`: an exiting
   thread freed its lookup tables and then removed their mark from the list of ranges that are
   committed on a fault; a thread starting in between could get the same address and lose its

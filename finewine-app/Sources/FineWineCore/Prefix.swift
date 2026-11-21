@@ -116,6 +116,11 @@ public struct PrefixStore {
         for drive in drives.drives {
             if let folder = drives.prefixesFolder(for: .drive(drive.uuid)) { out.append((.drive(drive.uuid), folder)) }
         }
+        for folder in drives.customFolders {
+            if fm.fileExists(atPath: folder.path) {
+                out.append((.customFolder(folder), folder))
+            }
+        }
         return out
     }
 
@@ -185,6 +190,9 @@ public struct PrefixStore {
         let name = try Self.validatedName(name)
         guard !takenNames().contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) else {
             throw FineWineError("A prefix named “\(name)” already exists.")
+        }
+        if case .customFolder(let url) = place {
+            try drives.addCustomFolder(url)
         }
         try paths.ensureDirectories()
         guard let folder = drives.prefixesFolder(for: place) else {

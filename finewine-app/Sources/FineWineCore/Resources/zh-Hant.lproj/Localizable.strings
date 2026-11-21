@@ -22,6 +22,7 @@
 "app.default" = "預設";
 "app.on" = "開啟";
 "app.off" = "關閉";
+"app.change" = "變更…";
 
 /* Menu Bar */
 "menu.setting_up_prefix" = "正在設定容器「%@」…";
@@ -261,10 +262,10 @@
 "config.sync_detail" = "Windows 事件、互斥鎖與號誌的底層調度方式。";
 "config.hide_hypervisor_title" = "隱藏虛擬化/虛擬機器旗標 (Hypervisor)";
 "config.hide_hypervisor_desc" = "x64 模擬器預設會透過 CPU 旗標宣告自身為虛擬機器，導致部分反作弊及反虛擬機器遊戲誤判而拒絕啟動。預設開啟以隱藏旗標。";
-"config.zero_pages_title" = "讀取未使用的記憶體不計入用量（實驗性）";
-"config.zero_pages_desc" = "在 macOS 上，記憶體只要被讀取就會計入程式的用量，即使從未寫入過。像反作弊那樣會讀取自身全部記憶體的遊戲，因此會多佔用許多 GB。開啟後，這類讀取不再計入用量；每塊記憶體的首次寫入會略慢。預設關閉；如果程式出現異常，請重新關閉。";
-"config.compact_records_title" = "壓縮模擬器記錄（實驗性）";
-"config.compact_records_desc" = "x64 模擬器會為每個執行緒記錄該執行緒執行過的每一段遊戲程式碼。在執行緒很多的大型遊戲中，這些記錄會佔用數 GB。開啟後，記錄以只需一半或更少空間的形式保存。預設關閉；如果遊戲卡頓增多或出現異常，請重新關閉。";
+"config.zero_pages_title" = "讀取未使用的記憶體不計入用量";
+"config.zero_pages_desc" = "在 macOS 上，記憶體只要被讀取就會計入程式的用量，即使從未寫入過。像反作弊那樣會讀取自身全部記憶體的遊戲，因此會多佔用許多 GB。開啟後，這類讀取不再計入用量；每塊記憶體的首次寫入會略慢。預設開啟；如果程式出現異常，請關閉。";
+"config.compact_records_title" = "壓縮模擬器記錄";
+"config.compact_records_desc" = "x64 模擬器會為每個執行緒記錄該執行緒執行過的每一段遊戲程式碼。在執行緒很多的大型遊戲中，這些記錄會佔用數 GB。開啟後，記錄以只需一半或更少空間的形式保存。預設開啟；如果遊戲卡頓增多或出現異常，請關閉。";
 "config.appearance_card" = "外觀樣式";
 "config.appearance_footnote" = "適用於使用標準 Windows 控制項目的介面（包含 Wine 工具）。視窗邊框與標題列由 macOS 繪製。遊戲自繪介面不受影響。";
 "config.mac_appearance_title" = "符合 macOS 風格";
@@ -359,6 +360,7 @@
 "dialog.choose_executable" = "選擇要在「%@」中執行的 Windows 安裝程式或檔案";
 "dialog.choose_program_in_prefix" = "選擇此容器內的程式";
 "dialog.choose_runtime_folder" = "選擇 Wine 執行階段資料夾";
+"dialog.choose_prefix_folder" = "選取此容器的存放資料夾";
 "dialog.run_with_finewine_title" = "使用 FineWine 執行「%@」？";
 "dialog.run_with_finewine_msg" = "請選擇要在其中執行的容器。請僅執行受信任的程式：它們將獲得與 FineWine 相同的檔案存取權限。";
 "dialog.run_btn" = "執行";
@@ -484,6 +486,9 @@
 "drive.prefix_count" = "%lld 個前綴";
 "drive.forget" = "移除";
 "drive.forget_help" = "不再列出「%@」。其中的前綴仍保留在磁碟上，再次接上即可恢復。";
+"drive.custom_folder" = "自訂資料夾…";
+"drive.custom_folder_detail" = "在您選取的自訂資料夾中。";
+"drive.in_folder" = "在「%@」中";
 "location.err_low_space" = "「%@」上的空間不足以建立新前綴：可用 %@，前綴至少需要 %@（未安裝任何內容時約 750 MB）。";
 "copy.progress" = "%@ %lld%%（%@ / %@）";
 "move.menu" = "移動到";

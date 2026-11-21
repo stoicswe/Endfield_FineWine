@@ -40,6 +40,9 @@ public enum PrefixPlace: Hashable, Sendable {
     case thisMac
     /// A drive, by volume UUID.
     case drive(String)
+    /// An arbitrary folder the user browsed to. No `FineWine/Prefixes/` subdirectory is added;
+    /// the prefix goes directly inside this URL.
+    case customFolder(URL)
 }
 
 /// The drives FineWine keeps prefixes on, and which one new prefixes go to.
@@ -67,6 +70,27 @@ public struct PrefixDriveStore: Sendable {
         var drives: [PrefixDrive] = []
         /// The drive new prefixes go to; nil for this Mac.
         var defaultDrive: String?
+        /// Arbitrary folders where prefixes have been created.
+        var customFolders: [URL] = []
+
+        enum CodingKeys: String, CodingKey {
+            case drives
+            case defaultDrive
+            case customFolders
+        }
+
+        init(drives: [PrefixDrive] = [], defaultDrive: String? = nil, customFolders: [URL] = []) {
+            self.drives = drives
+            self.defaultDrive = defaultDrive
+            self.customFolders = customFolders
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.drives = try container.decodeIfPresent([PrefixDrive].self, forKey: .drives) ?? []
+            self.defaultDrive = try container.decodeIfPresent(String.self, forKey: .defaultDrive)
+            self.customFolders = try container.decodeIfPresent([URL].self, forKey: .customFolders) ?? []
+        }
     }
 
     var file: URL { paths.root.appendingPathComponent("prefix-drives.json") }
@@ -108,7 +132,7 @@ public struct PrefixDriveStore: Sendable {
     public func setDefault(_ place: PrefixPlace) throws {
         var saved = load()
         switch place {
-        case .thisMac: saved.defaultDrive = nil
+        case .thisMac, .customFolder: saved.defaultDrive = nil
         case .drive(let uuid):
             guard saved.drives.contains(where: { $0.uuid == uuid }) else {
                 throw FineWineError(tr("location.err_unknown_drive"))
@@ -143,6 +167,21 @@ public struct PrefixDriveStore: Sendable {
         switch place {
         case .thisMac: return paths.prefixes
         case .drive(let uuid): return mountedVolume(uuid).map(Self.prefixesFolder(on:))
+        case .customFolder(let url): return url
+        }
+    }
+
+    /// Every custom folder FineWine has used for prefixes.
+    public var customFolders: [URL] {
+        load().customFolders
+    }
+
+    /// Remembers a custom folder where prefixes can be kept.
+    public func addCustomFolder(_ url: URL) throws {
+        var saved = load()
+        if !saved.customFolders.contains(where: { $0.path == url.path }) {
+            saved.customFolders.append(url)
+            try save(saved)
         }
     }
 

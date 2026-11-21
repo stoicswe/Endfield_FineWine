@@ -22,6 +22,7 @@
 "app.default" = "Default";
 "app.on" = "On";
 "app.off" = "Off";
+"app.change" = "Change…";
 
 /* Menu Bar */
 "menu.setting_up_prefix" = "Setting up the prefix “%@”…";
@@ -261,10 +262,10 @@
 "config.sync_detail" = "How Windows events, mutexes and semaphores are handled.";
 "config.hide_hypervisor_title" = "Hide the hypervisor flag";
 "config.hide_hypervisor_desc" = "The x64 emulator announces itself to programs through the CPU flag a virtual machine sets. Games that refuse to run in a virtual machine then refuse to start, though the Mac is not one. On by default; turn it off for a program that needs to know it is emulated.";
-"config.zero_pages_title" = "Don't charge for reading unused memory (experimental)";
-"config.zero_pages_desc" = "macOS counts memory against a program as soon as it is read, even if nothing was ever written to it. Games that read through their own memory, as anti-cheat does, then use many gigabytes more than they need. With this on, such reads cost nothing; the first write to each piece of memory is slightly slower. Off by default; turn it off again if a program misbehaves.";
-"config.compact_records_title" = "Compact emulator records (experimental)";
-"config.compact_records_desc" = "The x64 emulator notes, for every thread, each piece of game code that thread has run. In a large game with many threads these notes take gigabytes. With this on they are kept in a form that takes about half the space or less. Off by default; turn it off again if a game stutters more or misbehaves.";
+"config.zero_pages_title" = "Don't charge for reading unused memory";
+"config.zero_pages_desc" = "macOS counts memory against a program as soon as it is read, even if nothing was ever written to it. Games that read through their own memory, as anti-cheat does, then use many gigabytes more than they need. With this on, such reads cost nothing; the first write to each piece of memory is slightly slower. On by default; turn it off if a program misbehaves.";
+"config.compact_records_title" = "Compact emulator records";
+"config.compact_records_desc" = "The x64 emulator notes, for every thread, each piece of game code that thread has run. In a large game with many threads these notes take gigabytes. With this on they are kept in a form that takes about half the space or less. On by default; turn it off if a game stutters more or misbehaves.";
 "config.appearance_card" = "Appearance";
 "config.appearance_footnote" = "Applies to anything in this prefix that uses standard Windows controls, including the Wine tools. Window frames and title bars are always drawn by macOS. Games that draw their own interface are not affected.";
 "config.mac_appearance_title" = "Match macOS";
@@ -359,6 +360,7 @@
 "dialog.choose_executable" = "Choose a Windows installer or program to run in “%@”";
 "dialog.choose_program_in_prefix" = "Choose a program inside this prefix";
 "dialog.choose_runtime_folder" = "Choose a Wine runtime folder";
+"dialog.choose_prefix_folder" = "Choose a folder for this prefix";
 "dialog.run_with_finewine_title" = "Run “%@” with FineWine?";
 "dialog.run_with_finewine_msg" = "Choose the prefix to run it in. Only run programs you trust: they get the same access to your files as FineWine has.";
 "dialog.run_btn" = "Run";
@@ -484,6 +486,9 @@
 "drive.prefix_count" = "%lld prefixes";
 "drive.forget" = "Forget";
 "drive.forget_help" = "Stop listing “%@”. Its prefixes stay on it, and come back if you plug it in again.";
+"drive.custom_folder" = "Custom Folder…";
+"drive.custom_folder_detail" = "In an arbitrary folder you choose.";
+"drive.in_folder" = "In “%@”";
 "location.err_low_space" = "There isn’t enough space on “%@” for a new prefix: %@ free, and a prefix needs at least %@ (it is about 750 MB before anything is installed).";
 "copy.progress" = "%@ %lld%% (%@ of %@)";
 "move.menu" = "Move To";
@@ -650,3 +655,45 @@
 "steam.launch_options_problem" = "Steam can't start these games with FineWine: %@. Their launch options begin with settings in the form NAME=value, which only NotProton's own tools understand; Steam reports “OS Error 260”. In Steam, open the game's Properties and clear Launch Options.";
 "steam.hide_prefixes_title" = "Hide the prefixes of Steam games";
 "steam.hide_prefixes_desc" = "Each game started from Steam has a prefix of its own. On: they are left out of FineWine's lists; they stay where they are and Steam still starts them.";
+
+/* Runtime Regeneration & Relocation */
+"runtime_regen.title" = "Regenerate Wine Runtime";
+"runtime_regen.subtitle" = "Build, package, or copy the Wine runtime and place it on any disk";
+"runtime_regen.action_btn" = "Regenerate Wine Runtime…";
+"runtime_regen.row_button" = "Regenerate";
+"runtime_regen.repo_card" = "Source Repository";
+"runtime_regen.has_packaged" = "Runtime Packaged";
+"runtime_regen.has_built" = "Wine Compiled";
+"runtime_regen.change_repo" = "Change…";
+"runtime_regen.choose_repo" = "Choose Endfield_FineWine Repository";
+"runtime_regen.repo_not_found" = "Endfield_FineWine repository not found automatically. Please locate the repository folder.";
+"runtime_regen.locate_repo" = "Locate Repository…";
+"runtime_regen.mode_card" = "Regeneration Action";
+"runtime_regen.destination_card" = "Destination Location";
+"runtime_regen.destination_footnote" = "Runtimes on an external disk are placed in FineWine/Runtimes. You can also pick any folder.";
+"runtime_regen.destination_label" = "Place runtime on";
+"runtime_regen.custom_folder" = "Custom Folder…";
+"runtime_regen.custom_path_label" = "Folder";
+"runtime_regen.choose_folder" = "Choose…";
+"runtime_regen.choose_custom_dest" = "Choose Destination Folder for Runtime";
+"runtime_regen.working" = "Working…";
+"runtime_regen.keep_open_notice" = "Please keep this window open while the runtime is being prepared.";
+"runtime_regen.success_title" = "Wine Runtime Ready!";
+"runtime_regen.success_message" = "The Wine runtime has been generated and placed on disk. FineWine is ready to run programs with it.";
+"runtime_regen.console_output" = "Console Output";
+"runtime_regen.start_button" = "Regenerate & Place Runtime";
+"runtime_regen.starting" = "Starting regeneration…";
+"runtime_regen.completed" = "Completed successfully.";
+"runtime_regen.failed" = "Regeneration failed.";
+"runtime_regen.cancelled" = "Regeneration cancelled.";
+
+"runtime_move.title" = "Move “%@”";
+"runtime_move.subtitle" = "Move this runtime to another disk or folder";
+"runtime_move.button" = "Move…";
+"runtime_move.source_card" = "Current Location";
+"runtime_move.target_card" = "New Location";
+"runtime_move.target_footnote" = "FineWine will copy the runtime to the new disk and update prefixes pointing to it.";
+"runtime_move.destination_label" = "Move to";
+"runtime_move.moving_msg" = "Moving runtime to new location…";
+"runtime_move.action_button" = "Move Runtime";
+"dialog.err_runtime_move" = "Could Not Move Runtime";

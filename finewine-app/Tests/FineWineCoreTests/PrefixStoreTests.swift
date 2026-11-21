@@ -15,6 +15,21 @@ final class PrefixStoreTests: XCTestCase {
         XCTAssertEqual(store.prefix(id: prefix.id), prefix)
     }
 
+    func testCreateInCustomFolder() throws {
+        let sandbox = Sandbox()
+        let customDir = sandbox.root.appendingPathComponent("CustomBottles", isDirectory: true)
+        try FileManager.default.createDirectory(at: customDir, withIntermediateDirectories: true)
+        let store = PrefixStore(paths: sandbox.paths)
+        let prefix = try store.create(name: "EndfieldTest", runtimeID: "r1", place: .customFolder(customDir))
+
+        XCTAssertEqual(prefix.place, .customFolder(customDir))
+        XCTAssertTrue(prefix.directory.path.hasPrefix(customDir.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: prefix.directory.appendingPathComponent("finewine.json").path))
+        XCTAssertTrue(store.drives.customFolders.contains(where: { $0.path == customDir.path }))
+        XCTAssertEqual(store.list(), [prefix])
+        XCTAssertEqual(store.prefix(id: prefix.id), prefix)
+    }
+
     func testCreateFromProfileCopiesItsSettings() throws {
         let store = PrefixStore(paths: Sandbox().paths)
         let prefix = try store.create(name: "Endfield", runtimeID: "r", profile: .endfield)

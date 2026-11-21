@@ -337,4 +337,53 @@ final class RuntimeStoreTests: XCTestCase {
         let prefix = Prefix(metadata: PrefixMetadata(name: "P", runtimeID: "gone-runtime"), directory: sandbox.root.appendingPathComponent("pfx"))
         XCTAssertThrowsError(try none.runtime(for: prefix))
     }
+
+    // MARK: - Placed and Moved runtimes
+
+    func testInstallToCustomDirectoryRegistersAsExternal() throws {
+        let sandbox = Sandbox()
+        let store = RuntimeStore(paths: sandbox.paths)
+        let source = sandbox.makeRuntime(manifest: RuntimeManifest(id: "custom-rt", name: "Custom RT", version: "1", wineVersion: "11.21"))
+        let dest = sandbox.root.appendingPathComponent("ExternalDisk/FineWine/Runtimes/custom-rt", isDirectory: true)
+
+        let installed = try store.install(from: source, to: dest)
+        XCTAssertEqual(installed.kind, .external)
+        XCTAssertEqual(installed.id, "custom-rt")
+        XCTAssertEqual(installed.root.path, dest.path)
+        XCTAssertTrue(store.externalPaths().contains(dest.path))
+        XCTAssertEqual(store.runtime(id: "custom-rt")?.root.path, dest.path)
+    }
+
+    func testMoveRuntimeToDifferentDiskOrDirectory() throws {
+        let sandbox = Sandbox()
+        let store = RuntimeStore(paths: sandbox.paths)
+        let source = sandbox.makeRuntime(manifest: RuntimeManifest(id: "moving-rt", name: "Moving RT", version: "1", wineVersion: "11.21"))
+        let managed = try store.installManaged(from: source)
+        XCTAssertEqual(managed.kind, .managed)
+
+        let diskTarget = sandbox.root.appendingPathComponent("OtherDrive/FineWine/Runtimes/moving-rt", isDirectory: true)
+        let moved = try store.move(runtime: managed, to: diskTarget)
+        XCTAssertEqual(moved.kind, .external)
+        XCTAssertEqual(moved.root.path, diskTarget.path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: managed.root.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: diskTarget.path))
+        XCTAssertEqual(store.runtime(id: "moving-rt")?.root.path, diskTarget.path)
+    }
+
+    func testRuntimeRegeneratorInspection() throws {
+        let sandbox = Sandbox()
+        let fakeRepo = sandbox.root.appendingPathComponent("Endfield_FineWine", isDirectory: true)
+        let scriptsDir = fakeRepo.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scriptsDir, withIntermediateDirectories: true)
+        let script = scriptsDir.appendingPathComponent("build-finewine-runtime.sh")
+        try "#!/bin/bash\necho ok\n".write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+        XCTAssertTrue(RuntimeRegenerator.isRepository(at: fakeRepo))
+        let info = RuntimeRegenerator.inspectRepository(at: fakeRepo)
+        XCTAssertNotNil(info)
+        XCTAssertEqual(info?.root.path, fakeRepo.path)
+        XCTAssertFalse(info?.hasBuiltWine ?? true)
+        XCTAssertFalse(info?.hasPackagedRuntime ?? true)
+    }
 }

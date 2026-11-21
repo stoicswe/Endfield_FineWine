@@ -251,14 +251,14 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// (runtime patch 0036, `FINEWINE_ZERO_PAGES`). macOS charges a program for every page it
     /// reads, even one it never wrote; a game that reads through its own memory (anti-cheat
     /// does) then pays for everything it has set aside and not used. With this on such reads
-    /// cost nothing; the first write to a page is about a microsecond slower. Experimental and
-    /// off by default: it changes what backs nearly all of a program's memory.
-    public var zeroPages: Bool = false
+    /// cost nothing; the first write to a page is about a microsecond slower. On by default
+    /// since v2.1; can be turned off if a program misbehaves.
+    public var zeroPages: Bool = true
     /// Have the x64 emulator keep its per-thread record of translated code in a compact form
     /// (fex patch 0008, `FEX_COMPACTBLOCKRECORDS`). The usual record costs about 60 bytes for
     /// each piece of translated code each thread has run, gigabytes in a large game with many
-    /// threads. Experimental and off by default until it has been measured with games.
-    public var compactBlockRecords: Bool = false
+    /// threads. On by default since v2.1; can be turned off if a game stutters more or misbehaves.
+    public var compactBlockRecords: Bool = true
     /// Let games that offer NVIDIA DLSS use Apple's MetalFX instead: super resolution as
     /// MetalFX upscaling, frame generation as MetalFX frame interpolation. Direct3D 10 and 11
     /// games get it from DXMT; Direct3D 12 and Vulkan games from the runtime's MoltenVK. FSR
