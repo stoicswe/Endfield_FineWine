@@ -65,6 +65,32 @@ final class LaunchPlannerTests: XCTestCase {
         XCTAssertEqual(env["WINEDLLOVERRIDES"], "winemenubuilder.exe=d")
     }
 
+    func testDirect3D9OnVulkanPutsDXVKBeforeWinesDirect3DWhenTheRuntimeHasIt() {
+        var f = Fixture(graphics: ["dxmt": GraphicsBackendSpec(dllPath: "lib/dxmt", overrides: [:]),
+                                   "dxvk-d3d9": GraphicsBackendSpec(dllPath: "lib/dxvk", overrides: [:])])
+        var env = f.planner().environment()
+        XCTAssertEqual(env["WINEDLLPATH"], f.runtime.root.appendingPathComponent("lib/dxmt").path, "off by default")
+        XCTAssertNil(env["FINEWINE_DXVK_FEATURES"], "MoltenVK reports what Metal has")
+
+        f.prefix.metadata.settings.legacyDirect3DOnVulkan = true
+        env = f.planner().environment()
+        XCTAssertEqual(env["WINEDLLPATH"], f.runtime.root.appendingPathComponent("lib/dxvk").path + ":"
+                       + f.runtime.root.appendingPathComponent("lib/dxmt").path, "DXMT keeps Direct3D 10 and 11")
+        XCTAssertEqual(env["FINEWINE_DXVK_FEATURES"], "1", "DXVK does not start without them")
+        XCTAssertEqual(env["DXVK_LOG_LEVEL"], "none", "no log files next to the game")
+        XCTAssertEqual(env["DXVK_STATE_CACHE_PATH"],
+                       WindowsPath.windowsPath(for: f.prefix.directory.appendingPathComponent(".finewine-dxvk-cache"), inPrefix: f.prefix.directory),
+                       "its shader cache in the prefix, where FineWine can clear it")
+        XCTAssertNil(env["WINE_D3D_CONFIG"], "it is not WineD3D's Vulkan renderer")
+
+        // A runtime without DXVK: the setting does nothing rather than break Direct3D 9.
+        var plain = Fixture(graphics: ["dxmt": GraphicsBackendSpec(dllPath: "lib/dxmt", overrides: [:])])
+        plain.prefix.metadata.settings.legacyDirect3DOnVulkan = true
+        env = plain.planner().environment()
+        XCTAssertEqual(env["WINEDLLPATH"], plain.runtime.root.appendingPathComponent("lib/dxmt").path)
+        XCTAssertNil(env["FINEWINE_DXVK_FEATURES"])
+    }
+
     func testSettingsAndUserOverridesReachTheEnvironment() {
         var f = Fixture()
         f.prefix.metadata.settings.syncMode = .msync

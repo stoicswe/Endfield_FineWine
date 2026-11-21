@@ -64,8 +64,9 @@ section, and starting another 32-bit program. Besides that:
 | | State | How |
 |---|---|---|
 | Direct3D 10, 11 | Works | DXMT, whose Windows DLLs are built a second time for 32-bit x86 (`scripts/build-dxmt.sh`); DXMT patch 0008 does the pointer conversion on DXMT's Mac side |
-| Direct3D 9 and older, OpenGL | Works | WineD3D's OpenGL renderer and Wine's OpenGL call layer, runtime patch 0044 |
-| Direct3D 12, Vulkan | Not yet | Creating the DXGI factory for Direct3D 12 fails; Wine's Vulkan layer says it is "not using VK_EXT_external_memory_host for memory mapping", which it needs to give a 32-bit program mapped GPU memory it can reach. MoltenVK itself needs no 32-bit build (it is a Mac library and stays 64-bit); the work is in Wine's layer in front of it. 32-bit programs that use either are rare |
+| Direct3D 9 and older, OpenGL | Works | WineD3D's OpenGL renderer and Wine's OpenGL call layer, runtime patch 0044; patch 0054 keeps a buffer lock from copying the whole buffer (a lock of a few hundred bytes in a 4 MB buffer: 330 µs before, 20 µs after) |
+| Direct3D 9 and older on Vulkan | Built, off by default; Portal 2 reaches its menu and fails loading a level | The prefix setting of that name: DXVK's `d3d9.dll` on the runtime's MoltenVK. What was built, fixed and left open is in [31-direct3d-9-on-vulkan.md](31-direct3d-9-on-vulkan.md) |
+| Direct3D 12, Vulkan | Start (a clear and a present pass) | Runtime patch 0048. Wine gives a 32-bit program mapped GPU memory it can reach by allocating it in the program's window and handing it to MoltenVK (`VK_EXT_external_memory_host`), so MoltenVK needs no 32-bit build. Two things in Wine's Vulkan layer assumed 32-bit addresses below 4 GB: a command pool handle and the check on a mapping's address |
 
 The OpenGL layer needed more than the base. Its 32-bit thunks ran everything the size of a
 pointer through `ULongToPtr`, which was harmless while the base was zero: sizes and offsets

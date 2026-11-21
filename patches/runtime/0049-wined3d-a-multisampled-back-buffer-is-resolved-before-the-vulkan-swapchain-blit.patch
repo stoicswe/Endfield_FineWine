@@ -1,0 +1,90 @@
+wined3d: a multisampled back buffer is resolved before it is blitted to the Vulkan swapchain
+
+dlls/wined3d/swapchain.c
+- wined3d_swapchain_vk_blit() gave the back buffer's image to vkCmdBlitImage as it was. With
+  antialiasing on in a Direct3D 9 game the back buffer is multisampled, which vkCmdBlitImage
+  does not take as a source. MoltenVK has no blit shader for such a texture ("no template
+  named 'textureunsupported'") and nothing reached the window: Portal 2 was black, with
+  sound, on the Vulkan renderer. The samples are now resolved into a single-sample image of
+  the same size, and that image is blitted.
+
+tests/runtime/d3d9-draw.c has an "msaa" argument for it.
+
+diff --git a/dlls/wined3d/swapchain.c b/dlls/wined3d/swapchain.c
+index 4f106d4..3e566f8 100644
+--- a/dlls/wined3d/swapchain.c
++++ b/dlls/wined3d/swapchain.c
+@@ -1100,6 +1100,7 @@ static VkResult wined3d_swapchain_vk_blit(struct wined3d_swapchain_vk *swapchain
+     VkImageLayout vk_layout;
+     uint32_t image_idx;
+     RECT dst_rect_tmp;
++    VkImage src_vk_image;
+     VkImageBlit blit;
+     VkFilter filter;
+     VkResult vr;
+@@ -1157,6 +1158,56 @@ static VkResult wined3d_swapchain_vk_blit(struct wined3d_swapchain_vk *swapchain
+             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+             swapchain_vk->vk_images[image_idx], &vk_range);
+ 
++    /* FineWine: a multisampled back buffer (a Direct3D 9 game with antialiasing on) cannot be
++     * the source of vkCmdBlitImage, which takes single-sample images only. MoltenVK has no
++     * shader for it and the window stayed black (Portal 2, 2026-11-21). The samples are
++     * resolved into an image of the same size first, and that image is what gets blitted. */
++    src_vk_image = back_buffer_vk->image.vk_image;
++    if (wined3d_resource_get_sample_count(&back_buffer_vk->t.resource) > 1)
++    {
++        struct wined3d_image_vk resolve_image;
++        VkImageCreateInfo image_desc;
++        VkImageResolve resolve;
++
++        wined3d_init_vk_image_info(&image_desc, VK_IMAGE_TYPE_2D,
++                VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
++                wined3d_format_vk(back_buffer_vk->t.resource.format)->vk_format,
++                back_buffer_vk->t.resource.width, back_buffer_vk->t.resource.height, 1);
++        if (wined3d_context_vk_create_image(context_vk, &image_desc, &resolve_image))
++        {
++            wined3d_context_vk_reference_image(context_vk, &resolve_image);
++            src_vk_image = resolve_image.vk_image;
++            /* destroyed once the command buffer that uses it has run */
++            wined3d_context_vk_destroy_image(context_vk, &resolve_image);
++
++            wined3d_context_vk_image_barrier(context_vk, vk_command_buffer,
++                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
++                    0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
++                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, src_vk_image, &vk_range);
++
++            memset(&resolve, 0, sizeof(resolve));
++            resolve.srcSubresource.aspectMask = vk_range.aspectMask;
++            resolve.srcSubresource.layerCount = 1;
++            resolve.dstSubresource = resolve.srcSubresource;
++            resolve.extent.width = back_buffer_vk->t.resource.width;
++            resolve.extent.height = back_buffer_vk->t.resource.height;
++            resolve.extent.depth = 1;
++            VK_CALL(vkCmdResolveImage(vk_command_buffer,
++                    back_buffer_vk->image.vk_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++                    src_vk_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &resolve));
++
++            wined3d_context_vk_image_barrier(context_vk, vk_command_buffer,
++                    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
++                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
++                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++                    src_vk_image, &vk_range);
++        }
++        else
++        {
++            ERR("Failed to create an image to resolve the back buffer into.\n");
++        }
++    }
++
+     blit.srcSubresource.aspectMask = vk_range.aspectMask;
+     blit.srcSubresource.mipLevel = vk_range.baseMipLevel;
+     blit.srcSubresource.baseArrayLayer = vk_range.baseArrayLayer;
+@@ -1175,7 +1226,7 @@ static VkResult wined3d_swapchain_vk_blit(struct wined3d_swapchain_vk *swapchain
+     blit.dstOffsets[1].y = dst_rect->bottom;
+     blit.dstOffsets[1].z = 1;
+     VK_CALL(vkCmdBlitImage(vk_command_buffer,
+-            back_buffer_vk->image.vk_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++            src_vk_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+             swapchain_vk->vk_images[image_idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+             1, &blit, filter));
+ 

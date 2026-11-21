@@ -294,6 +294,12 @@ public struct WineRuntime: Equatable, Identifiable, Sendable {
     public func graphicsSpec(for backend: GraphicsBackend) -> GraphicsBackendSpec? {
         manifest.graphics[backend.rawValue]
     }
+
+    /// The entry of `runtime.json`'s graphics list for DXVK's Direct3D 9 (scripts/build-dxvk.sh).
+    public static let direct3D9OnVulkanKey = "dxvk-d3d9"
+    /// Where the runtime keeps DXVK's Direct3D 9, if it has it: what the prefix setting
+    /// "Direct3D 9 and older on Vulkan" needs.
+    public var direct3D9OnVulkanSpec: GraphicsBackendSpec? { manifest.graphics[Self.direct3D9OnVulkanKey] }
 }
 
 /// Finds, adds and removes runtimes.

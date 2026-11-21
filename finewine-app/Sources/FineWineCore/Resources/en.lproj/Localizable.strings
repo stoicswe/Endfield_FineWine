@@ -247,6 +247,8 @@
 "config.dlss_metalfx_general_desc" = "Direct3D 12 and Vulkan games that offer NVIDIA DLSS use Apple's MetalFX instead. Direct3D 11 games need DXMT as the Direct3D layer. FSR is unaffected.";
 "config.report_nvidia_title" = "Report an NVIDIA GPU";
 "config.report_nvidia_desc" = "Tells Windows programs the GPU is an %@, by name and by id. Most games only show DLSS options on an NVIDIA GPU. Leave it off for games with NVIDIA-specific code paths you do not want.";
+"config.d3d9_vulkan_title" = "Direct3D 9 and older on Vulkan";
+"config.d3d9_vulkan_desc" = "Runs older Direct3D games on Metal through DXVK and Vulkan instead of OpenGL. It can be faster, and the Metal HUD and MetalFX upscaling then work in those games. Experimental: some games draw wrongly or do not start with it; turn it off if one does.";
 "config.fullscreen_label" = "Full screen";
 "config.fullscreen_detail" = "How a game's full-screen window is shown. With its own Space the menu bar appears at the top edge, a swipe goes back to the desktop, and notifications show over the game.";
 "config.rounded_windows_title" = "Round window corners";

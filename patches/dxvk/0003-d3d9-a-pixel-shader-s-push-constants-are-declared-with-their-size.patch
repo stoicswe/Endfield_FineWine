@@ -1,0 +1,28 @@
+d3d9: a pixel shader's push constants are declared with their size
+
+src/dxso/dxso_compiler.cpp
+- compileShader() gave the shader's push constant size as its offset
+  (info.pushConstSize = m_pushConstOffset). For pixel shaders older than 3.0 the offset is 0,
+  so they declared no push constants at all, though they read the render state from them
+  (fog, the alpha test's reference value). The pipeline layout then has no push constant
+  range for the fragment stage. Drivers on Windows and Linux do not mind; MoltenVK binds push
+  constants only to the stages the layout names, the Metal shader read a buffer that was not
+  bound ("Fragment Function(main0): missing Buffer binding at index 1 for render_state[0]"
+  with Metal's validation on), and the GPU gave the whole command buffer up: "Lost VkDevice
+  ... Internal Error". Portal 2 froze as its first level loaded.
+
+tests/runtime/d3d9-draw.c draws with the alpha test on under a 2.0 pixel shader.
+
+diff --git a/src/dxso/dxso_compiler.cpp b/src/dxso/dxso_compiler.cpp
+index 7cd6f72..6695a79 100644
+--- a/src/dxso/dxso_compiler.cpp
++++ b/src/dxso/dxso_compiler.cpp
+@@ -253,7 +253,7 @@ namespace dxvk {
+     info.inputMask = m_inputMask;
+     info.outputMask = m_outputMask;
+     info.pushConstOffset = m_pushConstOffset;
+-    info.pushConstSize = m_pushConstOffset;
++    info.pushConstSize = m_pushConstSize;
+ 
+     return new DxvkShader(info, m_module.compile());
+   }

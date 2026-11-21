@@ -246,6 +246,8 @@
 "config.dlss_metalfx_general_desc" = "ألعاب Direct3D 12 و Vulkan التي تقدم NVIDIA DLSS تستخدم Apple MetalFX بدلاً منها. تحتاج ألعاب Direct3D 11 إلى DXMT كطبقة Direct3D. لا يتأثر FSR.";
 "config.report_nvidia_title" = "الإبلاغ عن وحدة معالجة رسوميات NVIDIA";
 "config.report_nvidia_desc" = "يخبر برامج Windows بأن وحدة معالجة الرسوميات هي %@، بالاسم والمعرف. تعرض معظم الألعاب خيارات DLSS على بطاقات NVIDIA فقط. اتركه معطلاً للألعاب التي تحتوي على مسارات كود خاصة بـ NVIDIA لا تريدها.";
+"config.d3d9_vulkan_title" = "Direct3D 9 والأقدم عبر Vulkan";
+"config.d3d9_vulkan_desc" = "يشغّل ألعاب Direct3D القديمة على Metal عبر Vulkan بدلاً من OpenGL. قد يكون أسرع، ويعمل معه Metal HUD وتكبير MetalFX في هذه الألعاب. تجريبي: قد تُعرض بعض الألعاب بشكل خاطئ أو لا تبدأ؛ أوقفه إن حدث ذلك.";
 "config.fullscreen_label" = "ملء الشاشة";
 "config.fullscreen_detail" = "طريقة عرض نافذة اللعبة في وضع ملء الشاشة. مع مساحتها الخاصة، يظهر شريط القوائم عند الحافة العلوية، والتمرير يعود إلى سطح المكتب، وتظهر الإشعارات فوق اللعبة.";
 "config.rounded_windows_title" = "زوايا النوافذ المستديرة";

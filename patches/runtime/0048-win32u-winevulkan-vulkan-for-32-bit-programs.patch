@@ -1,0 +1,74 @@
+win32u, winevulkan: Vulkan for 32-bit programs
+
+dlls/winevulkan/vulkan.c, dlls/winevulkan/vulkan_private.h
+- A command pool's handle is the address of the program's own structure. A 32-bit program
+  stores it without the base of its memory window (0043), and the Unix side used the number
+  as an address: vkCreateCommandPool faulted. It gets the base now.
+
+dlls/win32u/vulkan.c
+- Mapped device memory of a 32-bit program is refused when its address is above 4 GB. The
+  program's memory is a window above 4 GB here, so the test is whether the mapping is inside
+  the window. (The memory itself comes from VK_EXT_external_memory_host, which MoltenVK has:
+  Wine allocates it in the program's address space and Metal uses it in place.)
+
+With both, Wine's Direct3D runs on its Vulkan renderer in a 32-bit program
+(WINE_D3D_CONFIG=renderer=vulkan): tests/runtime/d3d9-draw.c passes as a 32-bit program.
+
+diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
+index 3265d74..e3216d9 100644
+--- a/dlls/win32u/vulkan.c
++++ b/dlls/win32u/vulkan.c
+@@ -1196,7 +1219,14 @@ static VkResult win32u_vkMapMemory2KHR( VkDevice client_device, const VkMemoryMa
+     }
+ 
+ #ifdef _WIN64
++#if defined(__APPLE__) && defined(__aarch64__)
++    /* FineWine 32-bit: the program's memory is a window above 4 GB; a mapping inside it is one
++     * the program can reach. */
++    if (NtCurrentTeb()->WowTebOffset && res == VK_SUCCESS &&
++        (((UINT_PTR)*data ^ __wine_wow_window_base) >> 32))
++#else
+     if (NtCurrentTeb()->WowTebOffset && res == VK_SUCCESS && (UINT_PTR)*data >> 32)
++#endif
+     {
+         FIXME( "returned mapping %p does not fit 32-bit pointer\n", *data );
+         device->p_vkUnmapMemory( device->host.device, memory->obj.host.device_memory );
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index 2dac08a..617acc2 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -471,7 +471,7 @@ void wine_vkFreeCommandBuffers(VkDevice client_device, VkCommandPool command_poo
+ VkResult wine_vkCreateCommandPool(VkDevice client_device, const VkCommandPoolCreateInfo *info, const VkAllocationCallbacks *allocator,
+                                   VkCommandPool *client_command_pool_ptr)
+ {
+-    struct vk_command_pool *client_command_pool = command_pool_from_handle(*client_command_pool_ptr);
++    struct vk_command_pool *client_command_pool = client_command_pool_from_handle(*client_command_pool_ptr);
+     struct vulkan_device *device = vulkan_device_from_handle(client_device);
+     struct vulkan_instance *instance = device->physical_device->instance;
+     VkCommandPool host_command_pool;
+diff --git a/dlls/winevulkan/vulkan_private.h b/dlls/winevulkan/vulkan_private.h
+index bc8fe30..a3ef2be 100644
+--- a/dlls/winevulkan/vulkan_private.h
++++ b/dlls/winevulkan/vulkan_private.h
+@@ -45,9 +45,20 @@ struct wine_cmd_pool
+     VULKAN_OBJECT_HEADER( VkCommandPool, command_pool );
+ };
+ 
++/* FineWine 32-bit: the handle is the address of the program's own structure, which a 32-bit
++ * program stores without the base of its memory window. */
++static inline struct vk_command_pool *client_command_pool_from_handle(VkCommandPool handle)
++{
++#if defined(__APPLE__) && defined(__aarch64__) && defined(_WIN64)
++    return __wine_wow_window_ptr64(handle);
++#else
++    return command_pool_from_handle(handle);
++#endif
++}
++
+ static inline struct wine_cmd_pool *wine_cmd_pool_from_handle(VkCommandPool handle)
+ {
+-    struct vulkan_client_object *client = &command_pool_from_handle(handle)->obj;
++    struct vulkan_client_object *client = &client_command_pool_from_handle(handle)->obj;
+     return (struct wine_cmd_pool *)(UINT_PTR)client->unix_handle;
+ }
+ 

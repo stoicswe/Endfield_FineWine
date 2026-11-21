@@ -116,8 +116,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # The runtime's script installs what Wine needs; these are for FEX, DXMT and MoltenVK.
-          brew install cmake ninja meson
+          # The runtime's script installs what Wine needs; these are for FEX, DXMT, DXVK (whose
+          # shaders glslang compiles) and MoltenVK.
+          brew install cmake ninja meson glslang
           ./scripts/build-finewine-runtime.sh deps
 
       # DXMT compiles its shaders with Apple's Metal compiler, which recent Xcodes download
@@ -213,6 +214,7 @@ jobs:
           [ -f "$RT/runtime.json" ] || fail "the runtime in the app has no runtime.json"
           for part in lib/wine/aarch64-unix/ntdll.so lib/wine/aarch64-unix/winemac.so \
                       lib/wine/aarch64-windows/xtajit64.dll lib/dxmt/aarch64-windows/d3d11.dll \
+                      lib/dxvk/aarch64-windows/d3d9.dll \
                       lib/wine/aarch64-unix/winemetal.so; do
             [ -e "$RT/$part" ] || fail "the runtime in the app is missing $part"
           done
@@ -222,6 +224,7 @@ jobs:
                       lib/wine/i386-windows/d3d9.dll lib/wine/i386-windows/opengl32.dll \
                       lib/wine/aarch64-windows/wow64.dll lib/wine/aarch64-windows/xtajit.dll \
                       lib/dxmt/i386-windows/d3d11.dll lib/dxmt/i386-windows/dxgi.dll \
+                      lib/dxvk/i386-windows/d3d9.dll \
                       lib/wine/i386-windows/winemetal.dll \
                       lib/steam-bridge/wine/i386-windows/lsteamclient.dll \
                       lib/steam-bridge/wine/aarch64-unix/lsteamclient.so; do
@@ -229,6 +232,8 @@ jobs:
           done
           file "$RT/lib/wine/i386-windows/ntdll.dll" | grep -q 'Intel 80386\|Intel i386' || fail "the 32-bit ntdll.dll is not a 32-bit x86 file"
           file "$RT/lib/dxmt/i386-windows/d3d11.dll" | grep -q 'Intel 80386\|Intel i386' || fail "DXMT's 32-bit d3d11.dll is not a 32-bit x86 file"
+          file "$RT/lib/dxvk/i386-windows/d3d9.dll" | grep -q 'Intel 80386\|Intel i386' || fail "DXVK's 32-bit d3d9.dll is not a 32-bit x86 file"
+          grep -q '"dxvk-d3d9"' "$RT/runtime.json" || fail "runtime.json does not list DXVK's Direct3D 9"
           # The Steam bridge's modules belong in lib/steam-bridge only.
           for stray in lib/wine/aarch64-windows/steam.exe lib/wine/i386-windows/steam.exe lib/wine/i386-windows/lsteamclient.dll; do
             [ ! -e "$RT/$stray" ] || fail "the runtime in the app has a stray $stray"

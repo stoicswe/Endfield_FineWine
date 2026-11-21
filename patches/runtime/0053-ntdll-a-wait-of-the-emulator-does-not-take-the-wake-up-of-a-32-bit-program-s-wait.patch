@@ -1,0 +1,50 @@
+ntdll: a wait of the emulator does not take the wake-up of a 32-bit program's wait
+
+dlls/ntdll/sync.c
+- RtlWaitOnAddress() sleeps in NtWaitForAlertByThreadId(), which uses the one alert flag a
+  thread has. In a 32-bit program two such waits can be under way on one thread: the
+  program's (the 32-bit ntdll queues the thread and goes to make the system call) and, on
+  the way there, the emulator's, which is 64-bit code on the same thread waiting for one of
+  its own locks through the 64-bit ntdll. When the wake-ups for both arrive before the thread
+  runs, they are one flag. The 64-bit wait took it and returned; the 32-bit wait then slept
+  for good, its queue entry already removed by its waker, so no later wake-up found it.
+  Seen in a trace: thread 0234 alerts 0240 twice in a row, for 0x150100082 (the emulator's
+  lock) and for 00956DD2 (the program's), and 0240 never runs again. Portal 2 froze at start
+  with every thread waiting; a Direct3D 9 test froze in 4 runs of 40.
+- In a process with a 32-bit side, the 64-bit RtlWaitOnAddress() with no time limit now
+  keeps waiting when it is alerted while still queued (the alert was for another wait), and
+  sets the flag again when it leaves, for the wait it was inside. The outer wait may wake
+  once for nothing, which callers of RtlWaitOnAddress() have to allow for anyway.
+  After it: 60 runs of 60 finish.
+
+diff --git a/dlls/ntdll/sync.c b/dlls/ntdll/sync.c
+index f4090d5..c77960a 100644
+--- a/dlls/ntdll/sync.c
++++ b/dlls/ntdll/sync.c
+@@ -903,6 +903,26 @@ NTSTATUS WINAPI RtlWaitOnAddress( const void *addr, const void *cmp, SIZE_T size
+ 
+     spin_unlock( &queue->lock );
+ 
++#ifdef _WIN64
++    /* FineWine: a thread has one alert flag, and in a 32-bit program two waits can be using
++     * it at once. The program's own code (the 32-bit ntdll) puts itself on a queue and goes
++     * to wait; on the way the emulator, which is 64-bit code on the same thread, has to wait
++     * for one of its own locks, here. Two wake-ups, one for each wait, are one flag: this
++     * wait took it, the program's wait then slept for good with its queue entry already
++     * removed, and the program froze (Portal 2 at start, one test run in about fifteen;
++     * 2026-11-21). So in a 32-bit program an alert that is not for this wait is not taken as
++     * its wake-up, and the flag is set again on the way out for the wait this one was inside. */
++    if (NtCurrentTeb()->WowTebOffset && !timeout)
++    {
++        for (;;)
++        {
++            ret = NtWaitForAlertByThreadId( NULL, NULL );
++            if (ret != STATUS_ALERTED || !ReadPointerAcquire( (void * volatile *)&entry.addr )) break;
++        }
++        if (ret == STATUS_ALERTED) NtAlertThreadByThreadId( (HANDLE)(ULONG_PTR)entry.tid );
++    }
++    else
++#endif
+     ret = NtWaitForAlertByThreadId( NULL, timeout );
+ 
+     /* We may have already been removed by a call to RtlWakeAddressSingle() or RtlWakeAddressAll(). */
