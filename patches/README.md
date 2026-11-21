@@ -172,6 +172,12 @@ This directory does not contain Wine itself — only diffs to be applied to a Wi
 Applied by `scripts/build-finewine-runtime.sh` on top of `patches/ARM` (minus the two x86-only
 kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21.
 
+- `0044-opengl32-32-bit-programs-pointers-sizes-and-buffer-offsets.patch`: Direct3D 9 and older
+  (WineD3D's OpenGL renderer) and OpenGL from 32-bit programs. With 0043 the 32-bit thunks of
+  the OpenGL call layer must tell addresses from numbers: a context the 32-bit side allocated
+  is a pointer; sizes and offsets are not; and an argument that is an address or an offset into
+  the bound buffer object (vertex array pointers, draw indices, pixel data) gets the base only
+  while no buffer is bound. Changes the generated `unix_thunks.c` directly.
 - `0043-32-bit-programs-in-a-window-above-4-gb.patch` runs 32-bit Windows programs. macOS gives
   an ARM64 process no memory below 4 GB, so a 32-bit process's 4 GB are a window at 1 TB
   (`0x10000000000`, a multiple of 4 GB: a real address cut to 32 bits is the program's address).
@@ -480,5 +486,13 @@ FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`, and i
   Direct3D 11 upscaling of `0004` can be switched while a program runs. `FINEWINE_METALFX_AUTO=0`
   only says it starts off; the notification state `finewine.metalfx.<process id>` (1 on, 2 off)
   overrides it. `FINEWINE_METALFX_SWAPCHAIN=0` turns the mechanism off.
+- `0008-winemetal-pointers-of-32-bit-programs-in-finewine-s-memory-window.patch`: DXMT for
+  32-bit programs. `scripts/build-dxmt.sh` builds DXMT's Windows DLLs a second time for 32-bit
+  x86 (DXMT's own `build-win32.txt`) into `lib/dxmt/i386-windows` and
+  `lib/wine/i386-windows/winemetal.dll`; they call the same `winemetal.so`. Its 32-bit side
+  passes pointers as 32-bit values in 64-bit fields, and the Mac side now adds the base of the
+  program's memory window to them (runtime patch 0043) and takes it off a buffer's contents
+  pointer that lies inside the window. The base is 0 in every other process. The NVIDIA
+  stand-ins (DLSS as MetalFX) stay 64-bit only.
 - `build-arm64ec-finewine.txt` is the meson cross file `scripts/build-dxmt.sh` builds DXMT with.
   It is DXMT's own ARM64EC cross file plus one linker flag (see the comment in the file).

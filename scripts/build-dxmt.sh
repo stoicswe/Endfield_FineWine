@@ -17,6 +17,13 @@
 #                lib/wine/aarch64-windows/{nvngx,nvapi64}.dll          DLSS as MetalFX, NVAPI
 #                lib/wine/aarch64-unix/winemetal.so
 #              plus a "dxmt" entry in runtime.json
+#   32-bit     when the Wine build tree has a 32-bit side, DXMT's Windows DLLs are built a
+#              second time for 32-bit x86 programs (DXMT's own build-win32.txt):
+#                lib/dxmt/i386-windows/{d3d11,d3d10core,dxgi}.dll
+#                lib/wine/i386-windows/winemetal.dll
+#              They call the same winemetal.so, which adds the base of the 32-bit program's
+#              memory window to its pointers (patches/dxmt/0008, Wine runtime patch 0043).
+#              The NVIDIA stand-ins are 64-bit only.
 #
 # Usage:
 #   scripts/build-dxmt.sh llvm      # build LLVM 15 (skipped if already built)
@@ -39,6 +46,8 @@ RUNTIME_DIR="${RUNTIME_DIR:-$BUILD_DIR/finewine-runtime}"
 SRC="$BUILD_DIR/dxmt-src"
 OBJ="$BUILD_DIR/dxmt-build"
 STAGE="$BUILD_DIR/dxmt-install"
+OBJ32="$BUILD_DIR/dxmt-build-32"
+STAGE32="$BUILD_DIR/dxmt-install-32"
 LLVM="$BUILD_DIR/dxmt-llvm"
 MINGW="$BUILD_DIR/llvm-mingw"
 WINE_OBJ="$BUILD_DIR/finewine-runtime-build"
@@ -123,6 +132,30 @@ cmd_build(){
   meson install -C "$OBJ" > "$BUILD_DIR/dxmt-install.log" 2>&1 || die "install failed, see $BUILD_DIR/dxmt-install.log"
   ls "$STAGE/aarch64-windows/"*.dll "$STAGE/aarch64-unix/winemetal.so" >/dev/null || die "the build is missing files"
   echo "built: $STAGE"
+  build_32
+}
+
+# The Windows DLLs again, for 32-bit x86 programs. Only when Wine was built with a 32-bit side;
+# the Mac half (winemetal.so) is the one built above.
+build_32(){
+  rm -rf "$OBJ32" "$STAGE32"
+  if [ ! -f "$WINE_OBJ/dlls/ntdll/i386-windows/libntdll.a" ]; then
+    echo "note: the Wine build tree has no 32-bit side; DXMT is not built for 32-bit programs"
+    return 0
+  fi
+  log "Building DXMT's Windows DLLs for 32-bit programs"
+  [ -x "$MINGW/bin/i686-w64-mingw32-gcc" ] || die "llvm-mingw has no 32-bit compiler: run scripts/build-fex.sh toolchain"
+  ( cd "$SRC" && meson setup --cross-file "$SRC/build-win32.txt" -Dnative_llvm_path="$LLVM" \
+      -Dwine_build_path="$WINE_OBJ" "$OBJ32" --buildtype release --prefix "$STAGE32" --strip ) \
+    > "$BUILD_DIR/dxmt-setup-32.log" 2>&1 || die "meson setup (32-bit) failed, see $BUILD_DIR/dxmt-setup-32.log"
+  meson compile -C "$OBJ32" > "$BUILD_DIR/dxmt-compile-32.log" 2>&1 || die "32-bit build failed, see $BUILD_DIR/dxmt-compile-32.log"
+  meson install -C "$OBJ32" > "$BUILD_DIR/dxmt-install-32.log" 2>&1 || die "32-bit install failed, see $BUILD_DIR/dxmt-install-32.log"
+  local dll
+  for dll in d3d11 d3d10core dxgi winemetal; do
+    [ -f "$STAGE32/i386-windows/$dll.dll" ] || die "the 32-bit build is missing $dll.dll"
+    file "$STAGE32/i386-windows/$dll.dll" | grep -q 'Intel 80386\|Intel i386' || die "$dll.dll (32-bit build) is not a 32-bit x86 file"
+  done
+  echo "built: $STAGE32"
 }
 
 cmd_install(){
@@ -146,6 +179,14 @@ cmd_install(){
   cp "$STAGE/aarch64-unix/winemetal.so" "$unix/winemetal.so"
   install_name_tool -add_rpath "@loader_path/../.." "$unix/winemetal.so" 2>/dev/null || true
   codesign --force --sign - "$unix/winemetal.so" 2>/dev/null
+  # The 32-bit Windows DLLs, beside the others: Wine picks the folder by the program's kind.
+  rm -f "$RUNTIME_DIR/lib/wine/i386-windows/winemetal.dll"
+  if [ -f "$STAGE32/i386-windows/winemetal.dll" ] && [ -d "$RUNTIME_DIR/lib/wine/i386-windows" ]; then
+    mkdir -p "$RUNTIME_DIR/lib/dxmt/i386-windows"
+    for dll in d3d11 d3d10core dxgi; do cp "$STAGE32/i386-windows/$dll.dll" "$RUNTIME_DIR/lib/dxmt/i386-windows/"; done
+    cp "$STAGE32/i386-windows/winemetal.dll" "$RUNTIME_DIR/lib/wine/i386-windows/winemetal.dll"
+    echo "installed: $RUNTIME_DIR/lib/dxmt/i386-windows (for 32-bit programs)"
+  fi
   python3 - "$RUNTIME_DIR/runtime.json" <<'PY'
 import json, sys
 path = sys.argv[1]

@@ -36,7 +36,7 @@ emulation does the same with its `guest_base`.)
 | The Mac-side halves of 32-bit calls (every `unix_call_wow64_funcs`) | The same two macros, redefined in `include/basetsd.h` for Unix-side code, read the base that `ntdll.so` exports (`__wine_wow_window_base`) |
 | The Mac driver (`winemac.drv`) | Its parameter pointers go through the same conversion |
 | FEX (`libwow64fex.dll`, installed as `xtajit.dll`) | Every guest memory access in generated code goes through the window (two registers, x19 and x24, are taken out of allocation for it); the decoder, the syscall bridge and the code-invalidation tracker convert between the two kinds of address |
-| The runtime | Wine is configured with `--enable-archs=arm64ec,aarch64,i386`, which adds `lib/wine/i386-windows`; FEX is built a second time as the WOW64 front end |
+| The runtime | Wine is configured with `--enable-archs=arm64ec,aarch64,i386`, which adds `lib/wine/i386-windows`; FEX is built a second time as the WOW64 front end; DXMT's Windows DLLs are built a second time for 32-bit |
 
 **64-bit programs are not touched.** The window code in FEX is compiled only into `xtajit.dll`;
 the ARM64EC build (`xtajit64.dll`) has a base of zero fixed at compile time. In Wine the base
@@ -59,12 +59,36 @@ section, and starting another 32-bit program. Besides that:
 - Microsoft's Visual C++ set-up program (`vc_redist.x64.exe`, a 32-bit bootstrapper) ran
   silently to "Apply complete, result: 0x0".
 
-**Not tried yet:** a 32-bit game or anything using Direct3D (DXMT and vkd3d are not built for
-32-bit callers; Wine's own Direct3D-on-Vulkan would be what such a program gets), installers
-with their pages shown and clicked through, audio, and what it costs (two more instructions on
-each guest memory access, two fewer registers). An address formed as base plus index does not
-wrap at 4 GB as on a real 32-bit CPU. A missed pointer conversion shows as a crash in whatever
-program uses that call; `WINEDEBUG=+seh` names the Mac-side function it happened in.
+**Direct3D.** From a 32-bit program:
+
+| | State | How |
+|---|---|---|
+| Direct3D 10, 11 | Works | DXMT, whose Windows DLLs are built a second time for 32-bit x86 (`scripts/build-dxmt.sh`); DXMT patch 0008 does the pointer conversion on DXMT's Mac side |
+| Direct3D 9 and older, OpenGL | Works | WineD3D's OpenGL renderer and Wine's OpenGL call layer, runtime patch 0044 |
+| Direct3D 12, Vulkan | Not yet | Creating the DXGI factory for Direct3D 12 fails; Wine's Vulkan layer says it is "not using VK_EXT_external_memory_host for memory mapping", which it needs to give a 32-bit program mapped GPU memory it can reach. MoltenVK itself needs no 32-bit build (it is a Mac library and stays 64-bit); the work is in Wine's layer in front of it. 32-bit programs that use either are rare |
+
+The OpenGL layer needed more than the base. Its 32-bit thunks ran everything the size of a
+pointer through `ULongToPtr`, which was harmless while the base was zero: sizes and offsets
+(which are numbers) and, worst, the many OpenGL arguments that are an address *or* an offset
+into the bound buffer object (vertex array pointers, the indices of an indexed draw, pixel data
+read or written). Those now get the base only while no buffer is bound to the binding point
+they are read through. The test script runs `d3d9-clear.c`, `d3d9-draw.c` (buffers, a texture,
+a draw from memory, a read-back, presenting into a window) and `gl-buffer-offsets.c` as 32-bit
+programs; the last fails without the buffer rule. The generated file `unix_thunks.c` was
+changed directly: running Wine's `make_opengl` again would undo most of it.
+
+**What it costs.** `tests/runtime/bench.c` as a 32-bit program against the same as x64, on an
+Apple M3 (2026-11-20): integer sieve, matrix multiply, memory copy, pointer chase, atomics and
+locks are within about 10% either way; a 64-bit hash loop takes 1.8 times as long (64-bit
+arithmetic in 32-bit code); `sin`/`cos`/`sqrt` take 7 times as long (32-bit code uses the x87
+unit, which the emulator computes in software); `QueryPerformanceCounter` 4 times.
+`bench-d3d11.c` (10,000 draws a frame through DXMT): 6.0 ms with new constants each draw and
+2.0 ms with nothing changing, against 7.4 ms and 1.6 ms as x64.
+
+**Not tried yet:** a 32-bit game, installers with their pages shown and clicked through, and
+audio. An address formed as base plus index does not wrap at 4 GB as on a real 32-bit CPU. A
+missed pointer conversion shows as a crash in whatever program uses that call;
+`WINEDEBUG=+seh` names the Mac-side function it happened in.
 
 ## What FineWine still does itself
 
