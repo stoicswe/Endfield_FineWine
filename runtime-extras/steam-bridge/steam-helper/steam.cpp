@@ -32,6 +32,13 @@
  * a small subset of the actual Steam functionality for games that expect
  * Windows version of Steam running. */
 
+/* FineWine: the helper is used as an x64 program only (it loads Steam's x64 client library).
+ * Wine's build makes every program for every architecture it is configured for, and this file
+ * does not compile as 32-bit x86 C++ against Wine's headers, so that build is an empty program. */
+#ifdef __i386__
+int main(int argc, char *argv[]) { return 1; }
+#else
+
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include <windows.h>
@@ -1948,3 +1955,5 @@ int main(int argc, char *argv[])
 
     return rc;
 }
+
+#endif /* !__i386__ */

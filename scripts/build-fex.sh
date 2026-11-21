@@ -9,8 +9,9 @@
 #   compiler   llvm-mingw (clang for Windows targets), downloaded once into build/llvm-mingw and
 #              checked against a pinned SHA-256. Its winnt.h is changed so NtCurrentTeb() reads
 #              the TEB from thread-specific data instead of x18 (see patches/fex/0001).
-#   output     build/fex-arm64ec/Bin/libarm64ecfex.dll, and, with `install`, a copy in
-#              build/finewine-runtime/lib/wine/aarch64-windows/xtajit64.dll
+#   output     build/fex-arm64ec/Bin/libarm64ecfex.dll (x64 programs) and
+#              build/fex-wow64/Bin/libwow64fex.dll (32-bit programs), and, with `install`, copies in
+#              build/finewine-runtime/lib/wine/aarch64-windows as xtajit64.dll and xtajit.dll
 #
 # Usage:
 #   scripts/build-fex.sh toolchain   # download and prepare llvm-mingw
@@ -28,6 +29,7 @@ BUILD_DIR="${BUILD_DIR:-$REPO/build}"
 RUNTIME_DIR="${RUNTIME_DIR:-$BUILD_DIR/finewine-runtime}"
 SRC="$BUILD_DIR/fex-src"
 OBJ="$BUILD_DIR/fex-arm64ec"
+OBJ32="$BUILD_DIR/fex-wow64"
 MINGW="$BUILD_DIR/llvm-mingw"
 MINGW_ARCHIVE="llvm-mingw-$MINGW_VERSION-ucrt-macos-universal.tar.xz"
 MINGW_URL="https://github.com/mstorsjo/llvm-mingw/releases/download/$MINGW_VERSION/$MINGW_ARCHIVE"
@@ -125,6 +127,23 @@ cmd_build(){
   left="$(llvm-objdump -d "$OBJ/Bin/libarm64ecfex.dll" | grep -E '\bx18\b' | grep -vc '%' || true)"
   echo "built: $OBJ/Bin/libarm64ecfex.dll (x18 instructions left: $left)"
   [ "$left" -le 2 ] || die "$left instructions still use x18; expected at most 2 (see the note above)"
+
+  # The same source again for 32-bit programs: FEX's WOW64 front end, libwow64fex.dll, an ARM64
+  # DLL that Wine loads under the name xtajit.dll when a 32-bit x86 program starts. In this
+  # build a guest's memory is a window above 4 GB (patches/fex/0011).
+  log "Building FEX for 32-bit programs (WOW64)"
+  [ -x "$MINGW/bin/aarch64-w64-mingw32-clang" ] || die "the toolchain has no aarch64-w64-mingw32-clang"
+  cmake -B "$OBJ32" -S "$SRC" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_TOOLCHAIN_FILE="$SRC/Data/CMake/toolchain_mingw.cmake" -DMINGW_TRIPLE=aarch64-w64-mingw32 \
+    -DBUILD_TESTING=False -DBUILD_TESTS=False -DENABLE_LTO=False -DENABLE_JEMALLOC_GLIBC_ALLOC=False \
+    -DENABLE_ASSERTIONS=False -DTUNE_CPU=none -DTUNE_ARCH=armv8.5-a \
+    > "$BUILD_DIR/fex32-configure.log" 2>&1 || die "configure failed, see $BUILD_DIR/fex32-configure.log"
+  cmake --build "$OBJ32" > "$BUILD_DIR/fex32-build.log" 2>&1 || die "build failed, see $BUILD_DIR/fex32-build.log"
+  [ -f "$OBJ32/Bin/libwow64fex.dll" ] || die "the build produced no libwow64fex.dll"
+  left="$(llvm-objdump -d "$OBJ32/Bin/libwow64fex.dll" | grep -E '\bx18\b' | grep -vc '%' || true)"
+  echo "built: $OBJ32/Bin/libwow64fex.dll (x18 instructions left: $left)"
+  # three here: the two above and one more in the same prebuilt exception support (unw_getcontext)
+  [ "$left" -le 3 ] || die "$left instructions still use x18 in the 32-bit front end; expected at most 3"
 }
 
 cmd_install(){
@@ -136,6 +155,13 @@ cmd_install(){
   [ -f "$dir/xtajit64.dll.winestub" ] || cp "$dir/xtajit64.dll" "$dir/xtajit64.dll.winestub"
   cp "$OBJ/Bin/libarm64ecfex.dll" "$dir/xtajit64.dll"
   echo "installed: $dir/xtajit64.dll"
+  # The 32-bit front end. Wine has no placeholder for this one.
+  if [ -f "$OBJ32/Bin/libwow64fex.dll" ]; then
+    cp "$OBJ32/Bin/libwow64fex.dll" "$dir/xtajit.dll"
+    echo "installed: $dir/xtajit.dll"
+  else
+    echo "note: no 32-bit front end built; 32-bit programs will not run"
+  fi
 }
 
 case "${1:-}" in

@@ -341,7 +341,7 @@
 "dialog.err_prog_start" = "「%@」を起動できませんでした";
 "dialog.err_appearance_update" = "外観を更新できませんでした";
 "dialog.32bit_title" = "「%@」は 32 ビットプログラムです";
-"dialog.32bit_msg" = "FineWine は 64 ビット Windows プログラムのみを実行できます。Apple シリコン Mac は 32 ビットプログラムが必要とするメモリ構造をサポートしません。NSIS 製の 32 ビットインストーラーはスクリプト解析で導入できますが、本ファイルは別形式です。64 ビット版やポータブル版 (zip) をお探しください。";
+"dialog.32bit_msg" = "このプレフィックスの Wine ランタイムは 64 ビット Windows プログラムのみを実行できます。NSIS 製の 32 ビットインストーラーは FineWine 自身が導入しますが、本ファイルは別形式です。FineWine 標準の最新ランタイムを使うプレフィックスで試すか、64 ビット版やポータブル版 (zip) をお探しください。";
 "dialog.32bit_install_failed_title" = "「%@」のインストールに失敗しました";
 "dialog.32bit_install_failed_msg" = "このインストーラーは 32 ビットプログラムであり、FineWine がスクリプトを自己実行しようとしましたが失敗しました:\n\n%@";
 "dialog.dead_shortcut_title" = "ショートカットが無効です";
@@ -645,3 +645,5 @@
 "steam.err_no_runtime" = "FineWine のランタイムに Steam ブリッジがありません。FineWine をアップデートしてからもう一度お試しください。";
 "steam.err_valve_download" = "Steam の Windows クライアントファイルを Valve からダウンロードできませんでした（%@）。インターネット接続を確認してもう一度お試しください。";
 "steam.err_valve_checksum" = "Valve から取得した“%@”は FineWine が想定するファイルではないため、使用しませんでした。";
+"steam.prefix_pill" = "Steam プレフィックス";
+"steam.prefix_pill_help" = "Steam から起動したゲーム用に FineWine が作成したプレフィックスです（Steam アプリ %@）。Steam の「プレイ」ボタンがこれを使います。";

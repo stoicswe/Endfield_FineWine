@@ -781,7 +781,18 @@ final class AppModel: ObservableObject {
 
     /// Runs an installer, then looks for the programs it added.
     func runInstaller(_ url: URL, in prefix: Prefix) {
-        if WindowsExecutable.is32BitProgram(url) { return install32Bit(url, in: prefix) }
+        // A 32-bit installer made with NSIS is carried out by FineWine itself, as before. Any
+        // other 32-bit program is run when the prefix's runtime can run 32-bit programs, and
+        // explained when it cannot.
+        if WindowsExecutable.is32BitProgram(url) {
+            let runsIt = (try? service.runtime(for: prefix))?.runs32BitPrograms == true
+            if !runsIt || NSISArchive.isNSISInstaller(url) { return install32Bit(url, in: prefix) }
+        }
+        startInstaller(url, in: prefix)
+    }
+
+    /// Starts the installer as a Windows program.
+    private func startInstaller(_ url: URL, in prefix: Prefix) {
         let box = PIDBox()
         let prefixID = prefix.id
         let status = startingStatus(url.deletingPathExtension().lastPathComponent, in: prefix)
@@ -798,9 +809,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// A 32-bit program cannot run in FineWine's runtime. Most installers are 32-bit all the
-    /// same, whatever they install; one made with NSIS is carried out by FineWine itself, from
-    /// the script inside it. Anything else is explained to the user.
+    /// Most installers are 32-bit, whatever they install. One made with NSIS is carried out by
+    /// FineWine itself, from the script inside it; if that fails and the runtime runs 32-bit
+    /// programs, the installer is started instead. With a runtime that cannot run 32-bit
+    /// programs, any other installer is explained to the user.
     private func install32Bit(_ url: URL, in prefix: Prefix) {
         let name = url.deletingPathExtension().lastPathComponent
         guard NSISArchive.isNSISInstaller(url) else {
@@ -824,6 +836,12 @@ final class AppModel: ObservableObject {
             switch outcome {
             case .failure(let error):
                 StatusSplash.shared.hide(token)
+                // A runtime that runs 32-bit programs lets the installer do the work itself.
+                if let current = self.prefix(prefixID),
+                   (try? self.service.runtime(for: current))?.runs32BitPrograms == true {
+                    startInstaller(url, in: current)
+                    return
+                }
                 alert = AppAlert(title: tr("dialog.32bit_install_failed_title", name),
                                  message: tr("dialog.32bit_install_failed_msg", error.localizedDescription))
                 openMainWindow()

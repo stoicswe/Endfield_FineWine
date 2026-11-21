@@ -65,6 +65,17 @@ struct MainWindow: View {
                             Label(model.placeName(prefix.place), systemImage: model.placeSymbol(prefix.place))
                                 .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                                 .help(l10n.tr("drive.stored_on", model.placeName(prefix.place)))
+                            if let appID = prefix.metadata.steamAppID {
+                                // made by the Steam tool for a game in the Steam library
+                                Text(l10n.tr("steam.prefix_pill"))
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(Look.accent)
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Look.accent.opacity(0.15), in: Capsule())
+                                    .help(l10n.tr("steam.prefix_pill_help", appID))
+                            }
                         }
                         Spacer()
                         if let size = model.sizeText(for: prefix) {

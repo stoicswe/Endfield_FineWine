@@ -213,9 +213,9 @@ else
   else
     fail "could not build tests/runtime/memtrace.c"; tail -n 3 "$WORK/memtrace-build.log"
   fi
-  # 32-bit programs cannot run here (no memory below 4 GB). An installer that starts the 32-bit
-  # setup program of a runtime Wine has built in must see it succeed; any other 32-bit program
-  # must still fail to start, and say so.
+  # An installer that starts the 32-bit setup program of a runtime Wine has built in must see
+  # it succeed without it running (a stand-in runs). Any other 32-bit program runs when the
+  # runtime has a 32-bit side, and otherwise must fail to start and say so.
   MINGW32="$REPO/build/llvm-mingw/bin/i686-w64-mingw32-clang"
   if [ -x "$MINGW32" ] && mkdir -p "$WORK/redist" \
      && "$MINGW32" -O1 -o "$WORK/redist/vc_redist.x64.exe" "$REPO/tests/runtime/x64-hello.c" >"$WORK/redist-build.log" 2>&1 \
@@ -223,7 +223,8 @@ else
      && "$MINGW" -O1 -municode -o "$WORK/redist/start.exe" "$REPO/tests/runtime/start-and-wait.c" >>"$WORK/redist-build.log" 2>&1; then
     one="$("$RT/bin/wine" "$WORK/redist/start.exe" vc_redist.x64.exe </dev/null 2>/dev/null | tr -d '\r')"
     two="$("$RT/bin/wine" "$WORK/redist/start.exe" other32.exe </dev/null 2>/dev/null | tr -d '\r')"
-    case "$one|$two" in "started, exit code 0|could not start"*) pass "32-bit setup programs of built-in runtimes are reported as installed; other 32-bit programs fail to start" ;;
+    if [ -f "$RT/lib/wine/i386-windows/ntdll.dll" ]; then other="hello from x64"; said="run"; else other="could not start"; said="fail to start"; fi
+    case "$one|$two" in "started, exit code 0|$other"*) pass "32-bit setup programs of built-in runtimes are reported as installed; other 32-bit programs $said" ;;
       *) fail "32-bit stand-in: runtime setup gave '$one', another 32-bit program gave '$two'" ;; esac
   else
     echo "  - 32-bit stand-in check skipped: could not build its test programs"
@@ -857,6 +858,75 @@ if [ -x "$MINGW" ] && "$MINGW" -O1 -o "$WORK/audio-follow.exe" "$REPO/tests/runt
   esac
 else
   echo "  - audio following the output device not checked: no llvm-mingw, or the test did not build"
+fi
+
+# 32-bit programs. macOS gives an arm64 process no memory below 4 GB, so a 32-bit program's
+# 4 GB are a window higher up (patches/runtime/0043, patches/fex/0011). The suite covers what
+# that touches: memory, threads, exceptions, code written at run time, window messages, a small
+# window with controls shown for a moment, drawing, and starting another 32-bit program.
+MINGW32="$REPO/build/llvm-mingw/bin/i686-w64-mingw32-clang"
+export WINEPREFIX="$WORK/pfx1"
+if [ ! -f "$RT/lib/wine/aarch64-windows/xtajit.dll" ] || [ ! -f "$RT/lib/wine/i386-windows/ntdll.dll" ]; then
+  echo "  - 32-bit checks skipped: this runtime has no 32-bit side (scripts/build-fex.sh and build-finewine-runtime.sh)"
+elif [ ! -x "$MINGW32" ]; then
+  echo "  - 32-bit checks skipped: no llvm-mingw in build/ (scripts/build-fex.sh toolchain)"
+elif "$MINGW32" -O1 -o "$WORK/suite32.exe" "$REPO/tests/runtime/suite32.c" -luser32 -lgdi32 -ladvapi32 >"$WORK/suite32-build.log" 2>&1; then
+  if [ -f "$WINEPREFIX/drive_c/windows/syswow64/kernel32.dll" ]; then
+    pass "a new prefix gets its 32-bit system folder ($(ls "$WINEPREFIX/drive_c/windows/syswow64" | wc -l | tr -d ' ') files)"
+  else fail "a new prefix has no 32-bit system folder (syswow64)"; fi
+  out="$(WINEMSYNC=0 "$RT/bin/wine" "$WORK/suite32.exe" </dev/null 2>/dev/null | tr -d '\r')"
+  case "$out" in *"
+0 failure(s)") pass "32-bit programs: $(echo "$out" | grep -c '^ok ') checks of memory, threads, exceptions, generated code, window messages, drawing, child processes" ;;
+    *) fail "32-bit suite:"; echo "$out" | grep -v '^ok ' | tail -n 8 ;; esac
+  # MSync is decided when a prefix's server starts, so the server is stopped first.
+  "$RT/bin/wineserver" -k 2>/dev/null; "$RT/bin/wineserver" -w 2>/dev/null
+  out="$(WINEMSYNC=1 "$RT/bin/wine" "$WORK/suite32.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+  case "$out" in "0 failure(s)") pass "32-bit programs: the same with MSync on" ;;
+    *) fail "32-bit suite with MSync on: $out" ;; esac
+  "$RT/bin/wineserver" -k 2>/dev/null; "$RT/bin/wineserver" -w 2>/dev/null
+  out="$("$RT/bin/wine" 'C:\windows\syswow64\cmd.exe' /c 'echo %PROCESSOR_ARCHITECTURE%' </dev/null 2>/dev/null | tr -d '\r')"
+  case "$out" in x86) pass "the 32-bit command prompt runs and sees an x86 processor" ;;
+    *) fail "32-bit cmd.exe printed: $out" ;; esac
+  # Direct3D 11 from a 32-bit program, through DXMT's 32-bit Windows side: off screen, then
+  # into a window (a small one appears for a moment).
+  if [ ! -f "$RT/lib/dxmt/i386-windows/d3d11.dll" ]; then
+    echo "  - 32-bit Direct3D 11 checks skipped: DXMT has no 32-bit side in this runtime (scripts/build-dxmt.sh build install)"
+  elif "$MINGW32" -O1 -o "$WORK/d3d-32.exe" "$REPO/tests/runtime/d3d11-clear.c" -ld3d11 -ldxgi -ldxguid -luuid >"$WORK/d3d32-build.log" 2>&1 \
+       && "$MINGW32" -O1 -o "$WORK/d3dwin-32.exe" "$REPO/tests/runtime/d3d11-window.c" -ld3d11 -ldxgi -ldxguid -luuid >>"$WORK/d3d32-build.log" 2>&1; then
+    out="$(WINEDLLPATH="$RT/lib/dxmt" "$RT/bin/wine" "$WORK/d3d-32.exe" </dev/null 2>/dev/null | tr -d '\r')"
+    case "$out" in *"d3d11-clear: ok"*) pass "Direct3D 11 on Metal, 32-bit program ($(echo "$out" | sed -n 's/^adapter: //p'))" ;;
+      *) fail "Direct3D 11 from a 32-bit program: $(echo "$out" | tail -n 1)" ;; esac
+    out="$(WINEDLLPATH="$RT/lib/dxmt" "$RT/bin/wine" "$WORK/d3dwin-32.exe" 0 0 </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$out" in "d3d11-window: ok") pass "Direct3D 11 presents into a window from a 32-bit program" ;;
+      *) fail "Direct3D 11 could not present into a window from a 32-bit program: '$out'" ;; esac
+  else
+    fail "could not build the Direct3D 11 test programs as 32-bit"; tail -n 3 "$WORK/d3d32-build.log"
+  fi
+  # Direct3D 9 from a 32-bit program, which is what most 32-bit games use. It goes through
+  # WineD3D's OpenGL renderer and Wine's OpenGL call layer (patches/runtime/0044): a device and a
+  # clear, then buffers, a texture, a draw from memory, a read-back and presenting into a window
+  # (a small one appears for a moment). The OpenGL program checks the arguments that are an
+  # address or an offset into a buffer; it and the drawing test are also run as x64.
+  if "$MINGW32" -O1 -o "$WORK/d3d9-32.exe" "$REPO/tests/runtime/d3d9-clear.c" -ld3d9 >"$WORK/d3d9-32-build.log" 2>&1 \
+     && "$MINGW32" -O1 -o "$WORK/d3d9draw-32.exe" "$REPO/tests/runtime/d3d9-draw.c" -ld3d9 >>"$WORK/d3d9-32-build.log" 2>&1 \
+     && "$MINGW32" -O1 -o "$WORK/glo-32.exe" "$REPO/tests/runtime/gl-buffer-offsets.c" -lopengl32 -lgdi32 >>"$WORK/d3d9-32-build.log" 2>&1 \
+     && "$REPO/build/llvm-mingw/bin/x86_64-w64-mingw32-clang" -O1 -o "$WORK/d3d9draw-x64.exe" "$REPO/tests/runtime/d3d9-draw.c" -ld3d9 >>"$WORK/d3d9-32-build.log" 2>&1 \
+     && "$REPO/build/llvm-mingw/bin/x86_64-w64-mingw32-clang" -O1 -o "$WORK/glo-x64.exe" "$REPO/tests/runtime/gl-buffer-offsets.c" -lopengl32 -lgdi32 >>"$WORK/d3d9-32-build.log" 2>&1; then
+    last(){ "$RT/bin/wine" "$1" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1; }
+    out="$(last "$WORK/d3d9-32.exe")"
+    case "$out" in "d3d9-clear: ok") pass "Direct3D 9, 32-bit program: device, clear, read back" ;;
+      *) fail "Direct3D 9 from a 32-bit program: '$out'" ;; esac
+    one="$(last "$WORK/d3d9draw-x64.exe")"; two="$(last "$WORK/d3d9draw-32.exe")"
+    case "$one|$two" in "d3d9-draw: ok|d3d9-draw: ok") pass "Direct3D 9 draws from buffers, a texture and memory, and presents into a window: x64 and 32-bit" ;;
+      *) fail "Direct3D 9 drawing (x64: '$one', 32-bit: '$two')" ;; esac
+    one="$(last "$WORK/glo-x64.exe")"; two="$(last "$WORK/glo-32.exe")"
+    case "$one|$two" in "gl-buffer-offsets: ok|gl-buffer-offsets: ok") pass "OpenGL arguments that are an address or a buffer offset: x64 and 32-bit" ;;
+      *) fail "OpenGL addresses and buffer offsets (x64: '$one', 32-bit: '$two')" ;; esac
+  else
+    fail "could not build the Direct3D 9 and OpenGL test programs"; tail -n 3 "$WORK/d3d9-32-build.log"
+  fi
+else
+  fail "could not build tests/runtime/suite32.c"; tail -n 3 "$WORK/suite32-build.log"
 fi
 
 export WINEPREFIX="$WORK/pfx2" WINEMSYNC=1 WINEDEBUG=-all

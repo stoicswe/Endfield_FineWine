@@ -419,15 +419,27 @@ public struct PrefixService {
     @discardableResult
     public func refreshEmulator(in prefix: Prefix, from runtime: WineRuntime) -> Bool {
         let fm = FileManager.default
-        let source = runtime.root.appendingPathComponent("lib/wine/aarch64-windows/xtajit64.dll")
-        let target = prefix.directory.appendingPathComponent("drive_c/windows/system32/xtajit64.dll")
-        guard fm.fileExists(atPath: source.path), fm.fileExists(atPath: target.path),
-              !fm.contentsEqual(atPath: source.path, andPath: target.path) else { return false }
-        let staging = target.appendingPathExtension("new")
-        try? fm.removeItem(at: staging)
-        guard (try? fm.copyItem(at: source, to: staging)) != nil,
-              (try? fm.replaceItemAt(target, withItemAt: staging)) != nil else { return false }
-        return true
+        let system32 = prefix.directory.appendingPathComponent("drive_c/windows/system32")
+        var changed = false
+        // xtajit64.dll runs x64 programs, xtajit.dll 32-bit ones. The second is also put into
+        // a prefix made before the runtime had it, once Wine has given the prefix its 32-bit
+        // system folder (which it does by itself when the runtime changes).
+        for (name, addIfMissing) in [("xtajit64.dll", false), ("xtajit.dll", true)] {
+            let source = runtime.root.appendingPathComponent("lib/wine/aarch64-windows/\(name)")
+            let target = system32.appendingPathComponent(name)
+            guard fm.fileExists(atPath: source.path), fm.fileExists(atPath: system32.path) else { continue }
+            let present = fm.fileExists(atPath: target.path)
+            guard present ? !fm.contentsEqual(atPath: source.path, andPath: target.path) : addIfMissing else { continue }
+            let staging = target.appendingPathExtension("new")
+            try? fm.removeItem(at: staging)
+            guard (try? fm.copyItem(at: source, to: staging)) != nil else { continue }
+            if present {
+                if (try? fm.replaceItemAt(target, withItemAt: staging)) != nil { changed = true }
+            } else if (try? fm.moveItem(at: staging, to: target)) != nil {
+                changed = true
+            }
+        }
+        return changed
     }
 
     // MARK: The Windows desktop

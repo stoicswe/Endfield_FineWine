@@ -28,7 +28,7 @@ Project website: **[endfield-finewine.web.app](https://endfield-finewine.web.app
 
 ## FineWine (standalone)
 
-A menu bar app that manages Wine prefixes, runs the programs installed in them and makes a Mac app for each one. Its Wine runtime is built from this repository: native ARM64 Wine, FEX for x64 programs, DXMT for Direct3D 10/11 on Metal and MoltenVK for Vulkan and Direct3D 12.
+A menu bar app that manages Wine prefixes, runs the programs installed in them and makes a Mac app for each one. Its Wine runtime is built from this repository: native ARM64 Wine, FEX for x64 and 32-bit programs, DXMT for Direct3D 10/11 on Metal and MoltenVK for Vulkan and Direct3D 12.
 
 How to build it, how it is put together, and the licences and upstream projects of everything inside it: **[finewine-app/README.md](finewine-app/README.md)**.
 
@@ -43,7 +43,7 @@ How to build it, how it is put together, and the licences and upstream projects 
 Already have the game in a CrossOver bottle? **Import CrossOver Bottle…** makes a FineWine prefix from a copy of it; the bottle itself is not changed.
 
 > [!NOTE]
-> FineWine cannot run 32-bit Windows programs. It installs the common 32-bit installers itself and says so for the rest; see the [detailed readme](finewine-app/README.md).
+> 32-bit Windows programs run too, which is new: installers and ordinary programs have been tried, 32-bit games have not. See the [detailed readme](finewine-app/README.md).
 
 ---
 

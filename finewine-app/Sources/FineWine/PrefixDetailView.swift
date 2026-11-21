@@ -72,6 +72,11 @@ struct PrefixDetailView: View {
                             Pill(text: l10n.tr("detail.no_runtime"), symbol: "exclamationmark.triangle", tint: .orange)
                         }
                         if let profile = model.profile(for: prefix) { Pill(text: profile.name, symbol: "gamecontroller") }
+                        if let appID = prefix.metadata.steamAppID {
+                            // made by the Steam tool for a game in the Steam library
+                            Pill(text: l10n.tr("steam.prefix_pill"), symbol: "gamecontroller.fill", tint: Look.accent)
+                                .help(l10n.tr("steam.prefix_pill_help", appID))
+                        }
                         if let size = model.sizeText(for: prefix) {
                             Pill(text: size, symbol: "internaldrive").help(l10n.tr("prefix.size_help"))
                         }

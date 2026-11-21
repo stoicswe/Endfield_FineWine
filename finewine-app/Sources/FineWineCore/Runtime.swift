@@ -216,6 +216,14 @@ public struct WineRuntime: Equatable, Identifiable, Sendable {
     public static let gameLoaderName = "FineWine Game.app/Contents/MacOS/wine-game"
 
     /// Whether this runtime has that copy. Without it programs still run, just never in Game Mode.
+    /// Whether the runtime can run 32-bit Windows programs: it has the 32-bit Windows side and
+    /// the emulator's 32-bit front end (runtime patch 0043, FEX patch 0011).
+    public var runs32BitPrograms: Bool {
+        let fm = FileManager.default
+        return fm.fileExists(atPath: root.appendingPathComponent("lib/wine/i386-windows/ntdll.dll").path)
+            && fm.fileExists(atPath: root.appendingPathComponent("lib/wine/aarch64-windows/xtajit.dll").path)
+    }
+
     public var hasGameLoader: Bool {
         FileManager.default.isExecutableFile(
             atPath: root.appendingPathComponent("lib/wine/aarch64-unix/\(Self.gameLoaderName)").path)

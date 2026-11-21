@@ -1,0 +1,702 @@
+32-bit guests in a window above 4 GB (FineWine, macOS)
+
+Local patch. FEX does not accept AI-written code: this is not to be sent upstream.
+
+macOS gives a native arm64 process no memory below 4 GB, so a 32-bit guest cannot have the
+addresses it uses. Its 4 GB are a window at FEX_GUEST_BASE instead (see the Wine side,
+patches/runtime/0043). The base is a multiple of 4 GB: a host address in the window cut to 32
+bits is the guest address, and the other way round is OR-ing the base in.
+
+Only the WOW64 build (32-bit guests on an ARM64 Wine) has a base. In the ARM64EC build, which
+runs x64 programs, FEX_GUEST_BASE is 0 and every change below compiles to what was there before.
+
+- FEXCore/include/FEXCore/Core/GuestBase.h: the base, GuestPtr() and GuestAddr().
+- Arm64 JIT: every guest memory operation forms its host address in a scratch register (the
+  guest address zero-extended, with the base). x19 and x24 are taken out of the 32-bit register
+  pool for that. Push, Pop, MemSet and MemCpy, which return addresses, keep those as guest ones.
+- Core: guest code is read through the window when it is decoded, checked and hashed.
+- WOW64 module: the syscall bridge reads the guest's stack and return address through the
+  window; guest addresses from the core become host addresses for the code tracker and back.
+
+diff --git a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
+--- a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
++++ b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
+@@ -245,7 +245,7 @@
+     REG_AF,
+   };
+ 
+-  constexpr std::array<ARMEmitter::Register, 14> RA = {
++  constexpr std::array<ARMEmitter::Register, 12> RA = {
+     // All these callee saved
+     ARMEmitter::Reg::r20,
+     ARMEmitter::Reg::r21,
+@@ -263,8 +263,8 @@
+     ARMEmitter::Reg::r29,
+     ARMEmitter::Reg::r30,
+ 
+-    ARMEmitter::Reg::r24,
+-    ARMEmitter::Reg::r19,
++    // FineWine 32-bit: r19 and r24 are kept out of allocation, they hold host
++    // addresses of guest memory (GUEST_ADDR_TMP1/2).
+   };
+ 
+   constexpr std::array<ARMEmitter::Register, 7> NotPreserved_Dynamic = {
+diff --git a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.h b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.h
+--- a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.h
++++ b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.h
+@@ -1,5 +1,6 @@
+ // SPDX-License-Identifier: MIT
+ #pragma once
++#include <FEXCore/Core/GuestBase.h>
+ 
+ #include <FEXCore/Config/Config.h>
+ 
+@@ -46,6 +47,10 @@
+ constexpr auto REG_AF = ARMEmitter::Reg::r27;
+ 
+ constexpr auto REG_CALLRET_SP = ARMEmitter::XReg::x25;
++
++// FineWine 32-bit: scratch registers for the host address of a guest memory access.
++constexpr auto GUEST_ADDR_TMP1 = ARMEmitter::XReg::x19;
++constexpr auto GUEST_ADDR_TMP2 = ARMEmitter::XReg::x24;
+ 
+ // Vector temporaries
+ constexpr auto VTMP1 = ARMEmitter::VReg::v0;
+@@ -67,6 +72,11 @@
+ 
+ constexpr auto REG_CALLRET_SP = ARMEmitter::XReg::x17;
+ 
++// FineWine 32-bit: only the 32-bit (WOW64) build has a guest base, so these are never used
++// in this one; they are named so the shared code compiles.
++constexpr auto GUEST_ADDR_TMP1 = TMP1;
++constexpr auto GUEST_ADDR_TMP2 = TMP2;
++
+ // Vector temporaries
+ constexpr auto VTMP1 = ARMEmitter::VReg::v16;
+ constexpr auto VTMP2 = ARMEmitter::VReg::v17;
+diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -8,6 +8,7 @@
+ $end_info$
+ */
+ 
++#include <FEXCore/Core/GuestBase.h>
+ #include <cstdint>
+ #ifdef ZYDIS_DISASSEMBLER
+ #include <Zydis/Zydis.h>
+@@ -515,7 +516,7 @@
+ }
+ 
+ bool ContextImpl::CheckIfBlockIsCacheable(FEXCore::Core::InternalThreadState& Thread, uint64_t GuestRIP, uint64_t MaxInst) {
+-  return Thread.FrontendDecoder->CheckIfCacheable(Thread, reinterpret_cast<const uint8_t*>(GuestRIP), GuestRIP, MaxInst);
++  return Thread.FrontendDecoder->CheckIfCacheable(Thread, FEXCore::GuestPtr<const uint8_t>(GuestRIP), GuestRIP, MaxInst);
+ }
+ 
+ ContextImpl::GenerateIRResult
+@@ -543,7 +544,7 @@
+   }
+ 
+   if (!HasCustomIR) {
+-    const auto* GuestCode = reinterpret_cast<const uint8_t*>(GuestRIP);
++    const auto* GuestCode = FEXCore::GuestPtr<const uint8_t>(GuestRIP);
+ 
+     Thread->FrontendDecoder->DecodeLoop(GuestCode);
+ 
+@@ -611,7 +612,7 @@
+ 
+ #ifdef ZYDIS_DISASSEMBLER
+         if (FEXCore::Config::Get_X86DISASSEMBLE()) {
+-          const uint8_t* InstBytes = reinterpret_cast<const uint8_t*>(InstAddress);
++          const uint8_t* InstBytes = FEXCore::GuestPtr<const uint8_t>(InstAddress);
+           ZydisDisassembledInstruction ZydisInst;
+           if (ZYAN_SUCCESS(ZydisDisassembleIntel(ZydisMachineMode, InstAddress, InstBytes, DecodedInfo->InstSize, &ZydisInst))) {
+             LogMan::Msg::IFmt("    {:#x}: {}", InstAddress, ZydisInst.text);
+@@ -642,7 +643,7 @@
+         }
+ 
+         if (Config.SMCChecks == FEXCore::Config::CONFIG_SMC_FULL || Block.ForceFullSMCDetection) {
+-          auto ExistingCodePtr = reinterpret_cast<uint8_t*>(Block.Entry + BlockInstructionsLength);
++          auto ExistingCodePtr = FEXCore::GuestPtr<uint8_t>(Block.Entry + BlockInstructionsLength);
+           auto InstAddressReg = Thread->OpDispatcher->_EntrypointOffset(GPRSize, InstAddress - GuestRIP);
+ 
+           auto Value = FEXCore::Utils::crc32(ExistingCodePtr, DecodedInfo->InstSize);
+@@ -1181,9 +1182,9 @@
+     auto lk = GuardSignalDeferringSection(CTX->CodeInvalidationMutex, Thread);
+ 
+     if (Size == 8) {
+-      *reinterpret_cast<uint64_t*>(Address) = Value;
++      *FEXCore::GuestPtr<uint64_t>(Address) = Value;
+     } else if (Size == 4) {
+-      *reinterpret_cast<uint32_t*>(Address) = Value;
++      *FEXCore::GuestPtr<uint32_t>(Address) = Value;
+     } else {
+       ERROR_AND_DIE_FMT("Unexpected write size for backpatcher: {}", Size);
+     }
+diff --git a/FEXCore/Source/Interface/Core/JIT/AtomicOps.cpp b/FEXCore/Source/Interface/Core/JIT/AtomicOps.cpp
+--- a/FEXCore/Source/Interface/Core/JIT/AtomicOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/AtomicOps.cpp
+@@ -20,7 +20,7 @@
+   auto Expected1 = GetReg(Op->ExpectedHi);
+   auto Desired0 = GetReg(Op->DesiredLo);
+   auto Desired1 = GetReg(Op->DesiredHi);
+-  auto MemSrc = GetReg(Op->Addr);
++  auto MemSrc = GuestMemBase(GetReg(Op->Addr));
+ 
+   const auto EmitSize = IROp->ElementSize == IR::OpSize::i64Bit ? ARMEmitter::Size::i64Bit : ARMEmitter::Size::i32Bit;
+   if (CTX->HostFeatures.SupportsAtomics) {
+@@ -99,7 +99,7 @@
+ 
+   auto Expected = GetReg(Op->Expected);
+   auto Desired = GetReg(Op->Desired);
+-  auto MemSrc = GetReg(Op->Addr);
++  auto MemSrc = GuestMemBase(GetReg(Op->Addr));
+   auto Dst = GetReg(Node);
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+@@ -146,7 +146,7 @@
+                                                                                                                                  "d CAS "
+                                                                                                                                  "size");
+ 
+-  auto MemSrc = GetReg(Op->Addr);
++  auto MemSrc = GuestMemBase(GetReg(Op->Addr));
+   auto Src = GetReg(Op->Value);
+ 
+   const auto EmitSize = ConvertSize(IROp);
+@@ -172,7 +172,7 @@
+   const auto EmitSize = ConvertSize(IROp);
+   const auto SubEmitSize = ConvertSubRegSize8(IROp->Size);
+ 
+-  auto MemSrc = GetReg(Op->Addr);
++  auto MemSrc = GuestMemBase(GetReg(Op->Addr));
+   auto Src = GetReg(Op->Value);
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+@@ -193,7 +193,7 @@
+   const auto EmitSize = ConvertSize(IROp);
+   const auto SubEmitSize = ConvertSubRegSize8(IROp->Size);
+ 
+-  auto MemSrc = GetReg(Op->Addr);
++  auto MemSrc = GuestMemBase(GetReg(Op->Addr));
+   auto Src = GetReg(Op->Value);
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+@@ -215,7 +215,7 @@
+   const auto EmitSize = ConvertSize(IROp);
+   const auto SubEmitSize = ConvertSubRegSize8(IROp->Size);
+ 
+-  auto MemSrc = GetReg(Op->Addr);
++  auto MemSrc = GuestMemBase(GetReg(Op->Addr));
+   auto Src = GetReg(Op->Value);
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+@@ -237,7 +237,7 @@
+   const auto EmitSize = ConvertSize(IROp);
+   const auto SubEmitSize = ConvertSubRegSize8(IROp->Size);
+ 
+-  auto MemSrc = GetReg(Op->Addr);
++  auto MemSrc = GuestMemBase(GetReg(Op->Addr));
+   auto Src = GetReg(Op->Value);
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+@@ -258,7 +258,7 @@
+   const auto EmitSize = ConvertSize(IROp);
+   const auto SubEmitSize = ConvertSubRegSize8(IROp->Size);
+ 
+-  auto MemSrc = GetReg(Op->Addr);
++  auto MemSrc = GuestMemBase(GetReg(Op->Addr));
+   auto Src = GetReg(Op->Value);
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+@@ -279,7 +279,7 @@
+   const auto EmitSize = ConvertSize(IROp);
+   const auto SubEmitSize = ConvertSubRegSize8(IROp->Size);
+ 
+-  auto MemSrc = GetReg(Op->Addr);
++  auto MemSrc = GuestMemBase(GetReg(Op->Addr));
+   auto Src = GetReg(Op->Value);
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+@@ -300,7 +300,7 @@
+   const auto EmitSize = ConvertSize(IROp);
+   const auto SubEmitSize = ConvertSubRegSize8(IROp->Size);
+ 
+-  auto MemSrc = GetReg(Op->Addr);
++  auto MemSrc = GuestMemBase(GetReg(Op->Addr));
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+     // Use a CAS loop to avoid needing to emulate unaligned LLSC atomics
+diff --git a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
+--- a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
+@@ -344,7 +344,7 @@
+ 
+ DEF_OP(ValidateCode) {
+   auto Op = IROp->C<IR::IROp_ValidateCode>();
+-  auto Base = GetReg(Op->Address).X();
++  auto Base = GuestMemBase(GetReg(Op->Address)).X();
+   int len = Op->CodeLength;
+ 
+   const auto Dst = GetReg(Node);
+diff --git a/FEXCore/Source/Interface/Core/JIT/JITClass.h b/FEXCore/Source/Interface/Core/JIT/JITClass.h
+--- a/FEXCore/Source/Interface/Core/JIT/JITClass.h
++++ b/FEXCore/Source/Interface/Core/JIT/JITClass.h
+@@ -321,6 +321,9 @@
+   }
+ 
+   [[nodiscard]]
++  // FineWine 32-bit: the register to use as the base of a guest memory access. With a
++  // guest base, that is a scratch register holding the address moved into the window.
++  ARMEmitter::Register GuestMemBase(ARMEmitter::Register Addr, ARMEmitter::XRegister Tmp = GUEST_ADDR_TMP1);
+   ARMEmitter::ExtendedMemOperand GenerateMemOperand(IR::OpSize AccessSize, ARMEmitter::Register Base, IR::OrderedNodeWrapper Offset,
+                                                     IR::MemOffsetType OffsetType, uint8_t OffsetScale);
+ 
+diff --git a/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp b/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
+--- a/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
+@@ -582,6 +582,16 @@
+       stp<ARMEmitter::IndexType::OFFSET>(VTMP1.Q(), VTMP1.Q(), STATE.R(), Op->Offset + i);
+     }
+   }
++}
++
++ARMEmitter::Register Arm64JITCore::GuestMemBase(ARMEmitter::Register Addr, ARMEmitter::XRegister Tmp) {
++  if (!FEX_GUEST_BASE) {
++    return Addr;
++  }
++  // Cut to 32 bits (a 32-bit guest's address wraps there), then into the window.
++  mov(ARMEmitter::Size::i32Bit, Tmp.R(), Addr);
++  orr(ARMEmitter::Size::i64Bit, Tmp.R(), Tmp.R(), FEX_GUEST_BASE);
++  return Tmp.R();
+ }
+ 
+ ARMEmitter::ExtendedMemOperand Arm64JITCore::GenerateMemOperand(
+@@ -705,7 +715,7 @@
+   const auto Op = IROp->C<IR::IROp_LoadMem>();
+   const auto OpSize = IROp->Size;
+ 
+-  const auto MemReg = GetReg(Op->Addr);
++  const auto MemReg = GuestMemBase(GetReg(Op->Addr));
+   const auto MemSrc = GenerateMemOperand(OpSize, MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale);
+ 
+   if (Op->Class == IR::RegClass::GPR) {
+@@ -740,7 +750,7 @@
+ 
+ DEF_OP(LoadMemPair) {
+   const auto Op = IROp->C<IR::IROp_LoadMemPair>();
+-  const auto Addr = GetReg(Op->Addr);
++  const auto Addr = GuestMemBase(GetReg(Op->Addr));
+ 
+   if (Op->Class == IR::RegClass::GPR) {
+     const auto Dst1 = GetReg(Op->OutValue1);
+@@ -768,7 +778,7 @@
+   const auto Op = IROp->C<IR::IROp_LoadMemTSO>();
+   const auto OpSize = IROp->Size;
+ 
+-  const auto MemReg = GetReg(Op->Addr);
++  const auto MemReg = GuestMemBase(GetReg(Op->Addr));
+ 
+   if (Op->Class == IR::RegClass::GPR) {
+     LOGMAN_THROW_A_FMT(Op->Offset.IsInvalid() || CTX->HostFeatures.SupportsTSOImm9, "unexpected offset");
+@@ -866,7 +876,7 @@
+ 
+   const auto Dst = GetVReg(Node);
+   const auto MaskReg = GetVReg(Op->Mask);
+-  const auto MemReg = GetReg(Op->Addr);
++  const auto MemReg = GuestMemBase(GetReg(Op->Addr));
+ 
+   if (HostSupportsSVE128 || HostSupportsSVE256) {
+     const auto MemSrc = GenerateSVEMemOperand(OpSize, MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale);
+@@ -969,7 +979,7 @@
+ 
+   const auto RegData = GetVReg(Op->Data);
+   const auto MaskReg = GetVReg(Op->Mask);
+-  const auto MemReg = GetReg(Op->Addr);
++  const auto MemReg = GuestMemBase(GetReg(Op->Addr));
+   if (HostSupportsSVE128 || HostSupportsSVE256) {
+     const auto MemDst = GenerateSVEMemOperand(OpSize, MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale);
+ 
+@@ -1233,7 +1243,7 @@
+     if (BaseAddr.has_value() || OffsetScale != 1) {
+       ARMEmitter::Register AddrReg = TMP1;
+       if (BaseAddr.has_value()) {
+-        AddrReg = GetReg(Op->AddrBase);
++        AddrReg = GuestMemBase(GetReg(Op->AddrBase));
+       } else {
+         ///< OpcodeDispatcher didn't provide a Base address while SVE requires one.
+         LoadConstant(ARMEmitter::Size::i64Bit, AddrReg, 0);
+@@ -1368,7 +1378,7 @@
+ 
+   const auto Dst = GetVReg(Node);
+   const auto DstSrc = GetVReg(Op->DstSrc);
+-  const auto MemReg = GetReg(Op->Addr);
++  const auto MemReg = GuestMemBase(GetReg(Op->Addr));
+ 
+   LOGMAN_THROW_A_FMT(ElementSize == IR::OpSize::i8Bit || ElementSize == IR::OpSize::i16Bit || ElementSize == IR::OpSize::i32Bit ||
+                        ElementSize == IR::OpSize::i64Bit || ElementSize == IR::OpSize::i128Bit,
+@@ -1405,7 +1415,7 @@
+   const auto ElementSize = IROp->ElementSize;
+ 
+   const auto Value = GetVReg(Op->Value);
+-  const auto MemReg = GetReg(Op->Addr);
++  const auto MemReg = GuestMemBase(GetReg(Op->Addr));
+ 
+   LOGMAN_THROW_A_FMT(ElementSize == IR::OpSize::i8Bit || ElementSize == IR::OpSize::i16Bit || ElementSize == IR::OpSize::i32Bit ||
+                        ElementSize == IR::OpSize::i64Bit || ElementSize == IR::OpSize::i128Bit,
+@@ -1440,7 +1450,7 @@
+   const auto ElementSize = IROp->ElementSize;
+ 
+   const auto Dst = GetVReg(Node);
+-  const auto MemReg = GetReg(Op->Address);
++  const auto MemReg = GuestMemBase(GetReg(Op->Address));
+ 
+   LOGMAN_THROW_A_FMT(ElementSize == IR::OpSize::i8Bit || ElementSize == IR::OpSize::i16Bit || ElementSize == IR::OpSize::i32Bit ||
+                        ElementSize == IR::OpSize::i64Bit || ElementSize == IR::OpSize::i128Bit,
+@@ -1485,6 +1495,20 @@
+   const auto AddrSrc = GetReg(Op->Addr);
+   const auto Dst = GetReg(Node);
+ 
++  if (FEX_GUEST_BASE) {
++    // The store goes through the window; the new stack pointer stays a guest address.
++    const auto Host = GuestMemBase(AddrSrc);
++    switch (ValueSize) {
++    case 1: sturb(Src.W(), Host, -ValueSize); break;
++    case 2: sturh(Src.W(), Host, -ValueSize); break;
++    case 4: stur(Src.W(), Host, -ValueSize); break;
++    case 8: stur(Src.X(), Host, -ValueSize); break;
++    default: LOGMAN_MSG_A_FMT("Unhandled {} size: {}", __func__, ValueSize); break;
++    }
++    sub(ARMEmitter::Size::i32Bit, Dst, AddrSrc, ValueSize);
++    return;
++  }
++
+   bool NeedsMoveAfterwards = false;
+   if (Dst != AddrSrc) {
+     if (Dst == Src) {
+@@ -1570,6 +1594,17 @@
+   auto Src2 = GetReg(Op->Value2);
+   const auto Dst = GetReg(Op->Addr);
+ 
++  if (FEX_GUEST_BASE) {
++    const auto Host = GuestMemBase(Dst);
++    switch (ValueSize) {
++    case 4: stp<ARMEmitter::IndexType::OFFSET>(Src1.W(), Src2.W(), Host, -2 * ValueSize); break;
++    case 8: stp<ARMEmitter::IndexType::OFFSET>(Src1.X(), Src2.X(), Host, -2 * ValueSize); break;
++    default: LOGMAN_MSG_A_FMT("Unhandled {} size: {}", __func__, ValueSize); break;
++    }
++    sub(ARMEmitter::Size::i32Bit, Dst, Dst, 2 * ValueSize);
++    return;
++  }
++
+   switch (ValueSize) {
+   case 4: {
+     stp<ARMEmitter::IndexType::PRE>(Src1.W(), Src2.W(), Dst, -2 * ValueSize);
+@@ -1593,6 +1628,19 @@
+   const auto Dst = GetReg(Op->OutValue);
+ 
+   LOGMAN_THROW_A_FMT(Dst != Addr, "Invalid");
++
++  if (FEX_GUEST_BASE) {
++    const auto Host = GuestMemBase(Addr);
++    switch (Size) {
++    case 1: ldrb(Dst.W(), Host, 0); break;
++    case 2: ldrh(Dst.W(), Host, 0); break;
++    case 4: ldr(Dst.W(), Host, 0); break;
++    case 8: ldr(Dst.X(), Host, 0); break;
++    default: LOGMAN_MSG_A_FMT("Unhandled {} size: {}", __func__, Op->Size); break;
++    }
++    add(ARMEmitter::Size::i32Bit, Addr, Addr, Size);
++    return;
++  }
+ 
+   switch (Size) {
+   case 1: {
+@@ -1633,6 +1681,17 @@
+   LOGMAN_THROW_A_FMT(Dst1 != Addr && Dst2 != Addr, "Invalid");
+   LOGMAN_THROW_A_FMT(Dst1 != Dst2, "Invalid");
+ 
++  if (FEX_GUEST_BASE) {
++    const auto Host = GuestMemBase(Addr);
++    switch (Size) {
++    case 4: ldp<ARMEmitter::IndexType::OFFSET>(Dst1.W(), Dst2.W(), Host, 0); break;
++    case 8: ldp<ARMEmitter::IndexType::OFFSET>(Dst1.X(), Dst2.X(), Host, 0); break;
++    default: LOGMAN_MSG_A_FMT("Unhandled {} size: {}", __func__, Op->Size); break;
++    }
++    add(ARMEmitter::Size::i32Bit, Addr, Addr, 2 * Size);
++    return;
++  }
++
+   switch (Size) {
+   case 4: {
+     ldp<ARMEmitter::IndexType::POST>(Dst1.W(), Dst2.W(), Addr, 2 * Size);
+@@ -1653,7 +1712,7 @@
+   const auto Op = IROp->C<IR::IROp_StoreMem>();
+   const auto OpSize = IROp->Size;
+ 
+-  const auto MemReg = GetReg(Op->Addr);
++  const auto MemReg = GuestMemBase(GetReg(Op->Addr));
+   const auto MemSrc = GenerateMemOperand(OpSize, MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale);
+ 
+   if (Op->Class == IR::RegClass::GPR) {
+@@ -1707,7 +1766,7 @@
+   LOGMAN_THROW_A_FMT(HostSupportsSVE128 || HostSupportsSVE256, "StoreMemX87SVEOptPredicate needs SVE support");
+ 
+   const auto RegData = GetVReg(Op->Value);
+-  const auto MemReg = GetReg(Op->Addr);
++  const auto MemReg = GuestMemBase(GetReg(Op->Addr));
+   const auto MemDst = ARMEmitter::SVEMemOperand(MemReg.X(), 0);
+ 
+   switch (IROp->ElementSize) {
+@@ -1735,7 +1794,7 @@
+   const auto Op = IROp->C<IR::IROp_LoadMemX87SVEOptPredicate>();
+   const auto Dst = GetVReg(Node);
+   const auto Predicate = PRED_X87_SVEOPT;
+-  const auto MemReg = GetReg(Op->Addr);
++  const auto MemReg = GuestMemBase(GetReg(Op->Addr));
+ 
+   LOGMAN_THROW_A_FMT(HostSupportsSVE128 || HostSupportsSVE256, "LoadMemX87SVEOptPredicate needs SVE support");
+ 
+@@ -1765,7 +1824,7 @@
+ DEF_OP(StoreMemPair) {
+   const auto Op = IROp->C<IR::IROp_StoreMemPair>();
+   const auto OpSize = IROp->Size;
+-  const auto Addr = GetReg(Op->Addr);
++  const auto Addr = GuestMemBase(GetReg(Op->Addr));
+ 
+   if (Op->Class == IR::RegClass::GPR) {
+     const auto Src1 = GetZeroableReg(Op->Value1);
+@@ -1792,7 +1851,7 @@
+   const auto Op = IROp->C<IR::IROp_StoreMemTSO>();
+   const auto OpSize = IROp->Size;
+ 
+-  const auto MemReg = GetReg(Op->Addr);
++  const auto MemReg = GuestMemBase(GetReg(Op->Addr));
+ 
+   if (Op->Class == IR::RegClass::GPR) {
+     LOGMAN_THROW_A_FMT(Op->Offset.IsInvalid() || CTX->HostFeatures.SupportsTSOImm9, "unexpected offset");
+@@ -1895,6 +1954,11 @@
+     const auto Prefix = GetReg(Op->Prefix);
+     add(TMP2, Prefix.X(), MemReg.X());
+   }
++  if (FEX_GUEST_BASE) {
++    // The working pointer goes through the window; the final address is made from MemReg.
++    mov(ARMEmitter::Size::i32Bit, TMP2.R(), TMP2.R());
++    orr(ARMEmitter::Size::i64Bit, TMP2.R(), TMP2.R(), FEX_GUEST_BASE);
++  }
+ 
+   if (!DirectionIsInline) {
+     // Backward or forwards implementation depends on flag
+@@ -2129,6 +2193,12 @@
+   mov(TMP1, Length.X());
+   mov(TMP2, MemRegDest.X());
+   mov(TMP3, MemRegSrc.X());
++  if (FEX_GUEST_BASE) {
++    mov(ARMEmitter::Size::i32Bit, TMP2.R(), TMP2.R());
++    orr(ARMEmitter::Size::i64Bit, TMP2.R(), TMP2.R(), FEX_GUEST_BASE);
++    mov(ARMEmitter::Size::i32Bit, TMP3.R(), TMP3.R());
++    orr(ARMEmitter::Size::i64Bit, TMP3.R(), TMP3.R(), FEX_GUEST_BASE);
++  }
+ 
+   // TMP1 = Length
+   // TMP2 = Dest
+@@ -2409,7 +2479,7 @@
+ 
+   auto Op = IROp->C<IR::IROp_CacheLineClear>();
+ 
+-  auto MemReg = GetReg(Op->Addr);
++  auto MemReg = GuestMemBase(GetReg(Op->Addr));
+ 
+   // Clear dcache only
+   // icache doesn't matter here since the guest application shouldn't be calling clflush on JIT code.
+@@ -2439,7 +2509,7 @@
+ 
+   auto Op = IROp->C<IR::IROp_CacheLineClean>();
+ 
+-  auto MemReg = GetReg(Op->Addr);
++  auto MemReg = GuestMemBase(GetReg(Op->Addr));
+ 
+   // Clean dcache only
+   // check host cacheline size again x86_64 size to ensure at least 64 bytes are cleaned
+@@ -2458,7 +2528,7 @@
+ DEF_OP(CacheLineZero) {
+   auto Op = IROp->C<IR::IROp_CacheLineZero>();
+ 
+-  auto MemReg = GetReg(Op->Addr);
++  auto MemReg = GuestMemBase(GetReg(Op->Addr));
+ 
+   if (CTX->HostFeatures.SupportsCLZERO) {
+     // We can use this instruction directly
+@@ -2478,7 +2548,7 @@
+ 
+ DEF_OP(Prefetch) {
+   auto Op = IROp->C<IR::IROp_Prefetch>();
+-  const auto MemReg = GetReg(Op->Addr);
++  const auto MemReg = GuestMemBase(GetReg(Op->Addr));
+ 
+   // Access size is only ever handled as 8-byte. Even though it is accesssed as a cacheline.
+   const auto MemSrc = GenerateMemOperand(IR::OpSize::i64Bit, MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale);
+@@ -2523,7 +2593,7 @@
+   const auto Is128Bit = OpSize == IR::OpSize::i128Bit;
+ 
+   const auto Value = GetVReg(Op->Value);
+-  const auto MemReg = GetReg(Op->Addr);
++  const auto MemReg = GuestMemBase(GetReg(Op->Addr));
+   const auto Offset = Op->Offset;
+ 
+   if (Is256Bit) {
+@@ -2550,7 +2620,7 @@
+   const auto ValueLow = GetVReg(Op->ValueLow);
+   const auto ValueHigh = GetVReg(Op->ValueHigh);
+ 
+-  const auto MemReg = GetReg(Op->Addr);
++  const auto MemReg = GuestMemBase(GetReg(Op->Addr));
+   const auto Offset = Op->Offset;
+ 
+   stnp(ValueLow.Q(), ValueHigh.Q(), MemReg, Offset);
+@@ -2565,7 +2635,7 @@
+   const auto Is128Bit = OpSize == IR::OpSize::i128Bit;
+ 
+   const auto Dst = GetVReg(Node);
+-  const auto MemReg = GetReg(Op->Addr);
++  const auto MemReg = GuestMemBase(GetReg(Op->Addr));
+   const auto Offset = Op->Offset;
+ 
+   if (Is256Bit) {
+diff --git a/Source/Windows/Common/InvalidationTracker.cpp b/Source/Windows/Common/InvalidationTracker.cpp
+--- a/Source/Windows/Common/InvalidationTracker.cpp
++++ b/Source/Windows/Common/InvalidationTracker.cpp
+@@ -1,5 +1,7 @@
+ // SPDX-License-Identifier: MIT
+ 
++#include <FEXCore/Core/GuestBase.h>
++#include <algorithm>
+ #include <FEXCore/Utils/LogManager.h>
+ #include <FEXCore/Utils/TypeDefines.h>
+ #include <FEXCore/Utils/SignalScopeGuards.h>
+@@ -332,6 +334,19 @@
+ 
+ void InvalidationTracker::InvalidateIntervalInternalLocked(uint64_t Address, uint64_t Size) {
+   // NOTE: This assumes CodeInvalidationMutex is locked by the caller
++  if (FEX_GUEST_BASE) {
++    // FineWine 32-bit: this tracker works in host addresses, the core in guest ones. Only the
++    // part of the range that is inside the guest's window holds guest code.
++    const uint64_t WindowEnd = FEX_GUEST_BASE + (1ULL << 32);
++    const uint64_t End = Size > ~0ULL - Address ? ~0ULL : Address + Size;
++    const uint64_t ClippedStart = std::max<uint64_t>(Address, FEX_GUEST_BASE);
++    const uint64_t ClippedEnd = std::min<uint64_t>(End, WindowEnd);
++    if (ClippedStart >= ClippedEnd) {
++      return;
++    }
++    Address = ClippedStart - FEX_GUEST_BASE;
++    Size = ClippedEnd - ClippedStart;
++  }
+   CTX.InvalidateCodeBuffersCodeRange(Address, Size);
+   for (auto Thread : Threads) {
+     CTX.InvalidateThreadCachedCodeRange(Thread.second, Address, Size);
+diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
+--- a/Source/Windows/WOW64/Module.cpp
++++ b/Source/Windows/WOW64/Module.cpp
+@@ -8,6 +8,7 @@
+ 
+ // Thanks to André Zwing, whose ideas from https://github.com/AndreRH/hangover this code is based upon
+ 
++#include <FEXCore/Core/GuestBase.h>
+ #include <FEXCore/fextl/fmt.h>
+ #include <FEXCore/Core/X86Enums.h>
+ #include <FEXCore/Core/SignalDelegator.h>
+@@ -489,26 +490,26 @@
+   WowSyscallHandler() = default;
+ 
+   static void HandleSyscallImpl(FEXCore::Core::CpuStateFrame* Frame) {
+-    const uint64_t ReturnRIP = *(uint32_t*)(Frame->State.gregs[FEXCore::X86State::REG_RSP]); // Return address from the stack
++    const uint64_t ReturnRIP = *FEXCore::GuestPtr<uint32_t>(Frame->State.gregs[FEXCore::X86State::REG_RSP]); // Return address from the stack
+     uint64_t ReturnRSP = Frame->State.gregs[FEXCore::X86State::REG_RSP] + 4;                 // Stack pointer after popping return address
+     uint64_t ReturnRAX = 0;
+ 
+-    if (Frame->State.rip == (uint64_t)BridgeInstrs::UnixCall) {
++    if (Frame->State.rip == FEXCore::GuestAddr((uint64_t)BridgeInstrs::UnixCall)) {
+       struct StackLayout {
+         unixlib_handle_t Handle;
+         UINT32 ID;
+         ULONG32 Args;
+-      }* StackArgs = reinterpret_cast<StackLayout*>(ReturnRSP);
++      }* StackArgs = FEXCore::GuestPtr<StackLayout>(ReturnRSP);
+ 
+       Frame->State.gregs[FEXCore::X86State::REG_RSP] = ReturnRSP + sizeof(StackLayout);
+       Frame->State.rip = ReturnRIP;
+ 
+       Context::FlushThreadStateContext();
+       Context::UnlockJITContext();
+-      ReturnRAX = static_cast<uint64_t>(WineUnixCall(StackArgs->Handle, StackArgs->ID, ULongToPtr(StackArgs->Args)));
++      ReturnRAX = static_cast<uint64_t>(WineUnixCall(StackArgs->Handle, StackArgs->ID, FEXCore::GuestPtr<void>(StackArgs->Args)));
+       Context::LockJITContext();
+       Frame->State.gregs[FEXCore::X86State::REG_RAX] = ReturnRAX;
+-    } else if (Frame->State.rip == (uint64_t)BridgeInstrs::Syscall) {
++    } else if (Frame->State.rip == FEXCore::GuestAddr((uint64_t)BridgeInstrs::Syscall)) {
+       const uint64_t EntryRAX = Frame->State.gregs[FEXCore::X86State::REG_RAX];
+ 
+       Frame->State.gregs[FEXCore::X86State::REG_RSP] = ReturnRSP;
+@@ -517,7 +518,7 @@
+       Context::FlushThreadStateContext();
+       Context::UnlockJITContext();
+       Wow64ProcessPendingCrossProcessItems();
+-      ReturnRAX = static_cast<uint64_t>(Wow64SystemServiceEx(static_cast<UINT>(EntryRAX), reinterpret_cast<UINT*>(ReturnRSP + 4)));
++      ReturnRAX = static_cast<uint64_t>(Wow64SystemServiceEx(static_cast<UINT>(EntryRAX), FEXCore::GuestPtr<UINT>(ReturnRSP + 4)));
+       Context::LockJITContext();
+       Frame->State.gregs[FEXCore::X86State::REG_RAX] = ReturnRAX;
+     }
+@@ -537,11 +538,12 @@
+   }
+ 
+   void MarkGuestExecutableRange(FEXCore::Core::InternalThreadState* Thread, uint64_t Start, uint64_t Length) override {
+-    InvalidationTracker->ReprotectRWXIntervals(Start, Length);
++    // The core speaks guest addresses, the tracker host ones.
++    InvalidationTracker->ReprotectRWXIntervals(reinterpret_cast<uint64_t>(FEXCore::GuestPtr<void>(Start)), Length);
+   }
+ 
+   void InvalidateGuestCodeRange(FEXCore::Core::InternalThreadState* Thread, uint64_t Start, uint64_t Length) override {
+-    InvalidationTracker->InvalidateAlignedInterval(Start, Length, false);
++    InvalidationTracker->InvalidateAlignedInterval(reinterpret_cast<uint64_t>(FEXCore::GuestPtr<void>(Start)), Length, false);
+   }
+ 
+   void MarkOvercommitRange(uint64_t Start, uint64_t Length) override {
+@@ -872,7 +874,7 @@
+       FEXCORE_PROFILE_INSTANT_INCREMENT(Thread, AccumulatedSMCCount, 1);
+       if (InvalidationTracker->HandleRWXAccessViolation(Thread, Context->Pc, FaultAddress)) {
+         if (CTX->IsAddressInCodeBuffer(Thread, Context->Pc) && !CTX->IsCurrentBlockSingleInst(Thread) &&
+-            CTX->IsAddressInCurrentBlock(Thread, FaultAddress & FEXCore::Utils::FEX_PAGE_MASK, FEXCore::Utils::FEX_PAGE_SIZE)) {
++            CTX->IsAddressInCurrentBlock(Thread, FEXCore::GuestAddr(FaultAddress) & FEXCore::Utils::FEX_PAGE_MASK, FEXCore::Utils::FEX_PAGE_SIZE)) {
+           Context::ReconstructThreadState(Context);
+           LogMan::Msg::DFmt("Handled inline self-modifying code: pc: {:X} rip: {:X} fault: {:X}", Context->Pc,
+                             Thread->CurrentFrame->State.rip, FaultAddress);
+diff --git a/FEXCore/include/FEXCore/Core/GuestBase.h b/FEXCore/include/FEXCore/Core/GuestBase.h
+new file mode 100644
+--- /dev/null
++++ b/FEXCore/include/FEXCore/Core/GuestBase.h
+@@ -0,0 +1,26 @@
++// FineWine 32-bit programs (a local patch: FEX does not take AI-written code, so this stays here).
++//
++// macOS gives an arm64 process no memory below 4 GB, so a 32-bit guest's 4 GB are a window at
++// FEX_GUEST_BASE in the host process. The base is a multiple of 4 GB: a host address in the
++// window, cut to 32 bits, is the guest address, and the other way round is OR-ing the base in.
++// Only the WOW64 (32-bit guest on ARM64 Windows/Wine) build uses it.
++#pragma once
++#include <cstdint>
++
++#if defined(_WIN32) && !defined(ARCHITECTURE_arm64ec)
++#define FEX_GUEST_BASE 0x10000000000ULL
++#else
++#define FEX_GUEST_BASE 0ULL
++#endif
++
++namespace FEXCore {
++// The host pointer for a guest address.
++template<typename T = void>
++inline T* GuestPtr(uint64_t GuestAddress) {
++  return reinterpret_cast<T*>((GuestAddress & (FEX_GUEST_BASE ? 0xFFFF'FFFFULL : ~0ULL)) | FEX_GUEST_BASE);
++}
++// The guest address for a host pointer into the window.
++inline uint64_t GuestAddr(uint64_t HostAddress) {
++  return FEX_GUEST_BASE ? (HostAddress & 0xFFFF'FFFFULL) : HostAddress;
++}
++} // namespace FEXCore

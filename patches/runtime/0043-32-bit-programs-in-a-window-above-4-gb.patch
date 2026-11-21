@@ -1,0 +1,709 @@
+ntdll, wow64, wow64win, winemac: 32-bit programs in a window above 4 GB
+
+A 32-bit Windows program expects the first 4 GB of the address space. macOS gives a native
+arm64 process nothing below 4 GB, so 32-bit programs could not run at all in this runtime.
+
+Here a 32-bit process gets its 4 GB as a window higher up, at 1 TB. The window's base is a
+multiple of 4 GB, and that is what keeps this small: an address in the window, cut to 32 bits,
+is the address the program sees, so everything that already truncates a pointer for 32-bit code
+is right as it is. Only the other direction, a 32-bit value becoming a real pointer, needs the
+base, and Wine's 32-to-64 layer does that through two macros.
+
+Where the window is: 4 GB to 6 GB holds the process itself, 6 GB to 63 GB is the system's shared
+library region (nothing can be mapped in its gaps) and 63 GB to 448 GB is a guard; 1 TB is free.
+
+dlls/ntdll/unix/virtual.c
+- reserves the window in every process (address space only);
+- knows a process is 32-bit when the first image mapped, before the main image is known, is a
+  32-bit one, and from then on places every allocation and image with a 32-bit limit inside the
+  window; a 32-bit image's own base (0x400000 for most programs) is that address in the window;
+- maps the shared data page a second time at window + 0x7ffe0000, where 32-bit code reads it;
+- nothing about memory changes in a process that is not 32-bit.
+
+include/basetsd.h
+- in the Unix libraries, ULongToPtr/UlongToPtr add the window's base (zero unless the process
+  is 32-bit); WINE_WOW_WINDOW_PTR64 does the same for a 64-bit field a 32-bit program filled.
+
+dlls/wow64, dlls/wow64win
+- the same two macros with the base; address limits are compared on the 32-bit value;
+- window messages whose lparam is a pointer (win32u's table) get the base, as do the generic
+  one-, two- and window-parameter calls whose arguments are pointers;
+- a process attribute too large for its value field is a pointer.
+
+dlls/ntdll/locale.c
+- the 32-bit side writes the code page pointers into the 64-bit process block with the base.
+
+dlls/winemac.drv
+- param_ptr() takes pointers the 32-bit side passes in 64-bit fields.
+
+dlls/ntdll/unix/signal_arm64.c
+- a fault inside a system call is traced with its library, function and callers: such a fault
+  is usually a pointer that still lacks the base, and this is how the place is found.
+
+The emulator's side is patches/fex/0011. Checked with tests/runtime/suite32.c (threads,
+exceptions, generated code, window messages, drawing, child processes) and Microsoft's 32-bit
+Visual C++ set-up program.
+
+diff --git a/include/basetsd.h b/include/basetsd.h
+--- a/include/basetsd.h
++++ b/include/basetsd.h
+@@ -288,6 +288,32 @@
+ #define UlongToHandle(ul)       ULongToHandle(ul)
+ #define UintToPtr(ui)           UIntToPtr(ui)
+ #define UlongToPtr(ul)          ULongToPtr(ul)
++
++/* FineWine 32-bit: on macOS/arm64 a 32-bit program's memory is a 4 GB window at a base that
++ * is a multiple of 4 GB (dlls/ntdll/unix/virtual.c). In the Unix libraries of such a process,
++ * a 32-bit value that is a pointer gets the base; NULL, atoms and ordinals (below 64K) and
++ * the top 64K (-1 and friends) are not addresses. The base is 0 in every other process. */
++#if defined(WINE_UNIX_LIB) && defined(__APPLE__) && defined(__aarch64__) && defined(_WIN64)
++extern unsigned __int64 __wine_wow_window_base;
++static inline void *__wine_wow_window_ptr( ULONG32 ul )
++{
++    if (ul < 0x10000 || ul >= 0xffff0000) return (void *)(ULONG_PTR)ul;
++    return (void *)((ULONG_PTR)ul | __wine_wow_window_base);
++}
++/* The same for a pointer a 32-bit program stored in a 64-bit field, where it has no base. */
++static inline void *__wine_wow_window_ptr64( unsigned __int64 value )
++{
++    if (value >= 0x10000 && value < 0xffff0000) value |= __wine_wow_window_base;
++    return (void *)(ULONG_PTR)value;
++}
++#undef ULongToPtr
++#undef UlongToPtr
++#define ULongToPtr(ul) __wine_wow_window_ptr( ul )
++#define UlongToPtr(ul) __wine_wow_window_ptr( ul )
++#define WINE_WOW_WINDOW_PTR64(value) __wine_wow_window_ptr64( value )
++#else
++#define WINE_WOW_WINDOW_PTR64(value) ((void *)(ULONG_PTR)(value))
++#endif
+ 
+ typedef LONG_PTR SHANDLE_PTR;
+ typedef ULONG_PTR HANDLE_PTR;
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -190,6 +190,18 @@
+ static struct file_view *arm64ec_view;
+ 
+ ULONG_PTR user_space_wow_limit = 0;
++
++/* FineWine 32-bit: macOS gives an arm64 process no memory below 4 GB, so a 32-bit
++ * program's 4 GB are a window at wow_base instead. wow_base is a multiple of 4 GB: an address
++ * in the window, cut to 32 bits, is the address the 32-bit program sees, and the other way
++ * round is adding wow_base. Zero when the window could not be reserved. */
++#define WOW_WINDOW_BASE 0x10000000000ull   /* 1 TB: above the shared region (6 GB to 63 GB) and the guard after it (to 448 GB) */
++ULONG_PTR wow_base = 0;
++/* Whether this process is a 32-bit one and so lives in the window. Nothing about memory
++ * changes in any other process: the window stays reserved and unused there. */
++static BOOL wow_window_active;
++/* The same, for the Unix libraries: set once the process is known to be a 32-bit one. */
++DECLSPEC_EXPORT unsigned __int64 __wine_wow_window_base = 0;
+ /* FineWine: Windows has this page at 0x7ffe0000, but macOS gives an ARM64 process no memory
+  * below 4 GB, so Wine keeps it at the same offset in the next 4 GB instead. */
+ struct _KUSER_SHARED_DATA *user_shared_data = (void *)0x17ffe0000;
+@@ -2034,6 +2046,11 @@
+         return STATUS_SUCCESS;
+     }
+ 
++    if (wow_window_active && limit_high && limit_high <= limit_4g)
++    {
++        limit_low = wow_base + max( limit_low, (ULONG_PTR)0x10000 );
++        limit_high += wow_base;
++    }
+     if (limit_high && limit_low >= limit_high) return STATUS_INVALID_PARAMETER;
+ 
+     if (use_kernel_writewatch && vprot & VPROT_WRITEWATCH)
+@@ -3353,6 +3370,15 @@
+     BOOL top_down = (image_info->image_charact & IMAGE_FILE_DLL) &&
+                     (image_info->image_flags & IMAGE_FLAGS_ImageDynamicallyRelocated);
+ 
++    /* FineWine 32-bit: a 32-bit image always goes in the window, also when it is loaded by
++     * name with no limit given (a built-in program started while the prefix is being made). */
++    if (wow_base && !wow_window_active && !main_image_info.Machine && image_info->machine == IMAGE_FILE_MACHINE_I386)
++    {
++        /* the first 32-bit image mapped before the main image is known is the main image */
++        wow_window_active = TRUE;
++        __wine_wow_window_base = wow_base;
++    }
++    if (wow_window_active && !limit_high && image_info->machine == IMAGE_FILE_MACHINE_I386) limit_high = limit_2g - 1;
+     limit_low = max( limit_low, (ULONG_PTR)address_space_start );  /* make sure the DOS area remains free */
+     if (!limit_high) limit_high = (ULONG_PTR)user_space_limit;
+ 
+@@ -3368,6 +3394,8 @@
+         base = wine_server_get_ptr( image_info->base );
+         if ((ULONG_PTR)base != image_info->base) base = NULL;
+     }
++    if (base && wow_window_active && (ULONG_PTR)base < limit_4g && limit_high && limit_high <= limit_4g)
++        base = (char *)base + wow_base;
+     if (base)
+     {
+         status = map_view( view_ret, base, size, alloc_type, vprot, limit_low, limit_high, 0 );
+@@ -3669,6 +3697,18 @@
+     else if (is_win64)
+     {
+         reserve_area( (void *)0x00010000, (void *)0x200000000 );
++#if defined(__APPLE__) && defined(__aarch64__)
++        {
++            mach_vm_address_t addr = WOW_WINDOW_BASE;
++            if (!mach_vm_map( mach_task_self(), &addr, limit_4g, 0, VM_FLAGS_FIXED, MEMORY_OBJECT_NULL, 0, 0,
++                              PROT_NONE, VM_PROT_ALL, VM_INHERIT_COPY ))
++            {
++                set_mem_area_state( (void *)WOW_WINDOW_BASE, limit_4g, AREA_RESERVED );
++                wow_base = WOW_WINDOW_BASE;
++            }
++            else ERR( "the 32-bit window at %p could not be reserved: 32-bit programs will not run\n", (void *)WOW_WINDOW_BASE );
++        }
++#endif
+     }
+     else
+     {
+@@ -4043,7 +4083,8 @@
+         char *end, *start = address_space_start;  /* low 64K */
+         address_space_start = (void *)0x110000;
+         end = min( address_space_start, main_module );
+-        if (end > start) map_fixed_area( start, end - start, PROT_READ | PROT_WRITE );
++        if (wow_window_active) address_space_start = (void *)0x10000;
++        else if (end > start) map_fixed_area( start, end - start, PROT_READ | PROT_WRITE );
+     }
+ 
+     if (is_win64)
+@@ -4052,12 +4093,12 @@
+         {
+             user_space_wow_limit = limit_4g - 1;
+             /* block a bit of top memory: some apps break if the entire high 2G is available */
+-            set_mem_area_state( (void *)0xfffe0000, 0x20000, AREA_BLOCKED );
++            set_mem_area_state( (char *)(wow_window_active ? wow_base : 0) + 0xfffe0000, 0x20000, AREA_BLOCKED );
+         }
+         else
+         {
+             user_space_wow_limit = limit_2g - 1;
+-            set_mem_area_state( (void *)0x7fff0000, 0x10000, AREA_BLOCKED );
++            set_mem_area_state( (char *)(wow_window_active ? wow_base : 0) + 0x7fff0000, 0x10000, AREA_BLOCKED );
+         }
+     }
+     else if (!(main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE))
+@@ -4539,6 +4580,14 @@
+         ERR( "failed to remap the process USD: %d\n", res );
+         exit(1);
+     }
++    /* in every process: this runs before the main image is known, and the page costs nothing */
++    if (wow_base)
++    {
++        void *alias = (char *)wow_base + 0x7ffe0000;
++        if (alias != mmap( alias, page_size, PROT_READ, MAP_SHARED|MAP_FIXED, fd, 0 ))
++            ERR( "failed to map the USD for 32-bit code at %p\n", alias );
++        else set_mem_area_state( alias, 0x10000, AREA_BLOCKED );
++    }
+     if (needs_close) close( fd );
+     NtClose( section );
+ }
+diff --git a/dlls/ntdll/unix/signal_arm64.c b/dlls/ntdll/unix/signal_arm64.c
+--- a/dlls/ntdll/unix/signal_arm64.c
++++ b/dlls/ntdll/unix/signal_arm64.c
+@@ -29,6 +29,7 @@
+ #include <assert.h>
+ #include <pthread.h>
+ #include <signal.h>
++#include <dlfcn.h>
+ #include <stdlib.h>
+ #include <stdarg.h>
+ #include <stdio.h>
+@@ -1091,6 +1092,29 @@
+            rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress, (void *)PC_sig(context) );
+     for (i = 0; i < rec->NumberParameters; i++)
+         TRACE( " info[%d]=%016lx\n", i, rec->ExceptionInformation[i] );
++    {
++        /* FineWine 32-bit: a fault inside a system call is, more often than not, a 32-bit
++         * program's pointer that reached 64-bit code without the window's base. Say which
++         * library and function, and its callers, so the conversion that is missing can be found. */
++        Dl_info where;
++        void **fp = (void **)FP_sig(context);
++        int depth;
++        if (dladdr( (void *)PC_sig(context), &where ) && where.dli_fname)
++            TRACE( " in %s %s+%lx\n", where.dli_fname, where.dli_sname ? where.dli_sname : "?",
++                   (unsigned long)((char *)PC_sig(context) - (char *)(where.dli_saddr ? where.dli_saddr : where.dli_fbase)) );
++        if (dladdr( (void *)LR_sig(context), &where ) && where.dli_fname)
++            TRACE( " called from %s %s+%lx\n", where.dli_fname, where.dli_sname ? where.dli_sname : "?",
++                   (unsigned long)((char *)LR_sig(context) - (char *)(where.dli_saddr ? where.dli_saddr : where.dli_fbase)) );
++        for (depth = 0; depth < 8 && fp && !((ULONG_PTR)fp & 7); depth++)
++        {
++            void *ret = fp[1];
++            if (!ret || !dladdr( ret, &where ) || !where.dli_fname) break;
++            TRACE( "   frame %d: %s %s+%lx\n", depth, where.dli_fname, where.dli_sname ? where.dli_sname : "?",
++                   (unsigned long)((char *)ret - (char *)(where.dli_saddr ? where.dli_saddr : where.dli_fbase)) );
++            if ((void **)fp[0] <= fp) break;
++            fp = (void **)fp[0];
++        }
++    }
+ 
+     TRACE("  x0=%016lx  x1=%016lx  x2=%016lx  x3=%016lx\n",
+           (DWORD64)REGn_sig(0, context), (DWORD64)REGn_sig(1, context),
+diff --git a/dlls/ntdll/locale.c b/dlls/ntdll/locale.c
+--- a/dlls/ntdll/locale.c
++++ b/dlls/ntdll/locale.c
+@@ -95,6 +95,16 @@
+ invalid:
+     NtUnmapViewOfSection( GetCurrentProcess(), data );
+     return STATUS_INVALID_PARAMETER;
++}
++
++/* FineWine 32-bit: where a 32-bit program's memory is a window in the 64-bit process and not
++ * its low 4 GB, the 64-bit side's own pointers show where the window is: a pointer written
++ * for that side needs the same upper half. Zero everywhere else. */
++static ULONG64 get_wow_window_base( void )
++{
++    TEB64 *teb64 = NtCurrentTeb64();
++
++    return teb64 ? (teb64->Peb & ~(ULONG64)0xffffffff) : 0;
+ }
+ 
+ static PEB64 *get_peb64( void )
+@@ -366,18 +376,18 @@
+ 
+     NtGetNlsSectionPtr( 10, 0, NULL, &case_ptr, &size );
+     NtCurrentTeb()->Peb->UnicodeCaseTableData = case_ptr;
+-    if (peb64) peb64->UnicodeCaseTableData = PtrToUlong( case_ptr );
++    if (peb64) peb64->UnicodeCaseTableData = PtrToUlong( case_ptr ) | get_wow_window_base();
+     if (ansi_cp != CP_UTF8)
+     {
+         NtGetNlsSectionPtr( 11, ansi_cp, NULL, &ansi_ptr, &size );
+         NtCurrentTeb()->Peb->AnsiCodePageData = ansi_ptr;
+-        if (peb64) peb64->AnsiCodePageData = PtrToUlong( ansi_ptr );
++        if (peb64) peb64->AnsiCodePageData = PtrToUlong( ansi_ptr ) | get_wow_window_base();
+     }
+     if (oem_cp != CP_UTF8)
+     {
+         NtGetNlsSectionPtr( 11, oem_cp, NULL, &oem_ptr, &size );
+         NtCurrentTeb()->Peb->OemCodePageData = oem_ptr;
+-        if (peb64) peb64->OemCodePageData = PtrToUlong( oem_ptr );
++        if (peb64) peb64->OemCodePageData = PtrToUlong( oem_ptr ) | get_wow_window_base();
+     }
+     RtlInitNlsTables( ansi_ptr, oem_ptr, case_ptr, &nls_info );
+     NlsAnsiCodePage     = nls_info.AnsiTableInfo.CodePage;
+diff --git a/dlls/wow64/wow64_private.h b/dlls/wow64/wow64_private.h
+--- a/dlls/wow64/wow64_private.h
++++ b/dlls/wow64/wow64_private.h
+@@ -23,6 +23,22 @@
+ 
+ #include "../ntdll/ntsyscalls.h"
+ #include "struct32.h"
++
++/* FineWine 32-bit: a 32-bit program's memory is the 4 GB window at WOW_WINDOW_BASE
++ * (see dlls/ntdll/unix/virtual.c). A pointer it passes is an offset into the window; small
++ * values (NULL, atoms, ordinals) and the top 64K (-1 and friends) are not addresses. */
++#ifdef __aarch64__
++#define WOW_WINDOW_BASE 0x10000000000ull
++static inline void *wow_window_ptr( ULONG ul )
++{
++    if (ul < 0x10000 || ul >= 0xffff0000) return (void *)(ULONG_PTR)ul;
++    return (void *)((ULONG_PTR)ul | WOW_WINDOW_BASE);
++}
++#undef ULongToPtr
++#undef UlongToPtr
++#define ULongToPtr(ul) wow_window_ptr( ul )
++#define UlongToPtr(ul) wow_window_ptr( ul )
++#endif
+ 
+ #define SYSCALL_ENTRY(id,name,_args) extern NTSTATUS WINAPI wow64_ ## name( UINT *args );
+ ALL_SYSCALLS32
+diff --git a/dlls/wow64/virtual.c b/dlls/wow64/virtual.c
+--- a/dlls/wow64/virtual.c
++++ b/dlls/wow64/virtual.c
+@@ -124,7 +124,7 @@
+     else if (set_limit)
+     {
+         req->LowestStartingAddress = NULL;
+-        req->HighestEndingAddress  = (void *)highest_user_address;
++        req->HighestEndingAddress  = ULongToPtr( highest_user_address );
+         req->Alignment             = 0;
+ 
+         params[i].Type = MemExtendedParameterAddressRequirements;
+@@ -597,7 +597,7 @@
+     case MemoryBasicInformation:  /* MEMORY_BASIC_INFORMATION */
+         if (len < sizeof(MEMORY_BASIC_INFORMATION32))
+             status = STATUS_INFO_LENGTH_MISMATCH;
+-        else if ((ULONG_PTR)addr > highest_user_address)
++        else if ((ULONG)(ULONG_PTR)addr > highest_user_address)
+             status = STATUS_INVALID_PARAMETER;
+         else
+         {
+@@ -613,8 +613,8 @@
+                 info32->State = info.State;
+                 info32->Protect = info.Protect;
+                 info32->Type = info.Type;
+-                if ((ULONG_PTR)info.BaseAddress + info.RegionSize > highest_user_address)
+-                    info32->RegionSize = highest_user_address - (ULONG_PTR)info.BaseAddress + 1;
++                if ((ULONG)(ULONG_PTR)info.BaseAddress + info.RegionSize > highest_user_address)
++                    info32->RegionSize = highest_user_address - (ULONG)(ULONG_PTR)info.BaseAddress + 1;
+             }
+         }
+         res_len = sizeof(MEMORY_BASIC_INFORMATION32);
+@@ -642,7 +642,7 @@
+     {
+         if (len < sizeof(MEMORY_REGION_INFORMATION32))
+             status = STATUS_INFO_LENGTH_MISMATCH;
+-        else if ((ULONG_PTR)addr > highest_user_address)
++        else if ((ULONG)(ULONG_PTR)addr > highest_user_address)
+             status = STATUS_INVALID_PARAMETER;
+         else
+         {
+@@ -658,8 +658,8 @@
+                 info32->CommitSize = info.CommitSize;
+                 info32->PartitionId = info.PartitionId;
+                 info32->NodePreference = info.NodePreference;
+-                if ((ULONG_PTR)info.AllocationBase + info.RegionSize > highest_user_address)
+-                    info32->RegionSize = highest_user_address - (ULONG_PTR)info.AllocationBase + 1;
++                if ((ULONG)(ULONG_PTR)info.AllocationBase + info.RegionSize > highest_user_address)
++                    info32->RegionSize = highest_user_address - (ULONG)(ULONG_PTR)info.AllocationBase + 1;
+             }
+         }
+         res_len = sizeof(MEMORY_REGION_INFORMATION32);
+@@ -689,7 +689,7 @@
+     {
+         if (len < sizeof(MEMORY_IMAGE_INFORMATION32)) return STATUS_INFO_LENGTH_MISMATCH;
+ 
+-        if ((ULONG_PTR)addr > highest_user_address) status = STATUS_INVALID_PARAMETER;
++        if ((ULONG)(ULONG_PTR)addr > highest_user_address) status = STATUS_INVALID_PARAMETER;
+         else
+         {
+             MEMORY_IMAGE_INFORMATION info;
+diff --git a/dlls/wow64/process.c b/dlls/wow64/process.c
+--- a/dlls/wow64/process.c
++++ b/dlls/wow64/process.c
+@@ -153,6 +153,9 @@
+         ret->Attributes[i].Attribute    = attr32->Attributes[i].Attribute;
+         ret->Attributes[i].Size         = attr32->Attributes[i].Size;
+         ret->Attributes[i].Value        = attr32->Attributes[i].Value;
++        /* FineWine 32-bit: an attribute too large for the value itself holds a pointer to it */
++        if (attr32->Attributes[i].Size > sizeof(ULONG))
++            ret->Attributes[i].ValuePtr = ULongToPtr( attr32->Attributes[i].Value );
+         ret->Attributes[i].ReturnLength = NULL;
+         switch (ret->Attributes[i].Attribute)
+         {
+diff --git a/dlls/wow64win/wow64win_private.h b/dlls/wow64win/wow64win_private.h
+--- a/dlls/wow64win/wow64win_private.h
++++ b/dlls/wow64win/wow64win_private.h
+@@ -24,6 +24,22 @@
+ #include "../win32u/win32syscalls.h"
+ #include "ntuser.h"
+ 
++/* FineWine 32-bit: a 32-bit program's memory is the 4 GB window at WOW_WINDOW_BASE
++ * (see dlls/ntdll/unix/virtual.c). A pointer it passes is an offset into the window; small
++ * values (NULL, atoms, ordinals) and the top 64K (-1 and friends) are not addresses. */
++#ifdef __aarch64__
++#define WOW_WINDOW_BASE 0x10000000000ull
++static inline void *wow_window_ptr( ULONG ul )
++{
++    if (ul < 0x10000 || ul >= 0xffff0000) return (void *)(ULONG_PTR)ul;
++    return (void *)((ULONG_PTR)ul | WOW_WINDOW_BASE);
++}
++#undef ULongToPtr
++#undef UlongToPtr
++#define ULongToPtr(ul) wow_window_ptr( ul )
++#define UlongToPtr(ul) wow_window_ptr( ul )
++#endif
++
+ #define SYSCALL_ENTRY(id,name,_args) extern NTSTATUS WINAPI wow64_ ## name( UINT *args );
+ ALL_SYSCALLS32
+ #undef SYSCALL_ENTRY
+diff --git a/dlls/wow64win/user.c b/dlls/wow64win/user.c
+--- a/dlls/wow64win/user.c
++++ b/dlls/wow64win/user.c
+@@ -1753,6 +1753,18 @@
+             return NtUserCallHwndParam( hwnd, (UINT_PTR)&params, code );
+         }
+ 
++    /* FineWine 32-bit: the calls whose parameter is a pointer with the same layout */
++    case NtUserCallHwndParam_ClientToScreen:
++    case NtUserCallHwndParam_GetChildRect:
++    case NtUserCallHwndParam_GetWindowInfo:
++    case NtUserCallHwndParam_GetWindowThread:
++    case NtUserCallHwndParam_ScreenToClient:
++    case NtUserCallHwndParam_ExposeWindowSurface:
++    case NtUserCallHwndParam_SetRawWindowPos:
++    case NtUserCallHwndParam_GetPrivateData:
++    case NtUserCallHwndParam_SetPrivateData:
++        return NtUserCallHwndParam( hwnd, (DWORD_PTR)ULongToPtr( param ), code );
++
+     default:
+         return NtUserCallHwndParam( hwnd, param, code );
+     }
+@@ -1792,6 +1804,16 @@
+     ULONG_PTR arg = get_ulong( &args );
+     ULONG code = get_ulong( &args );
+ 
++    /* FineWine 32-bit: the calls whose argument is a pointer with the same layout */
++    switch (code)
++    {
++    case NtUserCallOneParam_GetPrimaryMonitorRect:
++    case NtUserCallOneParam_D3DKMTOpenAdapterFromGdiDisplayName:
++    case NtUserCallOneParam_GetAsyncKeyboardState:
++    case NtUserGetDeskPattern:
++        arg = (ULONG_PTR)ULongToPtr( arg );
++        break;
++    }
+     return NtUserCallOneParam( arg, code );
+ }
+ 
+@@ -1825,6 +1847,16 @@
+             return TRUE;
+         }
+ 
++    /* FineWine 32-bit: the calls whose arguments are pointers with the same layout */
++    case NtUserCallTwoParam_GetMonitorInfo:
++    case NtUserCallTwoParam_SetIMECompositionRect:
++        return NtUserCallTwoParam( arg1, (ULONG_PTR)ULongToPtr( arg2 ), code );
++    case NtUserCallTwoParam_MonitorFromRect:
++    case NtUserCallTwoParam_GetVirtualScreenRect:
++        return NtUserCallTwoParam( (ULONG_PTR)ULongToPtr( arg1 ), arg2, code );
++    case NtUserCallTwoParam_AdjustWindowRect:
++        return NtUserCallTwoParam( (ULONG_PTR)ULongToPtr( arg1 ), (ULONG_PTR)ULongToPtr( arg2 ), code );
++
+     default:
+         return NtUserCallTwoParam( arg1, arg2, code );
+     }
+@@ -3526,18 +3558,117 @@
+     return NtUserMessageBeep( type );
+ }
+ 
++/* FineWine 32-bit: the messages whose lparam is a pointer (the table is win32u's, from
++ * dlls/win32u/message.c). Where a 32-bit program's memory is a window in the 64-bit process,
++ * such an lparam is turned into a real pointer before the 64-bit side sees it; coming back to
++ * the program it is cut to 32 bits again, as every lparam is. */
++#define SET(msg) (1 << ((msg) & 31))
++
++static const unsigned int message_pointer_flags[] =
++{
++    /* 0x00 - 0x1f */
++    SET(WM_CREATE) | SET(WM_SETTEXT) | SET(WM_GETTEXT) |
++    SET(WM_WININICHANGE) | SET(WM_DEVMODECHANGE),
++    /* 0x20 - 0x3f */
++    SET(WM_GETMINMAXINFO) | SET(WM_DRAWITEM) | SET(WM_MEASUREITEM) | SET(WM_DELETEITEM) |
++    SET(WM_COMPAREITEM),
++    /* 0x40 - 0x5f */
++    SET(WM_WINDOWPOSCHANGING) | SET(WM_WINDOWPOSCHANGED) | SET(WM_COPYDATA) | SET(WM_HELP),
++    /* 0x60 - 0x7f */
++    SET(WM_STYLECHANGING) | SET(WM_STYLECHANGED),
++    /* 0x80 - 0x9f */
++    SET(WM_NCCREATE) | SET(WM_NCCALCSIZE) | SET(WM_GETDLGCODE),
++    /* 0xa0 - 0xbf */
++    SET(EM_GETSEL) | SET(EM_GETRECT) | SET(EM_SETRECT) | SET(EM_SETRECTNP),
++    /* 0xc0 - 0xdf */
++    SET(EM_REPLACESEL) | SET(EM_GETLINE) | SET(EM_SETTABSTOPS),
++    /* 0xe0 - 0xff */
++    SET(SBM_GETRANGE) | SET(SBM_SETSCROLLINFO) | SET(SBM_GETSCROLLINFO) | SET(SBM_GETSCROLLBARINFO),
++    /* 0x100 - 0x11f */
++    0,
++    /* 0x120 - 0x13f */
++    0,
++    /* 0x140 - 0x15f */
++    SET(CB_GETEDITSEL) | SET(CB_ADDSTRING) | SET(CB_DIR) | SET(CB_GETLBTEXT) |
++    SET(CB_INSERTSTRING) | SET(CB_FINDSTRING) | SET(CB_SELECTSTRING) |
++    SET(CB_GETDROPPEDCONTROLRECT) | SET(CB_FINDSTRINGEXACT),
++    /* 0x160 - 0x17f */
++    SET(CB_GETCOMBOBOXINFO),
++    /* 0x180 - 0x19f */
++    SET(LB_ADDSTRING) | SET(LB_INSERTSTRING) | SET(LB_GETTEXT) | SET(LB_SELECTSTRING) |
++    SET(LB_DIR) | SET(LB_FINDSTRING) |
++    SET(LB_GETSELITEMS) | SET(LB_SETTABSTOPS) | SET(LB_ADDFILE) | SET(LB_GETITEMRECT),
++    /* 0x1a0 - 0x1bf */
++    SET(LB_FINDSTRINGEXACT),
++    /* 0x1c0 - 0x1df */
++    0,
++    /* 0x1e0 - 0x1ff */
++    0,
++    /* 0x200 - 0x21f */
++    SET(WM_NEXTMENU) | SET(WM_SIZING) | SET(WM_MOVING) | SET(WM_DEVICECHANGE),
++    /* 0x220 - 0x23f */
++    SET(WM_MDICREATE) | SET(WM_MDIGETACTIVE) | SET(WM_DROPOBJECT) |
++    SET(WM_QUERYDROPOBJECT) | SET(WM_DRAGLOOP) | SET(WM_DRAGSELECT) | SET(WM_DRAGMOVE),
++    /* 0x240 - 0x25f */
++    0,
++    /* 0x260 - 0x27f */
++    0,
++    /* 0x280 - 0x29f */
++    0,
++    /* 0x2a0 - 0x2bf */
++    0,
++    /* 0x2c0 - 0x2df */
++    0,
++    /* 0x2e0 - 0x2ff */
++    0,
++    /* 0x300 - 0x31f */
++    SET(WM_ASKCBFORMATNAME)
++};
++
++/* check whether a given message type includes pointers */
++static inline BOOL is_pointer_message( UINT message, WPARAM wparam )
++{
++    if (message >= 8*sizeof(message_pointer_flags)) return FALSE;
++    if (message == WM_DEVICECHANGE && !(wparam & 0x8000)) return FALSE;
++    return (message_pointer_flags[message / 32] & SET(message)) != 0;
++}
++
++#undef SET
++
++static LPARAM message_lparam_32to64( UINT msg, WPARAM wparam, LPARAM lparam )
++{
++    if (is_pointer_message( msg, wparam )) return (LPARAM)ULongToPtr( lparam );
++    return lparam;
++}
++
++/* the few whose wparam is a pointer too */
++static WPARAM message_wparam_32to64( UINT msg, WPARAM wparam )
++{
++    switch (msg)
++    {
++    case EM_GETSEL:
++    case SBM_GETRANGE:
++    case CB_GETEDITSEL:
++        return (WPARAM)ULongToPtr( wparam );
++    }
++    return wparam;
++}
++
+ static LRESULT message_call_32to64( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+                                     void *result_info, DWORD type, BOOL ansi )
+ {
+     LRESULT ret = 0;
+ 
++    lparam = message_lparam_32to64( msg, wparam, lparam );
++    wparam = message_wparam_32to64( msg, wparam );
++
+     switch (msg)
+     {
+     case WM_NCCREATE:
+     case WM_CREATE:
+         if (lparam)
+         {
+-            CREATESTRUCT32 *cs32 = (void *)lparam;
++            CREATESTRUCT32 *cs32 = ULongToPtr( lparam );
+             CREATESTRUCTW cs;
+ 
+             createstruct_32to64( cs32, &cs );
+@@ -3558,7 +3689,7 @@
+ 
+     case WM_MDICREATE:
+         {
+-            MDICREATESTRUCT32 *cs32 = (void *)lparam;
++            MDICREATESTRUCT32 *cs32 = ULongToPtr( lparam );
+             MDICREATESTRUCTW cs;
+ 
+             cs.szClass = UlongToPtr( cs32->szClass );
+@@ -3577,7 +3708,7 @@
+     case WM_WINDOWPOSCHANGING:
+     case WM_WINDOWPOSCHANGED:
+         {
+-            WINDOWPOS32 *winpos32 = (void *)lparam;
++            WINDOWPOS32 *winpos32 = ULongToPtr( lparam );
+             WINDOWPOS winpos;
+ 
+             winpos_32to64( &winpos, winpos32 );
+@@ -3589,7 +3720,7 @@
+     case WM_NCCALCSIZE:
+         if (wparam)
+         {
+-            NCCALCSIZE_PARAMS32 *params32 = (void *)lparam;
++            NCCALCSIZE_PARAMS32 *params32 = ULongToPtr( lparam );
+             NCCALCSIZE_PARAMS params;
+             WINDOWPOS winpos;
+ 
+@@ -3609,7 +3740,7 @@
+ 
+     case WM_COMPAREITEM:
+         {
+-            COMPAREITEMSTRUCT32 *cis32 = (void *)lparam;
++            COMPAREITEMSTRUCT32 *cis32 = ULongToPtr( lparam );
+             COMPAREITEMSTRUCT cis;
+ 
+             cis.CtlType    = cis32->CtlType;
+@@ -3625,7 +3756,7 @@
+ 
+     case WM_DELETEITEM:
+         {
+-            DELETEITEMSTRUCT32 *dis32 = (void *)lparam;
++            DELETEITEMSTRUCT32 *dis32 = ULongToPtr( lparam );
+             DELETEITEMSTRUCT dis;
+ 
+             dis.CtlType  = dis32->CtlType;
+@@ -3638,7 +3769,7 @@
+ 
+     case WM_MEASUREITEM:
+         {
+-            MEASUREITEMSTRUCT32 *mis32 = (void *)lparam;
++            MEASUREITEMSTRUCT32 *mis32 = ULongToPtr( lparam );
+             MEASUREITEMSTRUCT mis;
+ 
+             mis.CtlType    = mis32->CtlType;
+@@ -3659,7 +3790,7 @@
+ 
+     case WM_DRAWITEM:
+         {
+-            DRAWITEMSTRUCT32 *dis32 = (void *)lparam;
++            DRAWITEMSTRUCT32 *dis32 = ULongToPtr( lparam );
+             DRAWITEMSTRUCT dis;
+ 
+             dis.CtlType       = dis32->CtlType;
+@@ -3679,7 +3810,7 @@
+ 
+     case WM_COPYDATA:
+         {
+-            COPYDATASTRUCT32 *cds32 = (void *)lparam;
++            COPYDATASTRUCT32 *cds32 = ULongToPtr( lparam );
+             COPYDATASTRUCT cds;
+ 
+             cds.dwData = cds32->dwData;
+@@ -3690,7 +3821,7 @@
+ 
+     case WM_HELP:
+         {
+-            HELPINFO32 *hi32 = (void *)lparam;
++            HELPINFO32 *hi32 = ULongToPtr( lparam );
+             HELPINFO hi64;
+ 
+             hi64.cbSize       = sizeof(hi64);
+@@ -3705,7 +3836,7 @@
+     case WM_GETDLGCODE:
+         if (lparam)
+         {
+-            MSG32 *msg32 = (MSG32 *)lparam;
++            MSG32 *msg32 = (MSG32 *)ULongToPtr( lparam );
+             MSG msg64;
+ 
+             return NtUserMessageCall( hwnd, msg, wparam, (LPARAM)msg_32to64( &msg64, msg32 ),
+@@ -3715,7 +3846,7 @@
+ 
+     case WM_NEXTMENU:
+         {
+-            MDINEXTMENU32 *next32 = (void *)lparam;
++            MDINEXTMENU32 *next32 = ULongToPtr( lparam );
+             MDINEXTMENU next;
+ 
+             next.hmenuIn   = LongToHandle( next32->hmenuIn );
+@@ -3732,13 +3863,13 @@
+         {
+             PAINTSTRUCT ps;
+ 
+-            paintstruct_32to64( &ps, (PAINTSTRUCT32 *)lparam );
++            paintstruct_32to64( &ps, (PAINTSTRUCT32 *)ULongToPtr( lparam ) );
+             return NtUserMessageCall( hwnd, msg, wparam, (LPARAM)&ps, result_info, type, ansi );
+         }
+ 
+     case CB_GETCOMBOBOXINFO:
+         {
+-            COMBOBOXINFO32 *ci32 = (COMBOBOXINFO32 *)lparam;
++            COMBOBOXINFO32 *ci32 = (COMBOBOXINFO32 *)ULongToPtr( lparam );
+             COMBOBOXINFO ci;
+ 
+             ci.cbSize      = ci32->cbSize;
+diff --git a/dlls/winemac.drv/unixlib.h b/dlls/winemac.drv/unixlib.h
+--- a/dlls/winemac.drv/unixlib.h
++++ b/dlls/winemac.drv/unixlib.h
+@@ -84,5 +84,5 @@
+ 
+ static inline void *param_ptr(UINT64 param)
+ {
+-    return (void *)(UINT_PTR)param;
++    return WINE_WOW_WINDOW_PTR64(param);
+ }

@@ -1,0 +1,218 @@
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -190,6 +190,13 @@
+ static struct file_view *arm64ec_view;
+ 
+ ULONG_PTR user_space_wow_limit = 0;
++
++/* FineWine 32-bit spike: macOS gives an arm64 process no memory below 4 GB, so a 32-bit
++ * program's 4 GB are a window at wow_base instead. wow_base is a multiple of 4 GB: an address
++ * in the window, cut to 32 bits, is the address the 32-bit program sees, and the other way
++ * round is adding wow_base. Zero when the window could not be reserved. */
++#define WOW_WINDOW_BASE 0x10000000000ull   /* 1 TB: above the shared region (6 GB to 63 GB) and the guard after it (to 448 GB) */
++ULONG_PTR wow_base = 0;
+ /* FineWine: Windows has this page at 0x7ffe0000, but macOS gives an ARM64 process no memory
+  * below 4 GB, so Wine keeps it at the same offset in the next 4 GB instead. */
+ struct _KUSER_SHARED_DATA *user_shared_data = (void *)0x17ffe0000;
+@@ -2034,6 +2041,11 @@
+         return STATUS_SUCCESS;
+     }
+ 
++    if (wow_base && limit_high && limit_high <= limit_4g)
++    {
++        limit_low = wow_base + max( limit_low, (ULONG_PTR)0x10000 );
++        limit_high += wow_base;
++    }
+     if (limit_high && limit_low >= limit_high) return STATUS_INVALID_PARAMETER;
+ 
+     if (use_kernel_writewatch && vprot & VPROT_WRITEWATCH)
+@@ -3368,6 +3380,8 @@
+         base = wine_server_get_ptr( image_info->base );
+         if ((ULONG_PTR)base != image_info->base) base = NULL;
+     }
++    if (base && wow_base && (ULONG_PTR)base < limit_4g && limit_high && limit_high <= limit_4g)
++        base = (char *)base + wow_base;
+     if (base)
+     {
+         status = map_view( view_ret, base, size, alloc_type, vprot, limit_low, limit_high, 0 );
+@@ -3669,6 +3683,29 @@
+     else if (is_win64)
+     {
+         reserve_area( (void *)0x00010000, (void *)0x200000000 );
++#if defined(__APPLE__) && defined(__aarch64__)
++        {
++            mach_vm_address_t addr = WOW_WINDOW_BASE;
++            if (!mach_vm_map( mach_task_self(), &addr, limit_4g, 0, VM_FLAGS_FIXED, MEMORY_OBJECT_NULL, 0, 0,
++                              PROT_NONE, VM_PROT_ALL, VM_INHERIT_COPY ))
++            {
++                set_mem_area_state( (void *)WOW_WINDOW_BASE, limit_4g, AREA_RESERVED );
++                wow_base = WOW_WINDOW_BASE;
++            }
++            else
++            {
++                mach_vm_address_t at = WOW_WINDOW_BASE;
++                mach_vm_size_t rsize = 0;
++                vm_region_basic_info_data_64_t rinfo;
++                mach_msg_type_number_t rcount = VM_REGION_BASIC_INFO_COUNT_64;
++                mach_port_t obj = MACH_PORT_NULL;
++                kern_return_t r = mach_vm_region( mach_task_self(), &at, &rsize, VM_REGION_BASIC_INFO_64,
++                                                  (vm_region_info_t)&rinfo, &rcount, &obj );
++                ERR( "32-bit window at %p could not be reserved; next region (%d): %p + %p prot %x\n",
++                     (void *)WOW_WINDOW_BASE, r, (void *)at, (void *)rsize, rinfo.protection );
++            }
++        }
++#endif
+     }
+     else
+     {
+@@ -4043,7 +4080,8 @@
+         char *end, *start = address_space_start;  /* low 64K */
+         address_space_start = (void *)0x110000;
+         end = min( address_space_start, main_module );
+-        if (end > start) map_fixed_area( start, end - start, PROT_READ | PROT_WRITE );
++        if (wow_base) { start += wow_base; end = (char *)wow_base + 0x110000; address_space_start = (void *)0x10000; }
++        if (end > start && !wow_base) map_fixed_area( start, end - start, PROT_READ | PROT_WRITE );
+     }
+ 
+     if (is_win64)
+@@ -4052,12 +4090,12 @@
+         {
+             user_space_wow_limit = limit_4g - 1;
+             /* block a bit of top memory: some apps break if the entire high 2G is available */
+-            set_mem_area_state( (void *)0xfffe0000, 0x20000, AREA_BLOCKED );
++            set_mem_area_state( (char *)wow_base + 0xfffe0000, 0x20000, AREA_BLOCKED );
+         }
+         else
+         {
+             user_space_wow_limit = limit_2g - 1;
+-            set_mem_area_state( (void *)0x7fff0000, 0x10000, AREA_BLOCKED );
++            set_mem_area_state( (char *)wow_base + 0x7fff0000, 0x10000, AREA_BLOCKED );
+         }
+     }
+     else if (!(main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE))
+@@ -4538,6 +4576,13 @@
+     {
+         ERR( "failed to remap the process USD: %d\n", res );
+         exit(1);
++    }
++    if (wow_base)
++    {
++        void *alias = (char *)wow_base + 0x7ffe0000;
++        if (alias != mmap( alias, page_size, PROT_READ, MAP_SHARED|MAP_FIXED, fd, 0 ))
++            ERR( "failed to map the USD for 32-bit code at %p\n", alias );
++        else set_mem_area_state( alias, 0x10000, AREA_BLOCKED );
+     }
+     if (needs_close) close( fd );
+     NtClose( section );
+--- a/dlls/wow64/wow64_private.h
++++ b/dlls/wow64/wow64_private.h
+@@ -24,6 +24,23 @@
+ #include "../ntdll/ntsyscalls.h"
+ #include "struct32.h"
+ 
++/* FineWine 32-bit spike: a 32-bit program's memory is the 4 GB window at WOW_WINDOW_BASE
++ * (see dlls/ntdll/unix/virtual.c). A pointer it passes is an offset into the window; small
++ * values (NULL, atoms, ordinals) and the top 64K (-1 and friends) are not addresses. */
++#ifdef __aarch64__
++#define WOW_WINDOW_BASE 0x10000000000ull
++static inline void *wow_window_ptr( ULONG ul )
++{
++    if (ul < 0x10000) return (void *)(ULONG_PTR)ul;
++    if (ul >= 0xffff0000) return (void *)(LONG_PTR)(LONG)ul;
++    return (void *)((ULONG_PTR)ul | WOW_WINDOW_BASE);
++}
++#undef ULongToPtr
++#undef UlongToPtr
++#define ULongToPtr(ul) wow_window_ptr( ul )
++#define UlongToPtr(ul) wow_window_ptr( ul )
++#endif
++
+ #define SYSCALL_ENTRY(id,name,_args) extern NTSTATUS WINAPI wow64_ ## name( UINT *args );
+ ALL_SYSCALLS32
+ #undef SYSCALL_ENTRY
+--- a/dlls/wow64/virtual.c
++++ b/dlls/wow64/virtual.c
+@@ -124,7 +124,7 @@
+     else if (set_limit)
+     {
+         req->LowestStartingAddress = NULL;
+-        req->HighestEndingAddress  = (void *)highest_user_address;
++        req->HighestEndingAddress  = ULongToPtr( highest_user_address );
+         req->Alignment             = 0;
+ 
+         params[i].Type = MemExtendedParameterAddressRequirements;
+@@ -597,7 +597,7 @@
+     case MemoryBasicInformation:  /* MEMORY_BASIC_INFORMATION */
+         if (len < sizeof(MEMORY_BASIC_INFORMATION32))
+             status = STATUS_INFO_LENGTH_MISMATCH;
+-        else if ((ULONG_PTR)addr > highest_user_address)
++        else if ((ULONG)(ULONG_PTR)addr > highest_user_address)
+             status = STATUS_INVALID_PARAMETER;
+         else
+         {
+@@ -613,8 +613,8 @@
+                 info32->State = info.State;
+                 info32->Protect = info.Protect;
+                 info32->Type = info.Type;
+-                if ((ULONG_PTR)info.BaseAddress + info.RegionSize > highest_user_address)
+-                    info32->RegionSize = highest_user_address - (ULONG_PTR)info.BaseAddress + 1;
++                if ((ULONG)(ULONG_PTR)info.BaseAddress + info.RegionSize > highest_user_address)
++                    info32->RegionSize = highest_user_address - (ULONG)(ULONG_PTR)info.BaseAddress + 1;
+             }
+         }
+         res_len = sizeof(MEMORY_BASIC_INFORMATION32);
+@@ -642,7 +642,7 @@
+     {
+         if (len < sizeof(MEMORY_REGION_INFORMATION32))
+             status = STATUS_INFO_LENGTH_MISMATCH;
+-        else if ((ULONG_PTR)addr > highest_user_address)
++        else if ((ULONG)(ULONG_PTR)addr > highest_user_address)
+             status = STATUS_INVALID_PARAMETER;
+         else
+         {
+@@ -658,8 +658,8 @@
+                 info32->CommitSize = info.CommitSize;
+                 info32->PartitionId = info.PartitionId;
+                 info32->NodePreference = info.NodePreference;
+-                if ((ULONG_PTR)info.AllocationBase + info.RegionSize > highest_user_address)
+-                    info32->RegionSize = highest_user_address - (ULONG_PTR)info.AllocationBase + 1;
++                if ((ULONG)(ULONG_PTR)info.AllocationBase + info.RegionSize > highest_user_address)
++                    info32->RegionSize = highest_user_address - (ULONG)(ULONG_PTR)info.AllocationBase + 1;
+             }
+         }
+         res_len = sizeof(MEMORY_REGION_INFORMATION32);
+@@ -689,7 +689,7 @@
+     {
+         if (len < sizeof(MEMORY_IMAGE_INFORMATION32)) return STATUS_INFO_LENGTH_MISMATCH;
+ 
+-        if ((ULONG_PTR)addr > highest_user_address) status = STATUS_INVALID_PARAMETER;
++        if ((ULONG)(ULONG_PTR)addr > highest_user_address) status = STATUS_INVALID_PARAMETER;
+         else
+         {
+             MEMORY_IMAGE_INFORMATION info;
+--- a/dlls/wow64win/wow64win_private.h
++++ b/dlls/wow64win/wow64win_private.h
+@@ -24,6 +24,23 @@
+ #include "../win32u/win32syscalls.h"
+ #include "ntuser.h"
+ 
++/* FineWine 32-bit spike: a 32-bit program's memory is the 4 GB window at WOW_WINDOW_BASE
++ * (see dlls/ntdll/unix/virtual.c). A pointer it passes is an offset into the window; small
++ * values (NULL, atoms, ordinals) and the top 64K (-1 and friends) are not addresses. */
++#ifdef __aarch64__
++#define WOW_WINDOW_BASE 0x10000000000ull
++static inline void *wow_window_ptr( ULONG ul )
++{
++    if (ul < 0x10000) return (void *)(ULONG_PTR)ul;
++    if (ul >= 0xffff0000) return (void *)(LONG_PTR)(LONG)ul;
++    return (void *)((ULONG_PTR)ul | WOW_WINDOW_BASE);
++}
++#undef ULongToPtr
++#undef UlongToPtr
++#define ULongToPtr(ul) wow_window_ptr( ul )
++#define UlongToPtr(ul) wow_window_ptr( ul )
++#endif
++
+ #define SYSCALL_ENTRY(id,name,_args) extern NTSTATUS WINAPI wow64_ ## name( UINT *args );
+ ALL_SYSCALLS32
+ #undef SYSCALL_ENTRY

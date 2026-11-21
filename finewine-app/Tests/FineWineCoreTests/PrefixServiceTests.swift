@@ -220,6 +220,22 @@ final class PrefixServiceTests: XCTestCase {
         XCTAssertFalse(f.service.refreshEmulator(in: prefix, from: f.runtime), "nothing to do when they match")
     }
 
+    func testAPrefixIsGivenThe32BitEmulatorWhenTheRuntimeHasOne() throws {
+        let f = Fixture()
+        let prefix = try f.prefixWithGame()
+        let windows = f.runtime.root.appendingPathComponent("lib/wine")
+        let inPrefix = prefix.driveC.appendingPathComponent("windows/system32/xtajit.dll")
+        XCTAssertFalse(f.runtime.runs32BitPrograms)
+        f.sandbox.write("emulator 32", to: windows.appendingPathComponent("aarch64-windows/xtajit.dll"))
+        XCTAssertFalse(f.runtime.runs32BitPrograms, "the emulator alone is not enough")
+        f.sandbox.write("ntdll", to: windows.appendingPathComponent("i386-windows/ntdll.dll"))
+        XCTAssertTrue(f.runtime.runs32BitPrograms)
+        f.sandbox.write("x", to: prefix.driveC.appendingPathComponent("windows/system32/kernel32.dll"))
+        XCTAssertTrue(f.service.refreshEmulator(in: prefix, from: f.runtime), "an older prefix gets the 32-bit emulator")
+        XCTAssertEqual(try String(contentsOf: inPrefix, encoding: .utf8), "emulator 32")
+        XCTAssertFalse(f.service.refreshEmulator(in: prefix, from: f.runtime))
+    }
+
     func testImportDiscoveredProgramsAddsOnlyNewOnes() throws {
         let f = Fixture()
         var prefix = try f.prefixWithGame()
