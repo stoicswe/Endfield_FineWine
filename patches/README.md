@@ -172,6 +172,9 @@ This directory does not contain Wine itself — only diffs to be applied to a Wi
 Applied by `scripts/build-finewine-runtime.sh` on top of `patches/ARM` (minus the two x86-only
 kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21.
 
+- `0055-server-msync-the-address-a-shared-page-is-asked-for-at-is-set.patch`: MSync mapped
+  its shared pages with an uninitialised address hint; now and then the kernel found no room
+  above it, and the server crashed, leaving a game with a black window. The hint is 0.
 - `0054-opengl32-a-write-only-mapping-with-explicit-flushes-is-copied-by-the-range.patch`: a
   32-bit program gets a copy of a mapped OpenGL buffer; for the way WineD3D maps (the whole
   buffer, write-only, with the written ranges flushed) only those ranges are copied now, not

@@ -1,0 +1,36 @@
+server: MSync asks for a shared page with its address hint set
+
+server/msync.c
+- get_shm() maps a page of shared state for every 1024 synchronisation objects with
+  mach_vm_map( ..., &address, ..., VM_FLAGS_ANYWHERE, ... ), and address was not initialised.
+  With VM_FLAGS_ANYWHERE the kernel starts its search at the address it is handed. Whatever
+  was on the stack is usually an address with room above it; when it is not, the call fails
+  with KERN_NO_SPACE ("msync: error: mach_vm_map failed with 3: (os/kern) no space
+  available"), and the server went on to clear a page at that address and crashed. The
+  programs of the prefix stay up with no server: Arknights: Endfield showed a black window
+  80 seconds after its start.
+- The hint is 0, and a mapping that still fails ends the server with a message instead of a
+  crash.
+
+diff --git a/server/msync.c b/server/msync.c
+--- a/server/msync.c
++++ b/server/msync.c
+@@ -700,11 +700,17 @@
+     if (!shm_addrs[entry])
+     {
+         kern_return_t kr;
+-        mach_vm_address_t address;
++        /* FineWine: with VM_FLAGS_ANYWHERE the kernel starts looking at the address it is
++         * given, and this one was whatever was on the stack. Mostly that is harmless; now
++         * and then it is an address with nothing free above it, the call fails with "no
++         * space available", and the server went on to clear a page at that address and
++         * crashed, leaving the game with a black window (Endfield, 2026-11-22). */
++        mach_vm_address_t address = 0;
+ 
+         kr = mach_vm_map( mach_task_self(), (mach_vm_address_t *)&address, (mach_vm_size_t)pagesize, 0, VM_FLAGS_ANYWHERE,
+                           MACH_PORT_NULL, 0, FALSE, VM_PROT_DEFAULT, VM_PROT_DEFAULT, VM_INHERIT_SHARE );
+         MACH_CHECK_ERROR( kr, "mach_vm_map" );
++        if (kr != KERN_SUCCESS) fatal_error( "could not map a page of shared synchronisation state\n" );
+         memset( (void *)address, 0, pagesize );
+ 
+         if (debug_level)

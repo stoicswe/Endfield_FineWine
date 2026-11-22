@@ -1,7 +1,7 @@
 /* Direct3D 11 drawing into a window through a swap chain, the way every game does it: create
  * the window, device and swap chain, clear to a colour, present a few frames, and read the
  * back buffer to see the colour is there. Prints "d3d11-window: ok" or what went wrong.
- * Usage: d3d11-window.exe [x y [width height [seconds]]]  (the window's position, the size of
+ * Usage: d3d11-window.exe [x y [width height [seconds [sync interval]]]]  (the window's position, the size of
  * the swap chain's buffers when it is not to be the window's, and how long to keep presenting). */
 #define COBJMACROS
 #include <windows.h>
@@ -86,7 +86,13 @@ int main(int argc, char **argv)
             while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageA(&msg); }
             ID3D11DeviceContext_OMSetRenderTargets(ctx, 1, &rtv, NULL);
             ID3D11DeviceContext_ClearRenderTargetView(ctx, rtv, colour);
-            if (FAILED(hr = IDXGISwapChain_Present(swap, 1, 0))) { printf("d3d11-window: present failed (%#lx)\n", hr); return 1; }
+            if (FAILED(hr = IDXGISwapChain_Present(swap, argc > 6 ? atoi(argv[6]) : 1, 0))) { printf("d3d11-window: present failed (%#lx)\n", hr); return 1; }
+            /* the program's own count of what it presented, a second at a time, to hold
+             * against what a frame counter drawn over the window (Metal's HUD) says */
+            { static DWORD second_start; static unsigned in_second; DWORD now = GetTickCount();
+              if (!second_start) second_start = now;
+              in_second++;
+              if (now - second_start >= 1000) { printf("d3d11-window: %.1f frames a second\n", in_second * 1000.0 / (now - second_start)); second_start = now; in_second = 0; } }
         }
     }
     else Sleep(1500);

@@ -107,6 +107,12 @@ int main(int argc, char **argv)
         r = vkQueuePresentKHR(queue, &pr);
         if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) { printf("vulkan-upscale: present returned %d\n", r); return 1; }
         if (!frames++) printf("vulkan-upscale: ready %ux%u\n", sci.imageExtent.width, sci.imageExtent.height);
+        /* the program's own count of what it presented, a second at a time, to hold against
+         * what a frame counter drawn over the window (Metal's HUD) says */
+        { static DWORD second_start; static unsigned in_second; DWORD now = GetTickCount();
+          if (!second_start) second_start = now;
+          in_second++;
+          if (now - second_start >= 1000) { printf("vulkan-upscale: %.1f frames a second\n", in_second * 1000.0 / (now - second_start)); second_start = now; in_second = 0; } }
         while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) DispatchMessageA(&msg);
     }
     vkDeviceWaitIdle(dev);
