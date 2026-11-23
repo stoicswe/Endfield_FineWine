@@ -172,6 +172,13 @@ This directory does not contain Wine itself — only diffs to be applied to a Wi
 Applied by `scripts/build-finewine-runtime.sh` on top of `patches/ARM` (minus the two x86-only
 kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21.
 
+- `0057-ws2_32-wintrust-what-honkai-star-rail-needs-to-start.patch`: for a program whose file
+  is `StarRail.exe`, the first `connect` is refused and the first signature-catalogue lookup
+  answers with success, the two special cases the Linux builds that run the game carry.
+  Without them the game ends about ten seconds after it starts. `FINEWINE_STARRAIL_WORKAROUNDS`
+  `=0` turns them off (a prefix setting), `=1` on for any program. Tested by
+  `tests/runtime/starrail-start.c`; not tried with the game. Write-up:
+  [`docs/project-information/24-steam-stand-in-for-hoyoverse.md`](../docs/project-information/24-steam-stand-in-for-hoyoverse.md).
 - `0056-comdlg32-shell32-winemac-the-mac-s-open-and-save-panels-for-the-file-dialogs.patch`:
   a program that asks for a file or a folder (the item dialog, `GetOpenFileName` and
   `GetSaveFileName`, `SHBrowseForFolder`) gets the Mac's open or save panel in place of
@@ -565,6 +572,9 @@ FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`, and i
   Direct3D 11 upscaling of `0004` can be switched while a program runs. `FINEWINE_METALFX_AUTO=0`
   only says it starts off; the notification state `finewine.metalfx.<process id>` (1 on, 2 off)
   overrides it. `FINEWINE_METALFX_SWAPCHAIN=0` turns the mechanism off.
+- `0009-config-honkai-star-rail-gets-the-gpu-identity-of-its-sister-games.patch`: adds
+  `StarRail.exe` to DXMT's built-in setting that reports an AMD Radeon Pro 5300M to Genshin
+  Impact and Zenless Zone Zero; it had been told "Apple M5" with vendor and device id 0.
 - `0008-winemetal-pointers-of-32-bit-programs-in-finewine-s-memory-window.patch`: DXMT for
   32-bit programs. `scripts/build-dxmt.sh` builds DXMT's Windows DLLs a second time for 32-bit
   x86 (DXMT's own `build-win32.txt`) into `lib/dxmt/i386-windows` and

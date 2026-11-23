@@ -42,6 +42,8 @@ public enum RuntimeCapability: String, CaseIterable, Codable, Sendable {
     case macIcons
     /// The Mac's open and save panels in place of Wine's file dialogs.
     case macFileDialogs
+    /// The two start-up workarounds for Honkai: Star Rail (runtime patch 0057).
+    case starRailWorkarounds
 }
 
 /// `runtime.json`: the description of a Wine build FineWine can run programs with. In a

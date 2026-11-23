@@ -256,6 +256,8 @@
 "config.game_mode_desc" = "يتم بدء البرامج التي تستخدم Direct3D أو Vulkan أو OpenGL كألعاب، بحيث يقوم macOS بتفعيل نمط اللعب أثناء وجودها في وضع ملء الشاشة. يتم التعرف على البرنامج الذي يبدأ بواسطة مشغل بدءاً من تشغيله الثاني.";
 "config.hoyoverse_steam_title" = "بدء ألعاب HoYoverse كما يفعل Steam";
 "config.hoyoverse_steam_desc" = "يتم تشغيل Genshin Impact و Zenless Zone Zero و Honkai Impact 3rd ومشغل HoYoPlay من خلال بديل لعميل Steam، بالطريقة التي تعمل بها على Linux. يتم إخبار اللعبة بأنها بدأت بواسطة Steam، وهي ليست منصة تدعمها HoYoverse على Mac؛ استخدمها على مسؤولية حسابك الخاصة.";
+"config.star_rail_title" = "حلول بدء تشغيل Honkai: Star Rail";
+"config.star_rail_desc" = "تنتهي اللعبة بعد ثوانٍ من بدئها ما لم يُرفض أول اتصال شبكي لها ويظهر أول فحص لتواقيع ملفات Windows كأنه نجح. يفعل FineWine الأمرين مع StarRail.exe، كما تفعل إصدارات Linux التي تشغّل اللعبة. هذا يتجاوز فحصًا خاصًا باللعبة؛ أوقفه إن كنت لا ترغب في ذلك.";
 "config.metal_hud_title" = "البدء مع ظهور طبقة أداء Metal";
 "config.metal_hud_desc" = "معدل الإطارات وإحصاءات GPU فوق اللعبة. في كلتا الحالتين، يمكن إظهارها وإخفاؤها أثناء تشغيل اللعبة: العرض > Metal HUD في شريط القوائم، أو Option-F12.";
 "config.perf_card" = "الأداء والتوافق";

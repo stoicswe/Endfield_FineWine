@@ -1,0 +1,176 @@
+ws2_32, wintrust: what Honkai: Star Rail needs to start
+
+Under Wine the game ends about ten seconds after it starts, after its engine and sound are
+up, with nothing in its log (seen in FineWine issue 128's logs). The Linux builds that run it
+carry two special cases for it, and these are the same two:
+
+- ws2_32: the program's first call to connect fails with WSAECONNREFUSED; later ones are
+  untouched.
+- wintrust: the first lookup of a file in the system's signature catalogues appears to
+  succeed. Wine has no catalogues, so the first call of each of the three functions the lookup
+  uses (CryptCATAdminEnumCatalogFromHash, CryptCATCatalogInfoFromContext,
+  CryptCATAdminReleaseCatalogContext) answers with success. The handle that is handed out is
+  made up; the two other functions recognise it at any time and never read or free it, and
+  nothing follows it in an enumeration.
+
+Both apply to a program whose file is StarRail.exe. FINEWINE_STARRAIL_WORKAROUNDS=0 turns them
+off (the app's prefix setting "Start-up workarounds for Honkai: Star Rail"), =1 turns them on
+for any program, which is how tests/runtime/starrail-start.c asks for them.
+
+These get the game past a check of its own; that is a decision of the project's owner
+(2026-11-23). Not tried with the game itself when written.
+
+diff --git a/dlls/wintrust/crypt.c b/dlls/wintrust/crypt.c
+index ad6f264..1a311c2 100644
+--- a/dlls/wintrust/crypt.c
++++ b/dlls/wintrust/crypt.c
+@@ -463,6 +463,38 @@ BOOL WINAPI CryptCATAdminCalcHashFromFileHandle2(HCATADMIN catAdmin, HANDLE hFil
+ /***********************************************************************
+  *             CryptCATAdminEnumCatalogFromHash (WINTRUST.@)
+  */
++/* FineWine: Honkai: Star Rail does not start under Wine unless the first lookup of a file in
++ * the system's signature catalogues appears to succeed (and see connect in ws2_32/socket.c).
++ * Wine has no catalogues, so the first call of each of the three functions the lookup uses
++ * answers with success. This is what the Linux builds that run the game do; it is keyed on the
++ * program's file name, StarRail.exe, and FINEWINE_STARRAIL_WORKAROUNDS=0 turns it off
++ * (1 turns it on for any program). */
++#define FINEWINE_FAKE_CATINFO ((HCATINFO)1)
++
++static BOOL starrail_catalog_answer(void)
++{
++    static LONG cache = -1;
++
++    if (cache == -1)
++    {
++        const WCHAR *p, *name = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
++        WCHAR env[8];
++        DWORD len = GetEnvironmentVariableW(L"FINEWINE_STARRAIL_WORKAROUNDS", env, ARRAY_SIZE(env));
++        LONG wanted = 0;
++
++        if (len == 1 && env[0] == '0') wanted = 0;
++        else if (len == 1 && env[0] == '1') wanted = 1;
++        else if (name)
++        {
++            if ((p = wcsrchr(name, '/'))) name = p + 1;
++            if ((p = wcsrchr(name, '\\'))) name = p + 1;
++            wanted = !lstrcmpiW(name, L"StarRail.exe");
++        }
++        InterlockedCompareExchange(&cache, wanted, -1);
++    }
++    return cache;
++}
++
+ HCATINFO WINAPI CryptCATAdminEnumCatalogFromHash(HCATADMIN hCatAdmin, BYTE* pbHash,
+                                                  DWORD cbHash, DWORD dwFlags,
+                                                  HCATINFO* phPrevCatInfo )
+@@ -479,11 +511,25 @@ HCATINFO WINAPI CryptCATAdminEnumCatalogFromHash(HCATADMIN hCatAdmin, BYTE* pbHa
+ 
+     TRACE("%p %p %ld %lx %p\n", hCatAdmin, pbHash, cbHash, dwFlags, phPrevCatInfo);
+ 
++    {
++        static LONG once;
++        if (!once && starrail_catalog_answer() && !InterlockedExchange(&once, 1))
++        {
++            WARN("FineWine: answering the first catalogue lookup with success (Star Rail start-up)\n");
++            return FINEWINE_FAKE_CATINFO;
++        }
++    }
++
+     if (!ca || ca->magic != CATADMIN_MAGIC || !pbHash || cbHash != 20 || dwFlags)
+     {
+         SetLastError(ERROR_INVALID_PARAMETER);
+         return NULL;
+     }
++    if (phPrevCatInfo && *phPrevCatInfo == FINEWINE_FAKE_CATINFO)   /* nothing follows the made-up one */
++    {
++        SetLastError(ERROR_NOT_FOUND);
++        return NULL;
++    }
+     if (phPrevCatInfo) prev = *phPrevCatInfo;
+ 
+     ret = CryptAcquireContextW(&prov, NULL, MS_DEF_PROV_W, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT);
+@@ -604,6 +650,12 @@ BOOL WINAPI CryptCATAdminReleaseCatalogContext(HCATADMIN hCatAdmin,
+ 
+     TRACE("%p %p %lx\n", hCatAdmin, hCatInfo, dwFlags);
+ 
++    {
++        static LONG once;
++        if (!once && starrail_catalog_answer() && !InterlockedExchange(&once, 1)) return TRUE;
++    }
++    if (hCatInfo == FINEWINE_FAKE_CATINFO) return TRUE;   /* never a real one: not to be read or freed */
++
+     if (!ca || ca->magic != CATADMIN_MAGIC || !ci || ci->magic != CATINFO_MAGIC)
+     {
+         SetLastError(ERROR_INVALID_PARAMETER);
+@@ -1026,6 +1078,16 @@ BOOL WINAPI CryptCATCatalogInfoFromContext(HCATINFO hcatinfo, CATALOG_INFO *info
+ 
+     TRACE("%p, %p, %lx\n", hcatinfo, info, flags);
+ 
++    {
++        static LONG once;
++        if (!once && starrail_catalog_answer() && !InterlockedExchange(&once, 1)) return TRUE;
++    }
++    if (hcatinfo == FINEWINE_FAKE_CATINFO)   /* never a real one: not to be read */
++    {
++        if (info && info->cbStruct == sizeof(*info)) info->wszCatalogFile[0] = 0;
++        return TRUE;
++    }
++
+     if (!hcatinfo || hcatinfo == INVALID_HANDLE_VALUE || ci->magic != CATINFO_MAGIC ||
+         flags || !info || info->cbStruct != sizeof(*info))
+     {
+diff --git a/dlls/ws2_32/socket.c b/dlls/ws2_32/socket.c
+index b398d80..de40370 100644
+--- a/dlls/ws2_32/socket.c
++++ b/dlls/ws2_32/socket.c
+@@ -1367,6 +1367,36 @@ int WINAPI closesocket( SOCKET s )
+ /***********************************************************************
+  *      connect   (ws2_32.4)
+  */
++/* FineWine: Honkai: Star Rail does not start under Wine unless its first connection is refused
++ * (and see wintrust/crypt.c). This is what the Linux builds that run the game do; it is keyed on
++ * the program's file name, StarRail.exe, and FINEWINE_STARRAIL_WORKAROUNDS=0 turns it off.
++ * FINEWINE_STARRAIL_WORKAROUNDS=1 turns it on for any program, for trying it on another one. */
++static BOOL refuse_first_connection(void)
++{
++    static LONG state = -1;     /* -1 not looked at yet, 0 no, 1 yes and still to do, 2 done */
++    LONG current = state;
++
++    if (current == -1)
++    {
++        const WCHAR *p, *name = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
++        WCHAR env[8];
++        DWORD len = GetEnvironmentVariableW( L"FINEWINE_STARRAIL_WORKAROUNDS", env, ARRAY_SIZE(env) );
++        BOOL wanted = FALSE;
++
++        if (len == 1 && env[0] == '0') wanted = FALSE;
++        else if (len == 1 && env[0] == '1') wanted = TRUE;
++        else if (name)
++        {
++            if ((p = wcsrchr( name, '/' ))) name = p + 1;
++            if ((p = wcsrchr( name, '\\' ))) name = p + 1;
++            wanted = !wcsicmp( name, L"StarRail.exe" );
++        }
++        InterlockedCompareExchange( &state, wanted, -1 );
++        current = state;
++    }
++    return current == 1 && InterlockedCompareExchange( &state, 2, 1 ) == 1;
++}
++
+ int WINAPI connect( SOCKET s, const struct sockaddr *addr, int len )
+ {
+     struct afd_connect_params *params;
+@@ -1376,6 +1406,13 @@ int WINAPI connect( SOCKET s, const struct sockaddr *addr, int len )
+ 
+     TRACE( "socket %#Ix, addr %s, len %d\n", s, debugstr_sockaddr(addr), len );
+ 
++    if (refuse_first_connection())
++    {
++        WARN( "FineWine: refusing the program's first connection (Star Rail start-up)\n" );
++        SetLastError( WSAECONNREFUSED );
++        return SOCKET_ERROR;
++    }
++
+     if (!(sync_event = get_sync_event())) return -1;
+ 
+     if (!(params = malloc( sizeof(*params) + len )))

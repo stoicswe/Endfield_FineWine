@@ -208,6 +208,21 @@ else
   else
     fail "could not build tests/runtime/code-rewrite-silent.c"; tail -n 3 "$WORK/code-rewrite-silent-build.log"
   fi
+  # Honkai: Star Rail's two start-up workarounds (runtime patch 0057): the first connection is
+  # refused and the first signature-catalogue lookup succeeds, for StarRail.exe or when asked
+  # for by FINEWINE_STARRAIL_WORKAROUNDS=1, and not otherwise.
+  if "$MINGW" -O1 -o "$WORK/starrail-start.exe" "$REPO/tests/runtime/starrail-start.c" -lws2_32 -lwintrust >"$WORK/starrail-build.log" 2>&1 \
+     && cp "$WORK/starrail-start.exe" "$WORK/StarRail.exe"; then
+    a="$(FINEWINE_STARRAIL_WORKAROUNDS=1 "$RT/bin/wine" "$WORK/starrail-start.exe" on </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    b="$("$RT/bin/wine" "$WORK/starrail-start.exe" off </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    c="$("$RT/bin/wine" "$WORK/StarRail.exe" on </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    d="$(FINEWINE_STARRAIL_WORKAROUNDS=0 "$RT/bin/wine" "$WORK/StarRail.exe" off </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$a|$b|$c|$d" in "starrail-start: on ok|starrail-start: off ok|starrail-start: on ok|starrail-start: off ok")
+        pass "Star Rail start-up workarounds: on for StarRail.exe and when asked for, off for other programs and when switched off" ;;
+      *) fail "Star Rail start-up workarounds: asked for: '$a'; another program: '$b'; StarRail.exe: '$c'; switched off: '$d'" ;; esac
+  else
+    fail "could not build tests/runtime/starrail-start.c"; tail -n 3 "$WORK/starrail-build.log"
+  fi
   # The emulator commits its own memory in the fault handler, also while translated code runs.
   # Registers, vector registers, flags, the x87 stack and MXCSR must come back unchanged from
   # such a fault: 192 threads each call 2048 fresh functions with all of them loaded.

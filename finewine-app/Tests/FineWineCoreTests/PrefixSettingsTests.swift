@@ -449,6 +449,18 @@ final class PrefixSettingsTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(PrefixSettings.self, from: unknown).nonUnicodeLanguage, .automatic)
     }
 
+    func testStarRailWorkaroundsAreOnAndTurnOffWithAVariable() throws {
+        var settings = PrefixSettings()
+        XCTAssertTrue(settings.starRailWorkarounds)
+        XCTAssertNil(settings.environmentVariables().first { $0.0 == "FINEWINE_STARRAIL_WORKAROUNDS" })
+        settings.starRailWorkarounds = false
+        XCTAssertEqual(settings.environmentVariables().first { $0.0 == "FINEWINE_STARRAIL_WORKAROUNDS" }?.1, "0")
+        XCTAssertNil(settings.environmentVariables(supporting: []).first { $0.0 == "FINEWINE_STARRAIL_WORKAROUNDS" },
+                     "a runtime without the workarounds is not sent their switch")
+        XCTAssertTrue(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).starRailWorkarounds,
+                      "a prefix saved before the setting existed has it on")
+    }
+
     func testMacFileDialogsAreOnAndTurnOffWithAVariable() throws {
         var settings = PrefixSettings()
         XCTAssertTrue(settings.macFileDialogs)

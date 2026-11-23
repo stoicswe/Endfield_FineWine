@@ -237,6 +237,11 @@ struct ConfigurationTab: View {
                     Text(l10n.tr("config.hoyoverse_steam_desc"))
                 }
                 .disabled(lacks(.steamStandIn))
+                Toggle(isOn: $draft.starRailWorkarounds) {
+                    Text(l10n.tr("config.star_rail_title"))
+                    Text(l10n.tr("config.star_rail_desc"))
+                }
+                .disabled(lacks(.starRailWorkarounds))
                 Divider()
                 Toggle(isOn: $draft.metalHUD) {
                     Text(l10n.tr("config.metal_hud_title"))

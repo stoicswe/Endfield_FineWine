@@ -257,6 +257,8 @@
 "config.game_mode_desc" = "Direct3D、Vulkan、OpenGL を使用するプログラムをゲームとして起動し、全画面時に macOS のゲームモードを有効にします。";
 "config.hoyoverse_steam_title" = "HoYoverse ゲームを Steam 偽装で起動";
 "config.hoyoverse_steam_desc" = "原神、ゼンレスゾーンゼロ、崩壊3rd、HoYoPlay ランチャーを Steam スタンドイン経由で起動します（Linux と同様）。アカウントのリスクはご自身で判断してください。";
+"config.star_rail_title" = "「崩壊：スターレイル」の起動回避策";
+"config.star_rail_desc" = "このゲームは、最初のネットワーク接続が拒否され、Windows のファイル署名の最初の確認が成功したように見えないかぎり、起動して数秒で終了します。FineWine は StarRail.exe に対してこの両方を行います（ゲームを動かす Linux 向けビルドと同じ方法）。ゲーム自身の確認を通過させるものなので、望まない場合はオフにしてください。";
 "config.metal_hud_title" = "Metal パフォーマンスオーバーレイ (HUD) を表示して起動";
 "config.metal_hud_desc" = "画面上部にリアルタイムのフレームレートと GPU 統計を表示します。Option-F12 やメニューバーでいつでも切り替え可能です。";
 "config.perf_card" = "パフォーマンスと互換性";

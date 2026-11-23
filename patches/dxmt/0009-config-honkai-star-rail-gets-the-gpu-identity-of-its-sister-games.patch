@@ -1,0 +1,25 @@
+config: Honkai: Star Rail gets the GPU identity of Genshin Impact and Zenless Zone Zero
+
+DXMT has a built-in setting for GenshinImpact.exe, YuanShen.exe and ZenlessZoneZero.exe that
+reports the GPU as an AMD Radeon Pro 5300M (vendor 1002, device 7340), the graphics of an Intel
+MacBook Pro. StarRail.exe was not in the list, so the game was told "Apple M5" with vendor and
+device id 0 (its Player.log: "Renderer: Apple M5 (ID=0x0)" and a vendor name that is not text).
+
+The game's engine got past creating its Direct3D device with that, so this is not known to be
+why it failed to start; it removes a difference from the two games that do. See Wine runtime
+patch 0057 for what the game needs to start at all.
+
+diff --git a/src/util/config/config.cpp b/src/util/config/config.cpp
+--- a/src/util/config/config.cpp
++++ b/src/util/config/config.cpp
+@@ -41,7 +41,9 @@
+ 
+ 
+   const static ProfileList g_profiles = {{
+-    { R"(\\(GenshinImpact|YuanShen|ZenlessZoneZero)\.exe$)", {{
++    /* FineWine: Honkai: Star Rail gets the identity its two sister games get. Without it the
++     * game is told "Apple M5" with vendor and device id 0. */
++    { R"(\\(GenshinImpact|YuanShen|ZenlessZoneZero|StarRail)\.exe$)", {{
+       { "dxgi.customDeviceDesc",   "AMD Radeon Pro 5300M" },
+       { "dxgi.customVendorId",     "1002" },
+       { "dxgi.customDeviceId",     "7340" },

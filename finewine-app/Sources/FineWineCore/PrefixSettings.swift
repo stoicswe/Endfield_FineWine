@@ -314,6 +314,9 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// iCloud and search, and no drive Z: to find one's way through. A dialog a program has
     /// put controls of its own into stays Wine's. On by default.
     public var macFileDialogs: Bool = true
+    /// Honkai: Star Rail's first connection is refused and its first signature-catalogue
+    /// lookup answered with success, without which it does not start (runtime patch 0057).
+    public var starRailWorkarounds: Bool = true
     /// Windows' "Language for non-Unicode programs". See `NonUnicodeLanguage`.
     public var nonUnicodeLanguage: NonUnicodeLanguage = .automatic
 
@@ -373,6 +376,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         fullScreenMode = try c.decodeIfPresent(FullScreenMode.self, forKey: .fullScreenMode) ?? d.fullScreenMode
         macStyleIcons = try c.decodeIfPresent(Bool.self, forKey: .macStyleIcons) ?? d.macStyleIcons
         macFileDialogs = try c.decodeIfPresent(Bool.self, forKey: .macFileDialogs) ?? d.macFileDialogs
+        starRailWorkarounds = try c.decodeIfPresent(Bool.self, forKey: .starRailWorkarounds) ?? d.starRailWorkarounds
         // An unknown value (from a newer FineWine) falls back to automatic.
         nonUnicodeLanguage = (try? c.decodeIfPresent(NonUnicodeLanguage.self, forKey: .nonUnicodeLanguage)) ?? d.nonUnicodeLanguage
     }
@@ -504,6 +508,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         }
         if has(.macIcons), !macStyleIcons { out.append(("FINEWINE_MAC_ICONS", "0")) }
         if has(.macFileDialogs), !macFileDialogs { out.append(("FINEWINE_NATIVE_FILE_DIALOGS", "0")) }
+        if has(.starRailWorkarounds), !starRailWorkarounds { out.append(("FINEWINE_STARRAIL_WORKAROUNDS", "0")) }
         if has(.emulator), hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
         if has(.zeroPages), zeroPages { out.append(("FINEWINE_ZERO_PAGES", "1")) }
         if has(.emulator), compactBlockRecords { out.append(("FEX_COMPACTBLOCKRECORDS", "1")) }
