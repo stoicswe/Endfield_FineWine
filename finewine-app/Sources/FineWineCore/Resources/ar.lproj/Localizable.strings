@@ -652,3 +652,11 @@
 "steam.launch_options_problem" = "لا يستطيع Steam تشغيل هذه الألعاب عبر FineWine: %@. خيارات التشغيل فيها تبدأ بإعدادات بالصيغة NAME=value، وهي صيغة لا تفهمها إلا أدوات NotProton نفسها (يعرض Steam «OS Error 260»). في Steam، افتح خصائص اللعبة وامسح خيارات التشغيل.";
 "steam.hide_prefixes_title" = "إخفاء حاويات ألعاب Steam";
 "steam.hide_prefixes_desc" = "لكل لعبة تُشغَّل من Steam حاوية خاصة بها. عند التفعيل: لا تظهر في قوائم FineWine؛ تبقى في مكانها ويستمر Steam في تشغيلها.";
+
+/* Collecting logs for a bug report */
+"context.collect_logs" = "جمع السجلات…";
+"tools.collect_logs_label" = "جمع السجلات لتقرير خطأ";
+"tools.collect_logs_detail" = "يضع سجلات FineWine وسجلات البرامج نفسها وتقارير الأعطال في ملف zip واحد لإرفاقه ببلاغ. يُحذف اسم حسابك من المسارات. قد تذكر سجلات اللعبة نفسها حساب اللعبة الخاص بك، لذا راجع الملف قبل نشره.";
+"tools.collect_logs_btn" = "جمع السجلات…";
+"splash.collecting_logs" = "جارٍ جمع السجلات…";
+"dialog.err_collect_logs" = "تعذّر جمع السجلات";

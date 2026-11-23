@@ -657,3 +657,11 @@
 "steam.launch_options_problem" = "Steam 无法通过 FineWine 启动这些游戏：%@。它们的启动选项以 NAME=value 形式的设置开头，只有 NotProton 自带的工具能识别（Steam 会提示“OS Error 260”）。请在 Steam 中打开游戏的“属性”，清空“启动选项”。";
 "steam.hide_prefixes_title" = "隐藏 Steam 游戏的前缀";
 "steam.hide_prefixes_desc" = "从 Steam 启动的每个游戏都有自己的前缀。开启后：它们不会出现在 FineWine 的列表中；前缀仍然保留，Steam 仍可启动这些游戏。";
+
+/* Collecting logs for a bug report */
+"context.collect_logs" = "收集日志…";
+"tools.collect_logs_label" = "收集日志用于问题反馈";
+"tools.collect_logs_detail" = "将 FineWine 日志、程序自身的日志和崩溃报告打包为一个 zip 文件，便于附加到 Issue。路径中的账户名会被移除。游戏自身的日志可能包含你的游戏账号信息，发布前请先检查文件内容。";
+"tools.collect_logs_btn" = "收集日志…";
+"splash.collecting_logs" = "正在收集日志…";
+"dialog.err_collect_logs" = "无法收集日志";

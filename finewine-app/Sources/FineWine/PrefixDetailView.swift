@@ -233,6 +233,7 @@ private struct ProgramCard: View {
                         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
                         NSWorkspace.shared.open(logs)
                     }
+                    Button(l10n.tr("context.collect_logs")) { Task { await model.collectLogs(for: prefix) } }
                 }
                 Divider()
                 Button(l10n.tr("detail.remove_from_finewine"), role: .destructive) { confirmingRemoval = true }
@@ -492,6 +493,11 @@ private struct ToolsTab: View {
                         NSWorkspace.shared.open(logs)
                     }
                     .fwButton()
+                }
+                Divider()
+                Row(label: l10n.tr("tools.collect_logs_label"), detail: l10n.tr("tools.collect_logs_detail")) {
+                    Button(l10n.tr("tools.collect_logs_btn")) { Task { await model.collectLogs(for: prefix) } }
+                        .fwButton()
                 }
             }
         }

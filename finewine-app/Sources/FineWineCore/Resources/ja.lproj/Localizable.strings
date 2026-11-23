@@ -657,3 +657,11 @@
 "steam.launch_options_problem" = "次のゲームは FineWine では Steam から起動できません: %@。起動オプションが NAME=value 形式の設定で始まっており、これは NotProton 自身のツールでのみ有効です（Steam は「OS Error 260」と表示します）。Steam でゲームの「プロパティ」を開き、「起動オプション」を消去してください。";
 "steam.hide_prefixes_title" = "Steam ゲームのプレフィックスを隠す";
 "steam.hide_prefixes_desc" = "Steam から起動した各ゲームには専用のプレフィックスがあります。オン: FineWine の一覧に表示しません。プレフィックスはそのまま残り、Steam からは引き続き起動できます。";
+
+/* Collecting logs for a bug report */
+"context.collect_logs" = "ログを収集…";
+"tools.collect_logs_label" = "バグ報告用にログを収集";
+"tools.collect_logs_detail" = "FineWine のログ、プログラム自身のログ、クラッシュレポートを 1 つの zip ファイルにまとめ、Issue に添付できるようにします。パス内のアカウント名は削除されます。 ゲーム自身のログにはゲームアカウントの情報が含まれる場合があるため、投稿前に内容を確認してください。";
+"tools.collect_logs_btn" = "ログを収集…";
+"splash.collecting_logs" = "ログを収集中…";
+"dialog.err_collect_logs" = "ログを収集できませんでした";

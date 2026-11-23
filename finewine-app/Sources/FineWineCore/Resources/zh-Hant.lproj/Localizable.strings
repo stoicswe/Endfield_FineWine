@@ -657,3 +657,11 @@
 "steam.launch_options_problem" = "Steam 無法透過 FineWine 啟動這些遊戲：%@。它們的啟動選項以 NAME=value 形式的設定開頭，只有 NotProton 內建的工具能辨識（Steam 會顯示「OS Error 260」）。請在 Steam 中打開遊戲的「內容」，清除「啟動選項」。";
 "steam.hide_prefixes_title" = "隱藏 Steam 遊戲的前置環境";
 "steam.hide_prefixes_desc" = "從 Steam 啟動的每個遊戲都有自己的前置環境。開啟後：它們不會出現在 FineWine 的列表中；前置環境仍然保留，Steam 仍可啟動這些遊戲。";
+
+/* Collecting logs for a bug report */
+"context.collect_logs" = "收集記錄檔…";
+"tools.collect_logs_label" = "收集記錄檔以回報問題";
+"tools.collect_logs_detail" = "將 FineWine 記錄檔、程式本身的記錄檔和當機報告打包成一個 zip 檔，方便附加到 Issue。路徑中的帳號名稱會被移除。遊戲本身的記錄檔可能包含你的遊戲帳號資訊，發布前請先檢查檔案內容。";
+"tools.collect_logs_btn" = "收集記錄檔…";
+"splash.collecting_logs" = "正在收集記錄檔…";
+"dialog.err_collect_logs" = "無法收集記錄檔";

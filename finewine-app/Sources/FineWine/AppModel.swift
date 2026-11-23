@@ -502,6 +502,26 @@ final class AppModel: ObservableObject {
         refreshAlive()
     }
 
+    // MARK: Logs
+
+    /// Asks where to save, then gathers the prefix's logs into a zip file there (see
+    /// `LogCollector`) and shows it in the Finder, ready to attach to a bug report.
+    func collectLogs(for prefix: Prefix) async {
+        let collector = LogCollector(paths: service.paths)
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = collector.suggestedFileName(for: prefix)
+        panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        panel.allowedContentTypes = [.zip]
+        panel.canCreateDirectories = true
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let target = panel.url else { return }
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let done = await work(on: nil, tr("splash.collecting_logs"), failure: tr("dialog.err_collect_logs")) { service in
+            try collector.collect(for: prefix, runtime: try? service.runtime(for: prefix), appVersion: version, into: target)
+        }
+        if done != nil { NSWorkspace.shared.activateFileViewerSelecting([target]) }
+    }
+
     // MARK: Discord
 
     private static let discordEnabledKey = "DiscordPresence"

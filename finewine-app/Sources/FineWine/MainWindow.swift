@@ -634,6 +634,7 @@ struct PrefixContextMenu: View {
             try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
             NSWorkspace.shared.open(logs)
         }
+        Button(l10n.tr("context.collect_logs")) { Task { await model.collectLogs(for: prefix) } }
         Divider()
         Button(l10n.tr("context.shut_down")) { Task { await model.shutDown(prefix) } }.disabled(busy || !model.isRunning(prefix))
         Button(l10n.tr("context.force_shut_down")) { Task { await model.forceShutDown(prefix) } }.disabled(busy)

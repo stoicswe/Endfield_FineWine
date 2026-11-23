@@ -699,3 +699,11 @@
 "runtime_move.moving_msg" = "Moving runtime to new location…";
 "runtime_move.action_button" = "Move Runtime";
 "dialog.err_runtime_move" = "Could Not Move Runtime";
+
+/* Collecting logs for a bug report */
+"context.collect_logs" = "Collect Logs…";
+"tools.collect_logs_label" = "Collect logs for a bug report";
+"tools.collect_logs_detail" = "Puts FineWine's logs, the programs' own logs and crash reports into one zip file to attach to an issue. Your account name is removed from paths. A game's own logs can name your game account, so look through the file before posting it.";
+"tools.collect_logs_btn" = "Collect Logs…";
+"splash.collecting_logs" = "Collecting logs…";
+"dialog.err_collect_logs" = "The logs couldn't be collected";
