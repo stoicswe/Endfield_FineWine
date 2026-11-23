@@ -40,6 +40,8 @@ public enum RuntimeCapability: String, CaseIterable, Codable, Sendable {
     case zeroPages
     /// Windows icons redrawn in the Mac's shape for the Dock.
     case macIcons
+    /// The Mac's open and save panels in place of Wine's file dialogs.
+    case macFileDialogs
 }
 
 /// `runtime.json`: the description of a Wine build FineWine can run programs with. In a

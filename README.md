@@ -95,6 +95,7 @@ More:
 
 - [docs/performance.md](docs/performance.md) — FPS targets per chip, thermals, swap pressure and tuning for the patched CrossOver.
 - [docs/14-performance-on-16gb-macs.md](docs/14-performance-on-16gb-macs.md) — 16 GB machines.
+- [docs/project-information/32-mac-file-panels.md](docs/project-information/32-mac-file-panels.md) — the Mac's open and save panels in place of Wine's file dialogs.
 - [docs/project-information/31-direct3d-9-on-vulkan.md](docs/project-information/31-direct3d-9-on-vulkan.md) — Direct3D 9 on Vulkan (DXVK): what is built, what was fixed, and where it stopped.
 - [docs/project-information/22-performance.md](docs/project-information/22-performance.md) and [29-performance-analysis.md](docs/project-information/29-performance-analysis.md) — the FineWine runtime's measurements.
 

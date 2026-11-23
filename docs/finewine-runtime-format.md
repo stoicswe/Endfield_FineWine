@@ -86,6 +86,7 @@ out and nothing is passed to the runtime for it.
 | `emulator` | The FEX settings | `FEX_HIDEHYPERVISORBIT`, `FEX_COMPACTBLOCKRECORDS` |
 | `zeroPages` | Zero pages | `FINEWINE_ZERO_PAGES` |
 | `macIcons` | Mac-style icons | `FINEWINE_MAC_ICONS` |
+| `macFileDialogs` | Mac open and save panels | `FINEWINE_NATIVE_FILE_DIALOGS` |
 
 Settings that are written to the prefix's registry (Windows version, Retina mode, DPI, virtual
 desktop, DLL overrides, the Option keys) work with any Wine and need no capability.

@@ -46,6 +46,8 @@ BREW="$(command -v brew || echo /opt/homebrew/bin/brew)"
 export PATH="$("$BREW" --prefix llvm)/bin:$("$BREW" --prefix lld)/bin:$PATH"
 # No crash dialog, no menu entries, no Mono or Gecko download prompts, no debug output.
 export WINEDEBUG=-all WINEDLLOVERRIDES="winedbg.exe=d;winemenubuilder.exe=d;mscoree=d;mshtml=d"
+# DXVK writes a cache per program where it is told to, or into the folder it was started in.
+export DXVK_STATE_CACHE_PATH="$WORK"
 failed=0
 pass(){ printf '  \033[32m✓\033[0m %s\n' "$*"; }
 fail(){ printf '  \033[31m✗\033[0m %s\n' "$*"; failed=1; }
@@ -1044,6 +1046,63 @@ elif "$MINGW32" -O1 -o "$WORK/suite32.exe" "$REPO/tests/runtime/suite32.c" -luse
   fi
 else
   fail "could not build tests/runtime/suite32.c"; tail -n 3 "$WORK/suite32-build.log"
+fi
+
+# The Mac's open and save panels in place of the Windows file dialogs (runtime patch 0056).
+# The item dialog, GetOpenFileName / GetSaveFileName and SHBrowseForFolder are each given the
+# answer a person would give in the panel, as Unix paths, and must hand the program the
+# Windows paths the way the Windows dialog does. No panel appears, except in the last two
+# checks, where a real one is on screen for a second or two and nobody has to touch it.
+FDM="$REPO/build/llvm-mingw/bin"
+if [ ! -x "$FDM/x86_64-w64-mingw32-clang" ]; then
+  echo "  - file dialog checks skipped: no llvm-mingw in build/ (scripts/build-fex.sh toolchain)"
+else
+  fd_ok=1
+  for pair in "x86_64:fd-x64" "aarch64:fd-arm64" "i686:fd-32"; do
+    "$FDM/${pair%%:*}-w64-mingw32-clang" -O1 -municode -o "$WORK/${pair##*:}.exe" "$REPO/tests/runtime/file-dialogs.c" \
+      -lole32 -lshell32 -lcomdlg32 -lshlwapi -luuid >>"$WORK/fd-build.log" 2>&1 || fd_ok=0
+  done
+  if [ "$fd_ok" = 1 ]; then
+    FD="$WINEPREFIX/drive_c/fwdlg"; FDOUT="$WORK/fd outside"
+    mkdir -p "$FD/sub" "$FDOUT"; echo a > "$FD/a.txt"; echo b > "$FD/b.txt"; echo o > "$FDOUT/o.txt"
+    fdrun(){   # <answer> <filter or ""> <delay or ""> <program> <mode> [expected...]
+      local answer="$1" filter="$2" delay="$3"; shift 3
+      ( export FINEWINE_FILE_PANEL_ANSWER="$answer"
+        [ -n "$filter" ] && export FINEWINE_FILE_PANEL_ANSWER_FILTER="$filter"
+        [ -n "$delay" ] && export FINEWINE_FILE_PANEL_ANSWER_DELAY="$delay"
+        "$RT/bin/wine" "$@" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1 )
+    }
+    nl=$'\n'
+    for exe in fd-x64 fd-arm64 fd-32; do
+      bad=""
+      [ -f "$RT/lib/wine/i386-windows/ntdll.dll" ] || [ "$exe" != fd-32 ] || continue
+      e="$WORK/$exe.exe"
+      [ "$(fdrun "$FD/a.txt" 2 "" "$e" open 'C:\fwdlg\a.txt')" = "file-dialogs open: ok" ] || bad="$bad open"
+      [ "$(fdrun "$FD/a.txt$nl$FD/b.txt" "" "" "$e" open-multi 'C:\fwdlg\a.txt' 'C:\fwdlg\b.txt')" = "file-dialogs open-multi: ok" ] || bad="$bad open-multi"
+      [ "$(fdrun "$FD/sub" "" "" "$e" folder 'C:\fwdlg\sub')" = "file-dialogs folder: ok" ] || bad="$bad folder"
+      [ "$(fdrun "$FD/new file.txt" "" "" "$e" save 'C:\fwdlg\new file.txt')" = "file-dialogs save: ok" ] || bad="$bad save"
+      [ "$(fdrun "$FD/a.txt" 2 "" "$e" ofn 'C:\fwdlg\a.txt')" = "file-dialogs ofn: ok" ] || bad="$bad ofn"
+      [ "$(fdrun "$FD/a.txt$nl$FD/b.txt" "" "" "$e" ofn-multi 'C:\fwdlg' a.txt b.txt)" = "file-dialogs ofn-multi: ok" ] || bad="$bad ofn-multi"
+      [ "$(fdrun "$FD/sub" "" "" "$e" browse 'C:\fwdlg\sub')" = "file-dialogs browse: ok" ] || bad="$bad browse"
+      [ "$(fdrun cancel "" "" "$e" cancel)" = "file-dialogs cancel: ok" ] || bad="$bad cancel"
+      # outside the prefix: through drive Z:
+      [ "$(fdrun "$FDOUT/o.txt" 2 "" "$e" open "Z:$(printf '%s' "$FDOUT/o.txt" | tr / '\\')")" = "file-dialogs open: ok" ] || bad="$bad outside-the-prefix"
+      if [ -z "$bad" ]; then pass "file dialogs answer through the Mac's panels, $exe: item dialog, GetOpenFileName, SHBrowseForFolder"
+      else fail "file dialogs through the Mac's panels, $exe, wrong in:$bad"; fi
+    done
+    one="$(FINEWINE_NATIVE_FILE_DIALOGS=0 "$RT/bin/wine" "$WORK/fd-x64.exe" enabled </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    two="$("$RT/bin/wine" "$WORK/fd-x64.exe" enabled </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    case "$one|$two" in "file-dialogs enabled: no|file-dialogs enabled: yes") pass "FINEWINE_NATIVE_FILE_DIALOGS=0 turns the Mac's panels off" ;;
+      *) fail "the switch for the Mac's panels (off: '$one', on: '$two')" ;; esac
+    # With a real panel on screen: an answer that comes after a delay, and a program that
+    # closes its dialog itself.
+    one="$(fdrun "$FD/sub" "" 1200 "$WORK/fd-x64.exe" folder 'C:\fwdlg\sub')"
+    two="$(fdrun cancel "" 30000 "$WORK/fd-x64.exe" close)"
+    case "$one|$two" in "file-dialogs folder: ok|file-dialogs close: ok") pass "a real open panel is shown, answers, and closes when the program closes its dialog" ;;
+      *) fail "a real open panel (answer after a delay: '$one', closed by the program: '$two')" ;; esac
+  else
+    fail "could not build tests/runtime/file-dialogs.c"; tail -n 3 "$WORK/fd-build.log"
+  fi
 fi
 
 export WINEPREFIX="$WORK/pfx2" WINEMSYNC=1 WINEDEBUG=-all

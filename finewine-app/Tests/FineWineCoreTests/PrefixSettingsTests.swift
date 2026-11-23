@@ -448,4 +448,16 @@ final class PrefixSettingsTests: XCTestCase {
         let unknown = Data(#"{"nonUnicodeLanguage":"klingon"}"#.utf8)
         XCTAssertEqual(try JSONDecoder().decode(PrefixSettings.self, from: unknown).nonUnicodeLanguage, .automatic)
     }
+
+    func testMacFileDialogsAreOnAndTurnOffWithAVariable() throws {
+        var settings = PrefixSettings()
+        XCTAssertTrue(settings.macFileDialogs)
+        XCTAssertFalse(settings.environmentVariables().contains { $0.0 == "FINEWINE_NATIVE_FILE_DIALOGS" })
+        settings.macFileDialogs = false
+        XCTAssertTrue(settings.environmentVariables().contains { $0.0 == "FINEWINE_NATIVE_FILE_DIALOGS" && $0.1 == "0" })
+        XCTAssertFalse(settings.environmentVariables(supporting: [.msync]).contains { $0.0 == "FINEWINE_NATIVE_FILE_DIALOGS" },
+                       "a runtime without the panels is not told about them")
+        XCTAssertTrue(try JSONDecoder().decode(PrefixSettings.self, from: Data("{}".utf8)).macFileDialogs,
+                      "a prefix saved before the setting existed")
+    }
 }

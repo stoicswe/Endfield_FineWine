@@ -274,6 +274,8 @@
 "config.mac_appearance_desc" = "Windows 原生控件自动应用 macOS 的明暗外观、主题强调色与系统字体。";
 "config.mac_icons_title" = "Mac 风格的应用图标";
 "config.mac_icons_desc" = "程序在程序坞中以其最大尺寸的图标显示，并放在与 Mac 应用相同的圆角方形上。此后创建的快捷方式应用也会一致。";
+"config.mac_file_dialogs_title" = "Mac 打开与存储面板";
+"config.mac_file_dialogs_desc" = "程序请求选择文件或文件夹时，显示 Mac 自带的面板而不是 Windows 对话框：可使用访达边栏、外置磁盘、iCloud 和搜索。程序添加了自定控件的对话框仍使用 Windows 对话框。";
 "config.keyboard_card" = "键盘映射";
 "config.left_opt_alt" = "左 Option 键映射为 Alt";
 "config.right_opt_alt" = "右 Option 键映射为 Alt";

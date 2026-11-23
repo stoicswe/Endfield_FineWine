@@ -274,6 +274,8 @@
 "config.mac_appearance_desc" = "Windows 原生控制項目自動套用 macOS 的淺色或深色外觀、輔色與系統字體。";
 "config.mac_icons_title" = "Mac 風格的應用程式圖像";
 "config.mac_icons_desc" = "程式在 Dock 中以其最大尺寸的圖像顯示，並放在與 Mac 應用程式相同的圓角方形上。此後建立的捷徑應用程式也會一致。";
+"config.mac_file_dialogs_title" = "Mac 打開與儲存面板";
+"config.mac_file_dialogs_desc" = "程式要求選擇檔案或檔案夾時，顯示 Mac 內建的面板而非 Windows 對話框：可使用 Finder 側邊欄、外接磁碟、iCloud 和搜尋。程式加入自訂控制項的對話框仍使用 Windows 對話框。";
 "config.keyboard_card" = "鍵盤對應";
 "config.left_opt_alt" = "左 Option 鍵作為 Alt";
 "config.right_opt_alt" = "右 Option 鍵作為 Alt";

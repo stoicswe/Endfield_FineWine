@@ -63,8 +63,14 @@ Contents: [What it does](#what-it-does) · [Build](#build) ·
   virtual desktop, Metal overlay, full-screen behaviour (a Mac full-screen Space by default),
   Game Mode, automatic MetalFX upscaling and render size, DLSS through MetalFX, reporting an
   NVIDIA GPU, starting HoYoverse games through a Steam stand-in, MSync, the emulator's settings,
-  macOS styling for Windows controls, Mac-style app icons, Option-as-Alt, the language for
+  macOS styling for Windows controls, Mac-style app icons, the Mac's open and save panels for
+  Windows file dialogs, Option-as-Alt, the language for
   non-Unicode programs, DLL overrides, environment variables and Wine debug channels.
+- **Collecting logs.** "Collect Logs…" (a prefix's Tools, its right-click menu, a program's
+  Diagnostics menu) puts what a bug report needs into one zip file: FineWine's launch logs, the
+  logs the Windows programs wrote themselves, crash reports of Wine processes, the prefix's
+  settings and a summary of versions. Your account name is taken out of paths; a game's own
+  logs can still name a game account, so look through the file before posting it.
 - **Wine tools.** Wine Configuration, Registry Editor, Control Panel, Add or Remove Programs,
   Task Manager, File Manager, Command Prompt and Notepad, plus restart, update and
   stop-everything.
@@ -167,7 +173,7 @@ A native ARM64 Wine with everything a game needs beside it, built by the scripts
 
 | Layer | What it does | Built by | Our changes |
 |---|---|---|---|
-| **Wine 11.21** | The Windows environment, as native ARM64 code | `build-finewine-runtime.sh` | [`patches/runtime`](../patches/runtime) (55 patches) |
+| **Wine 11.21** | The Windows environment, as native ARM64 code | `build-finewine-runtime.sh` | [`patches/runtime`](../patches/runtime) (56 patches) |
 | **FEX** | Runs x64 and 32-bit Windows code inside Wine's ARM64 processes (`xtajit64.dll` and the ARM64EC library; `xtajit.dll` for 32-bit); no Rosetta | `build-fex.sh` | [`patches/fex`](../patches/fex) |
 | **DXMT** | Direct3D 10 and 11 on Metal, and NVIDIA's NGX (DLSS) as MetalFX | `build-dxmt.sh` | [`patches/dxmt`](../patches/dxmt) |
 | **MoltenVK** | Vulkan on Metal; Direct3D 12 reaches it through Wine's vkd3d | `MVK_FLAVOR=finewine build-moltenvk.sh` | [`patches/moltenvk`](../patches/moltenvk): ray tracing, MetalFX |
@@ -193,8 +199,9 @@ What the Wine patches are for:
   [29-performance-analysis.md](../docs/project-information/29-performance-analysis.md)).
 - **Behaving like a Mac game.** Full-screen Spaces, Game Mode, the Metal HUD, rounded windows,
   Dock icons, Mac fonts for Chinese, Japanese and Korean text, audio that follows the Mac's
-  output device
-  ([23-behaving-like-a-mac-game.md](../docs/project-information/23-behaving-like-a-mac-game.md)).
+  output device, the Mac's own open and save panels when a program asks for a file
+  ([23-behaving-like-a-mac-game.md](../docs/project-information/23-behaving-like-a-mac-game.md),
+  [32-mac-file-panels.md](../docs/project-information/32-mac-file-panels.md)).
 - **Graphics.** DXMT's window interface, MetalFX upscaling, the GPU a prefix reports, ray
   tracing in MoltenVK
   ([21-metal4-and-ray-tracing.md](../docs/project-information/21-metal4-and-ray-tracing.md)).

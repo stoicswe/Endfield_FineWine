@@ -309,6 +309,11 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// Draw programs' icons in the Dock (and their shortcut apps' icons) as Mac app icons: a
     /// rounded square on Apple's icon grid. See `MacIconStyle`. On by default.
     public var macStyleIcons: Bool = true
+    /// Show the Mac's own open and save panels when a program asks for a file or a folder,
+    /// in place of Wine's file dialog (runtime patch 0056): the Finder's sidebar, drives,
+    /// iCloud and search, and no drive Z: to find one's way through. A dialog a program has
+    /// put controls of its own into stays Wine's. On by default.
+    public var macFileDialogs: Bool = true
     /// Windows' "Language for non-Unicode programs". See `NonUnicodeLanguage`.
     public var nonUnicodeLanguage: NonUnicodeLanguage = .automatic
 
@@ -367,6 +372,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         renderScale = try c.decodeIfPresent(Int.self, forKey: .renderScale) ?? d.renderScale
         fullScreenMode = try c.decodeIfPresent(FullScreenMode.self, forKey: .fullScreenMode) ?? d.fullScreenMode
         macStyleIcons = try c.decodeIfPresent(Bool.self, forKey: .macStyleIcons) ?? d.macStyleIcons
+        macFileDialogs = try c.decodeIfPresent(Bool.self, forKey: .macFileDialogs) ?? d.macFileDialogs
         // An unknown value (from a newer FineWine) falls back to automatic.
         nonUnicodeLanguage = (try? c.decodeIfPresent(NonUnicodeLanguage.self, forKey: .nonUnicodeLanguage)) ?? d.nonUnicodeLanguage
     }
@@ -497,6 +503,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
             else if !metalFXUpscaling { out.append(("FINEWINE_METALFX_AUTO", "0")) }
         }
         if has(.macIcons), !macStyleIcons { out.append(("FINEWINE_MAC_ICONS", "0")) }
+        if has(.macFileDialogs), !macFileDialogs { out.append(("FINEWINE_NATIVE_FILE_DIALOGS", "0")) }
         if has(.emulator), hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
         if has(.zeroPages), zeroPages { out.append(("FINEWINE_ZERO_PAGES", "1")) }
         if has(.emulator), compactBlockRecords { out.append(("FEX_COMPACTBLOCKRECORDS", "1")) }

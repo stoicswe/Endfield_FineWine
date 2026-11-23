@@ -172,6 +172,12 @@ This directory does not contain Wine itself — only diffs to be applied to a Wi
 Applied by `scripts/build-finewine-runtime.sh` on top of `patches/ARM` (minus the two x86-only
 kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21.
 
+- `0056-comdlg32-shell32-winemac-the-mac-s-open-and-save-panels-for-the-file-dialogs.patch`:
+  a program that asks for a file or a folder (the item dialog, `GetOpenFileName` and
+  `GetSaveFileName`, `SHBrowseForFolder`) gets the Mac's open or save panel in place of
+  Wine's dialog, and Windows paths for what was chosen. Dialogs a program customises, hooks
+  or gives a template stay Wine's. `FINEWINE_NATIVE_FILE_DIALOGS=0` turns it off. See
+  `docs/project-information/32-mac-file-panels.md`.
 - `0055-server-msync-the-address-a-shared-page-is-asked-for-at-is-set.patch`: MSync mapped
   its shared pages with an uninitialised address hint; now and then the kernel found no room
   above it, and the server crashed, leaving a game with a black window. The hint is 0.

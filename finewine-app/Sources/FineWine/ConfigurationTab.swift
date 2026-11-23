@@ -285,6 +285,12 @@ struct ConfigurationTab: View {
                     Text(l10n.tr("config.mac_icons_desc"))
                 }
                 .disabled(lacks(.macIcons))
+                Divider()
+                Toggle(isOn: $draft.macFileDialogs) {
+                    Text(l10n.tr("config.mac_file_dialogs_title"))
+                    Text(l10n.tr("config.mac_file_dialogs_desc"))
+                }
+                .disabled(lacks(.macFileDialogs))
             }
 
             Card(title: l10n.tr("config.keyboard_card"), symbol: "keyboard") {

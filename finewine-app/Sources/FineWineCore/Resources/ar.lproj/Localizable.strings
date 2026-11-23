@@ -273,6 +273,8 @@
 "config.mac_appearance_desc" = "تأخذ عناصر تحكم Windows ألوان Mac الفاتحة أو الداكنة، ولون التمييز وخط Mac. يتم تحديثه عند فتح أداة Wine بعد تغيير مظهر Mac.";
 "config.mac_icons_title" = "أيقونات تطبيقات بنمط Mac";
 "config.mac_icons_desc" = "تظهر البرامج في الـ Dock وأيقونتها على المربع المستدير الحواف الخاص بأيقونات تطبيقات Mac، بأكبر حجم متوفر لدى البرنامج. تطبيقات الاختصارات التي تُنشأ من الآن فصاعداً تطابق ذلك.";
+"config.mac_file_dialogs_title" = "لوحات الفتح والحفظ في Mac";
+"config.mac_file_dialogs_desc" = "عندما يطلب برنامج ملفًا أو مجلدًا، تُعرض لوحة Mac نفسها بدلًا من لوحة Windows: مع الشريط الجانبي لـ Finder والأقراص الخارجية و iCloud والبحث. مربع الحوار الذي أضاف إليه البرنامج عناصر تحكم خاصة به يبقى مربع حوار Windows.";
 "config.keyboard_card" = "لوحة المفاتيح";
 "config.left_opt_alt" = "مفتاح Option الأيسر يعمل كـ Alt";
 "config.right_opt_alt" = "مفتاح Option الأيمن يعمل كـ Alt";

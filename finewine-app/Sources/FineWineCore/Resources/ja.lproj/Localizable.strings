@@ -274,6 +274,8 @@
 "config.mac_appearance_desc" = "Windows コントロールに Mac のライト/ダークカラー、アクセントカラー、システムフォントを適用します。";
 "config.mac_icons_title" = "Mac スタイルのアプリアイコン";
 "config.mac_icons_desc" = "プログラムは Dock で、持っている最大サイズのアイコンを Mac アプリと同じ角丸の四角形に載せて表示されます。今後作成するショートカットアプリも同じになります。";
+"config.mac_file_dialogs_title" = "Mac の開く／保存パネル";
+"config.mac_file_dialogs_desc" = "プログラムがファイルやフォルダを尋ねるとき、Windows のダイアログの代わりに Mac 標準のパネルを表示します。Finder のサイドバー、外部ドライブ、iCloud、検索が使えます。プログラムが独自のコントロールを追加したダイアログは Windows のままです。";
 "config.keyboard_card" = "キーボード";
 "config.left_opt_alt" = "左 Option キーを Alt として扱う";
 "config.right_opt_alt" = "右 Option キーを Alt として扱う";
