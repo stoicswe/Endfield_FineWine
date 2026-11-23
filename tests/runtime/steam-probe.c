@@ -41,6 +41,22 @@ int main(int argc, char **argv)
     process = pid ? OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid) : NULL;
     CHECK("ActiveProcess is running", process != NULL);
     CHECK("parent is steam.exe", parent_is_steam());
+    CHECK("library list", GetFileAttributesA("C:\\Program Files (x86)\\Steam\\steamapps\\libraryfolders.vdf") != INVALID_FILE_ATTRIBUTES);
+    {
+        /* What a program wrapped in Steam's copy protection does at its start: asks through one
+         * semaphore, and waits for its event to be set and the other semaphore to be released. */
+        HANDLE ack = CreateEventA(NULL, FALSE, FALSE, "STEAM_START_ACK_EVENT_probe");
+        HANDLE consume = OpenSemaphoreA(SEMAPHORE_ALL_ACCESS, FALSE, "STEAM_DIPC_CONSUME");
+        HANDLE produce = OpenSemaphoreA(SEMAPHORE_ALL_ACCESS, FALSE, "SREAM_DIPC_PRODUCE");
+        CHECK("start-acknowledgement semaphores", consume && produce);
+        if (consume && produce)
+        {
+            WaitForSingleObject(produce, 2000);
+            ReleaseSemaphore(consume, 1, NULL);
+            CHECK("start is acknowledged", WaitForSingleObject(ack, 5000) == WAIT_OBJECT_0);
+            CHECK("the answer is released", WaitForSingleObject(produce, 5000) == WAIT_OBJECT_0);
+        }
+    }
     fprintf(f, ok ? "steam-probe: ok\n" : "steam-probe: FAILED\n");
     fclose(f);
     return !ok;

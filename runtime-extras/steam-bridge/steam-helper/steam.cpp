@@ -1257,6 +1257,60 @@ static BOOL should_use_shell_execute(WCHAR *cmdline)
     return use_shell_execute;
 }
 
+/* FineWine, after Proton's helper: Xbox Game Studios titles run GamingRepair.exe, which takes
+ * about 20 seconds and cannot succeed here, unless this value says it already has. */
+static void set_gamingrepair_succeeded(const char *sgi)
+{
+    DWORD succeeded = 1;
+    HKEY appkey, idkey;
+
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Valve\\Steam\\Apps", 0, KEY_ALL_ACCESS | KEY_WOW64_32KEY, &appkey))
+        return;
+    if (!RegOpenKeyExA(appkey, sgi, 0, KEY_ALL_ACCESS, &idkey))
+    {
+        RegSetValueExA(idkey, "GamingRepair", 0, REG_DWORD, (BYTE *)&succeeded, sizeof(succeeded));
+        RegCloseKey(idkey);
+    }
+    RegCloseKey(appkey);
+}
+
+/* FineWine, after Proton's helper: the EA app is reached through "EA Desktop\\EA Desktop", a
+ * link to its versioned folder that its updater sometimes leaves missing. Puts it back. */
+static BOOL try_recover_eadesktop_symlink(void)
+{
+    WIN32_FIND_DATAA ff;
+    HANDLE handle, file;
+    char path[MAX_PATH];
+
+    handle = CreateFileA("C:\\Program Files\\Electronic Arts\\EA Desktop\\EA Desktop", GENERIC_READ,
+                         FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
+    if (handle != INVALID_HANDLE_VALUE || GetLastError() != ERROR_FILE_NOT_FOUND)
+    {
+        if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+        return FALSE;
+    }
+    if ((handle = FindFirstFileA("C:\\Program Files\\Electronic Arts\\EA Desktop\\*.*", &ff)) == INVALID_HANDLE_VALUE)
+        return FALSE;
+    do
+    {
+        if (!(ff.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        if (!strcmp(ff.cFileName, ".") || !strcmp(ff.cFileName, "..")) continue;
+        snprintf(path, sizeof(path), "C:\\Program Files\\Electronic Arts\\EA Desktop\\%s\\EA Desktop\\Link2EA.exe", ff.cFileName);
+        file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, 0);
+        if (file == INVALID_HANDLE_VALUE) continue;
+        CloseHandle(file);
+        snprintf(path, sizeof(path), "%s\\EA Desktop", ff.cFileName);
+        if (CreateSymbolicLinkA("C:\\Program Files\\Electronic Arts\\EA Desktop\\EA Desktop", path,
+                                SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE))
+        {
+            FindClose(handle);
+            return TRUE;
+        }
+    } while (FindNextFileA(handle, &ff));
+    FindClose(handle);
+    return FALSE;
+}
+
 static HANDLE run_process(BOOL *should_await, BOOL game_process)
 {
     static const WCHAR link2eaW[] = {'l','i','n','k','2','e','a',':','/','/',0};
@@ -1454,7 +1508,11 @@ run:
         static const WCHAR verb[] = { 'o', 'p', 'e', 'n', 0 };
         INT_PTR ret;
 
-        if ((ret = (INT_PTR)ShellExecuteW(NULL, verb, cmdline, param, NULL, hide_window ? SW_HIDE : SW_SHOWNORMAL)) < 32)
+        ret = (INT_PTR)ShellExecuteW(NULL, verb, cmdline, param, NULL, hide_window ? SW_HIDE : SW_SHOWNORMAL);
+        /* FineWine, after Proton's helper: once more when the EA app's link was missing and could be put back */
+        if (ret == SE_ERR_FNF && game_process && link2ea && try_recover_eadesktop_symlink())
+            ret = (INT_PTR)ShellExecuteW(NULL, verb, cmdline, param, NULL, hide_window ? SW_HIDE : SW_SHOWNORMAL);
+        if (ret < 32)
         {
             WINE_ERR("Failed to execute %s, ret %u.\n", wine_dbgstr_w(cmdline), (unsigned int)ret);
             if (game_process && ret == SE_ERR_NOASSOC && link2ea)
@@ -1815,6 +1873,15 @@ int main(int argc, char *argv[])
         CreateThread(NULL, 0, create_steam_window, NULL, 0, NULL);
 
         set_active_process_pid();
+        set_gamingrepair_succeeded(getenv("SteamGameId"));
+        {
+            /* FineWine, after Proton's helper: what Steam gives a game about itself */
+            char self[MAX_PATH] = "", *c;
+            SetEnvironmentVariableA("SteamPath", "C:\\Program Files (x86)\\Steam");
+            GetModuleFileNameA(NULL, self, sizeof(self));
+            for (c = self; *c; c++) if (*c == '\\') *c = '/';
+            SetEnvironmentVariableA("ValvePlatformMutex", self);
+        }
         set_client_dll_paths();
         set_install_paths();
 

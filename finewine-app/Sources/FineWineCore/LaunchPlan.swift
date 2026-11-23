@@ -238,6 +238,21 @@ public struct LaunchPlanner {
         return SteamStandIn.appID(forWindowsPath: program.windowsPath)
     }
 
+    /// The Steam app id of a program: the prefix's when Steam made it, else what the game's
+    /// own files say (`SteamAppIDFinder`).
+    public func realSteamAppID(for program: Program) -> String? {
+        if let id = prefix.metadata.steamAppID, !id.isEmpty { return id }
+        guard let exe = WindowsPath.macURL(for: program.windowsPath, inPrefix: prefix.directory) else { return nil }
+        return SteamAppIDFinder.appID(forProgramAt: exe)
+    }
+
+    /// The fixes a game gets by itself, if the prefix allows it and the runtime has the switches.
+    public func gameFixes(for program: Program) -> GameFixes {
+        guard prefix.metadata.settings.gameFixes, runtime.supports(.compatSwitches),
+              let id = realSteamAppID(for: program) else { return GameFixes() }
+        return GameFixes.fixes(forSteamAppID: id)
+    }
+
     /// Runs a program installed in the prefix.
     ///
     /// With `memoryTraceFolder`, the runtime writes a memory log for the program and everything
@@ -261,6 +276,19 @@ public struct LaunchPlanner {
         if let steamID = steamAppID(for: program) {
             arguments.insert(SteamStandIn.windowsPath, at: 0)
             for name in ["SteamGameId", "SteamAppId"] where env[name] == nil { env[name] = steamID }
+        }
+        // What the game is known to need (Proton's table). The prefix's and the program's own
+        // variables keep the last word; a DLL the user has an override for is left alone.
+        let fixes = gameFixes(for: program)
+        for (name, value) in fixes.environment where env[name] == nil { env[name] = value }
+        if !fixes.dllOverrides.isEmpty {
+            let existing = env["WINEDLLOVERRIDES"] ?? ""
+            let named = Set(existing.split(separator: ";").flatMap { entry in
+                entry.split(separator: "=").first.map { $0.split(separator: ",").map { $0.lowercased() } } ?? []
+            })
+            let added = fixes.dllOverrides.sorted { $0.key < $1.key }
+                .filter { !named.contains($0.key.lowercased()) }.map { "\($0.key)=\($0.value)" }
+            if !added.isEmpty { env["WINEDLLOVERRIDES"] = ([existing] + added).filter { !$0.isEmpty }.joined(separator: ";") }
         }
         // What macOS calls the program: the name it is listed under here. The runtime uses
         // it for this executable only; anything the program starts names itself.

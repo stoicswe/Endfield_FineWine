@@ -160,9 +160,9 @@ cmd_configure(){
         aarch64_CFLAGS="$PE_CFLAGS" arm64ec_CFLAGS="$PE_CFLAGS" \
         CC="/usr/bin/clang -arch arm64" CXX="/usr/bin/clang++ -arch arm64" OBJC="/usr/bin/clang -arch arm64" \
         PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$hb/lib/pkgconfig" CPPFLAGS="-I$DEPS/include -I$hb/include" \
-        LDFLAGS="-L$DEPS/lib -L$hb/lib" --without-sdl \
+        LDFLAGS="-L$DEPS/lib -L$hb/lib" --with-sdl \
         --enable-archs=arm64ec,aarch64,i386 --prefix=/ --disable-tests \
-        --without-x --without-krb5 --without-gstreamer --without-gphoto --without-sane --without-pcap \
+        --without-x --without-krb5 --with-gstreamer --without-gphoto --without-sane --without-pcap \
         --without-usb --without-cups --without-opencl --without-pcsclite --without-dbus --without-netapi
   ) > "$BUILD_DIR/configure-runtime.log" 2>&1 || die "configure failed, see $BUILD_DIR/configure-runtime.log"
   # configure looks for libvulkan; on macOS Vulkan is MoltenVK, which the runtime bundles.
@@ -192,21 +192,30 @@ cmd_build(){
 # points their references at each other, so the runtime runs on a Mac without Homebrew.
 bundle_dylib(){
   local src="$1" name dep
+  # by the library's own file name, whichever link it was asked for through: one library, one copy
+  src="$(readlink -f "$src" 2>/dev/null || echo "$src")"
   name="$(basename "$src")"
   [ -f "$OUT/lib/$name" ] && return 0
   cp -L "$src" "$OUT/lib/$name"; chmod u+w "$OUT/lib/$name"
   install_name_tool -id "@rpath/$name" "$OUT/lib/$name" 2>/dev/null
-  otool -L "$src" | awk 'NR>1{print $1}' | grep -E "^($("$BREW" --prefix)|$DEPS|@rpath|@loader_path)" | while IFS= read -r dep; do
+  # a search path into the build folder would find the build's copy on the Mac that built it
+  { otool -l "$OUT/lib/$name" | awk '/LC_RPATH/{getline; getline; print $2}' | grep -E "^($DEPS|$("$BREW" --prefix))" || true; } | while IFS= read -r dep; do
+    install_name_tool -delete_rpath "$dep" "$OUT/lib/$name" 2>/dev/null
+  done
+  { otool -L "$src" | awk 'NR>1{print $1}' | grep -E "^($("$BREW" --prefix)|$DEPS|@rpath|@loader_path)" || true; } | while IFS= read -r dep; do
     local real="$dep"
     case "$dep" in
-      @rpath/*|@loader_path/*) real="$(dirname "$(readlink -f "$src" 2>/dev/null || echo "$src")")/$(basename "$dep")" ;;
+      @rpath/*|@loader_path/*) real="$(dirname "$src")/$(basename "$dep")" ;;
     esac
     [ -f "$real" ] || continue
+    real="$(readlink -f "$real" 2>/dev/null || echo "$real")"
     [ "$(basename "$real")" = "$name" ] && continue
     bundle_dylib "$real"
     install_name_tool -change "$dep" "@loader_path/$(basename "$real")" "$OUT/lib/$name" 2>/dev/null
   done
   codesign --force --sign - "$OUT/lib/$name" 2>/dev/null
+  # the name it was asked for by, when that was a link: Wine opens some libraries by that name
+  [ "$(basename "$1")" = "$name" ] || ln -sf "$name" "$OUT/lib/$(basename "$1")"
 }
 
 # Wine is compiled with debug information, which is most of what it builds (1.7 GB against
@@ -274,12 +283,44 @@ cmd_package(){
   local hb; hb="$("$BREW" --prefix)"
   # The libraries Wine opens by name at run time. FineWine puts <runtime>/lib on
   # DYLD_FALLBACK_LIBRARY_PATH, so they only need to be here.
-  # FreeType and GnuTLS (with Nettle and GMP), built for macOS $MACOS_MIN. No SDL2: without it
-  # Wine reads game controllers through macOS's own IOHID support.
-  for lib in "$DEPS/lib/libfreetype.6.dylib" "$DEPS/lib/libgnutls.30.dylib"; do
+  # FreeType, GnuTLS (with Nettle and GMP) and SDL2 (controllers), built for macOS $MACOS_MIN.
+  # Without SDL2 Wine would read controllers through macOS's IOHID support, each in its own layout.
+  for lib in "$DEPS/lib/libfreetype.6.dylib" "$DEPS/lib/libgnutls.30.dylib" "$DEPS/lib/libSDL2-2.0.0.dylib"; do
     [ -f "$lib" ] || die "no $lib: run scripts/build-finewine-deps.sh"
     bundle_dylib "$lib"
   done
+  # GStreamer, for video and audio in games (Media Foundation, DirectShow): Wine's
+  # winegstreamer.so links to it, and its plugins are loaded from <runtime>/lib/gstreamer-1.0
+  # (runtime patch 0060 points GStreamer there). Each plugin's libraries are copied to
+  # <runtime>/lib like the others and the plugin is pointed at them.
+  if [ -d "$DEPS/lib/gstreamer-1.0" ] && [ -f "$OUT/lib/wine/aarch64-unix/winegstreamer.so" ]; then
+    local plugin pname pdep
+    # winegstreamer.so is linked to the libraries by their path in the build folder; in the
+    # runtime it has to find the runtime's copies (through its rpath to <runtime>/lib), or two
+    # copies of GStreamer end up loaded and neither knows the other's plugins.
+    { otool -L "$OUT/lib/wine/aarch64-unix/winegstreamer.so" | awk 'NR>1{print $1}' | grep "^$DEPS/" || true; } | while IFS= read -r pdep; do
+      bundle_dylib "$pdep"
+      install_name_tool -change "$pdep" "@rpath/$(basename "$(readlink -f "$pdep")")" "$OUT/lib/wine/aarch64-unix/winegstreamer.so" 2>/dev/null
+    done
+    { otool -l "$OUT/lib/wine/aarch64-unix/winegstreamer.so" | awk '/LC_RPATH/{getline; getline; print $2}' | grep "^$DEPS" || true; } | while IFS= read -r pdep; do
+      install_name_tool -delete_rpath "$pdep" "$OUT/lib/wine/aarch64-unix/winegstreamer.so" 2>/dev/null
+    done
+    mkdir -p "$OUT/lib/gstreamer-1.0"
+    for plugin in "$DEPS"/lib/gstreamer-1.0/*.dylib; do
+      pname="$(basename "$plugin")"
+      cp -L "$plugin" "$OUT/lib/gstreamer-1.0/$pname"; chmod u+w "$OUT/lib/gstreamer-1.0/$pname"
+      install_name_tool -id "@rpath/$pname" "$OUT/lib/gstreamer-1.0/$pname" 2>/dev/null
+      { otool -L "$plugin" | awk 'NR>1{print $1}' | grep "^$DEPS/lib/[^/]*$" || true; } | while IFS= read -r pdep; do
+        bundle_dylib "$pdep"
+        install_name_tool -change "$pdep" "@loader_path/../$(basename "$(readlink -f "$pdep")")" "$OUT/lib/gstreamer-1.0/$pname" 2>/dev/null
+      done
+      { otool -l "$OUT/lib/gstreamer-1.0/$pname" | awk '/LC_RPATH/{getline; getline; print $2}' | grep "^$DEPS" || true; } | while IFS= read -r pdep; do
+        install_name_tool -delete_rpath "$pdep" "$OUT/lib/gstreamer-1.0/$pname" 2>/dev/null
+      done
+    done
+  fi
+  # Wine opens SDL2 by the name it was linked under, without the patch level.
+  [ -f "$OUT/lib/libSDL2-2.0.0.dylib" ] && ln -sf libSDL2-2.0.0.dylib "$OUT/lib/libSDL2-2.0.dylib"
   # MoltenVK: this repository's patched arm64 build when it exists, else Homebrew's.
   if [ -f "$BUILD_DIR/moltenvk-out-finewine/libMoltenVK.dylib" ]; then
     # MVK_FLAVOR=finewine scripts/build-moltenvk.sh: adds ray queries (patches/moltenvk).

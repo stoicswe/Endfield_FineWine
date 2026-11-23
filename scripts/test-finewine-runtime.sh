@@ -223,6 +223,78 @@ else
   else
     fail "could not build tests/runtime/starrail-start.c"; tail -n 3 "$WORK/starrail-build.log"
   fi
+  # Proton's compatibility switches (runtime patch 0058): each changes what a program sees
+  # when it is set and nothing when it is not, for ARM64, x64 and 32-bit programs. The x64 and
+  # 32-bit runs also check that the emulator reports the processors Wine does (FEX patch 0015).
+  MINGW32_CS="$REPO/build/llvm-mingw/bin/i686-w64-mingw32-clang"
+  MINGWA_CS="$REPO/build/llvm-mingw/bin/aarch64-w64-mingw32-clang"
+  if "$MINGW" -O1 -o "$WORK/compat-x64.exe" "$REPO/tests/runtime/compat-switches.c" -lws2_32 >"$WORK/compat-build.log" 2>&1 \
+     && "$MINGWA_CS" -O1 -o "$WORK/compat-arm64.exe" "$REPO/tests/runtime/compat-switches.c" -lws2_32 >>"$WORK/compat-build.log" 2>&1; then
+    [ -x "$MINGW32_CS" ] && "$MINGW32_CS" -O1 -o "$WORK/compat-x86.exe" "$REPO/tests/runtime/compat-switches.c" -lws2_32 >>"$WORK/compat-build.log" 2>&1
+    host_cpus="$(sysctl -n hw.ncpu)"
+    bad=""
+    for arch in arm64 x64 x86; do
+      [ -f "$WORK/compat-$arch.exe" ] || continue
+      top=1; [ "$arch" = x86 ] && top=-1
+      off="$("$RT/bin/wine" "$WORK/compat-$arch.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+      on="$(WINE_HEAP_ZERO_MEMORY=1 WINE_HEAP_DELAY_FREE=1 WINE_HEAP_TOP_DOWN=1 FINEWINE_HIDE_WINE_EXPORTS=1 WINE_CPU_TOPOLOGY=2 \
+            WINE_RAM_REPORTING_BIAS=1024 WINE_DISABLE_SFN=1 WINE_BLOCK_HOSTS='example.invalid;finewine-blocked.test' \
+            "$RT/bin/wine" "$WORK/compat-$arch.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+      ram_off="$(printf '%s' "$off" | sed -n 's/.* ram=\([0-9]*\) .*/\1/p')"
+      ram_on="$(printf '%s' "$on" | sed -n 's/.* ram=\([0-9]*\) .*/\1/p')"
+      case "$off" in "compat: zero=0 delay=0 topdown="*" hidden=0 cpus=$host_cpus ram="*" sfn=1 blocked=0") ;; *) bad="$bad $arch without: '$off';" ;; esac
+      case "$on" in "compat: zero=1 delay=1 topdown=$top hidden=1 cpus=2 ram="*" sfn=0 blocked=1") ;; *) bad="$bad $arch with: '$on';" ;; esac
+      [ -n "$ram_off" ] && [ -n "$ram_on" ] && [ "$((ram_off - ram_on))" = 1024 ] || bad="$bad $arch memory: $ram_off then $ram_on;"
+    done
+    if [ -z "$bad" ]; then pass "Proton's compatibility switches change what ARM64, x64 and 32-bit programs see, and nothing when unset; the processor count is the Mac's"
+    else fail "compatibility switches:$bad"; fi
+  else
+    fail "could not build tests/runtime/compat-switches.c"; tail -n 3 "$WORK/compat-build.log"
+  fi
+  # The single-game cases from Proton's Wine (runtime patch 0059) apply to their game and to
+  # nothing else: one of them, GDI+'s measure of a lone line break, with its Steam id and without.
+  if "$MINGW" -O1 -o "$WORK/game-cases.exe" "$REPO/tests/runtime/game-cases.c" -lgdiplus -lgdi32 >"$WORK/game-cases-build.log" 2>&1; then
+    with_id="$(SteamGameId=882710 "$RT/bin/wine" "$WORK/game-cases.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    without="$("$RT/bin/wine" "$WORK/game-cases.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    w1="$(printf '%s' "$with_id" | sed -n 's/^game-cases: width=\([0-9]*\)$/\1/p')"
+    w0="$(printf '%s' "$without" | sed -n 's/^game-cases: width=\([0-9]*\)$/\1/p')"
+    if [ -n "$w1" ] && [ -n "$w0" ] && [ "$w1" -gt "$w0" ]; then
+      pass "a single-game case from Proton's Wine applies with the game's Steam id and not without (a line break is $w1 wide, not $w0)"
+    else fail "single-game cases: with the id '$with_id', without '$without'"; fi
+  else
+    fail "could not build tests/runtime/game-cases.c"; tail -n 3 "$WORK/game-cases-build.log"
+  fi
+  # Media playback (runtime patch 0060): Media Foundation's source reader decodes AAC audio, and
+  # H.264 video when a clip can be made, through the runtime's GStreamer and macOS's own decoders,
+  # for ARM64 and x64 programs. The sound is made with macOS's say and afconvert; the clip
+  # needs ffmpeg (Homebrew's) to be made, and is skipped without it.
+  if [ -f "$RT/lib/wine/aarch64-unix/winegstreamer.so" ] \
+     && "$MINGW" -O1 -municode -o "$WORK/media-x64.exe" "$REPO/tests/runtime/media.c" -lmfplat -lmfreadwrite -lmfuuid -lole32 >"$WORK/media-build.log" 2>&1 \
+     && "$MINGWA_CS" -O1 -municode -o "$WORK/media-arm64.exe" "$REPO/tests/runtime/media.c" -lmfplat -lmfreadwrite -lmfuuid -lole32 >>"$WORK/media-build.log" 2>&1; then
+    say -o "$WORK/voice.aiff" "FineWine media test" >/dev/null 2>&1 && afconvert -f m4af -d aac "$WORK/voice.aiff" "$WORK/voice.m4a" >/dev/null 2>&1 || true
+    clip=""
+    if command -v ffmpeg >/dev/null 2>&1 && [ -f "$WORK/voice.m4a" ] \
+       && ffmpeg -loglevel error -y -f lavfi -i testsrc=size=320x240:rate=30 -i "$WORK/voice.m4a" -t 2 -c:v h264_videotoolbox -b:v 400k \
+            -pix_fmt yuv420p -c:a copy -shortest "$WORK/clip.mp4" >/dev/null 2>&1; then clip="$WORK/clip.mp4"; fi
+    bad=""
+    for arch in arm64 x64; do
+      if [ -f "$WORK/voice.m4a" ]; then
+        out="$("$RT/bin/wine" "$WORK/media-$arch.exe" "Z:$WORK/voice.m4a" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+        case "$out" in "media: audio=0 "*|"media: FAILED"*|"") bad="$bad $arch sound: '$out';" ;; "media: audio="*) ;; *) bad="$bad $arch sound: '$out';" ;; esac
+      else bad="$bad no sound file could be made;"; fi
+      if [ -n "$clip" ]; then
+        out="$("$RT/bin/wine" "$WORK/media-$arch.exe" "Z:$clip" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+        case "$out" in "media: audio=0 "*) bad="$bad $arch clip: '$out';" ;; "media: audio="*" video=320x240 115200") ;; *) bad="$bad $arch clip: '$out';" ;; esac
+      fi
+    done
+    what="AAC sound"; [ -n "$clip" ] && what="AAC sound and H.264 video"
+    if [ -z "$bad" ]; then pass "media playback: $what decoded through Media Foundation, ARM64 and x64"
+    else fail "media playback:$bad"; fi
+  elif [ ! -f "$RT/lib/wine/aarch64-unix/winegstreamer.so" ]; then
+    printf '  - %s\n' "media playback: this runtime has no GStreamer, not checked"
+  else
+    fail "could not build tests/runtime/media.c"; tail -n 3 "$WORK/media-build.log"
+  fi
   # The emulator commits its own memory in the fault handler, also while translated code runs.
   # Registers, vector registers, flags, the x87 stack and MXCSR must come back unchanged from
   # such a fault: 192 threads each call 2048 fresh functions with all of them loaded.
@@ -305,7 +377,7 @@ else
     while kill -0 "$spid" 2>/dev/null && [ "$n" -lt 60 ]; do sleep 1; n=$((n+1)); done
     if kill -0 "$spid" 2>/dev/null; then kill "$spid" 2>/dev/null; stayed=" (the stand-in did not exit by itself)"; else stayed=""; fi
     out="$(tr -d '\r' <"$WORK/steam-probe.txt" 2>/dev/null || true)"
-    case "$out$stayed" in *"steam-probe: ok") pass "Steam stand-in: a program started through it finds Steam's variables, objects, window and registry" ;;
+    case "$out$stayed" in *"steam-probe: ok") pass "Steam stand-in: a program started through it finds Steam's variables, objects, window, registry and library list, and has its start acknowledged" ;;
       *) fail "Steam stand-in$stayed:"; echo "$out" | grep -v ': ok$' | tail -n 6 ;; esac
   else
     fail "could not build tests/runtime/steam-probe.c"; tail -n 3 "$WORK/steam-build.log"

@@ -88,6 +88,7 @@ out and nothing is passed to the runtime for it.
 | `macIcons` | Mac-style icons | `FINEWINE_MAC_ICONS` |
 | `macFileDialogs` | Mac open and save panels | `FINEWINE_NATIVE_FILE_DIALOGS` |
 | `starRailWorkarounds` | Start-up workarounds for Honkai: Star Rail | `FINEWINE_STARRAIL_WORKAROUNDS` |
+| `compatSwitches` | Known fixes for games; Hide Wine from programs | Proton's `WINE_HEAP_*`, `WINE_CPU_TOPOLOGY`, …; `FINEWINE_HIDE_WINE_EXPORTS` |
 
 Settings that are written to the prefix's registry (Windows version, Retina mode, DPI, virtual
 desktop, DLL overrides, the Option keys) work with any Wine and need no capability.

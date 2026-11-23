@@ -242,6 +242,16 @@ struct ConfigurationTab: View {
                     Text(l10n.tr("config.star_rail_desc"))
                 }
                 .disabled(lacks(.starRailWorkarounds))
+                Toggle(isOn: $draft.gameFixes) {
+                    Text(l10n.tr("config.game_fixes_title"))
+                    Text(l10n.tr("config.game_fixes_desc"))
+                }
+                .disabled(lacks(.compatSwitches))
+                Toggle(isOn: $draft.hideWineExports) {
+                    Text(l10n.tr("config.hide_wine_title"))
+                    Text(l10n.tr("config.hide_wine_desc"))
+                }
+                .disabled(lacks(.compatSwitches))
                 Divider()
                 Toggle(isOn: $draft.metalHUD) {
                     Text(l10n.tr("config.metal_hud_title"))

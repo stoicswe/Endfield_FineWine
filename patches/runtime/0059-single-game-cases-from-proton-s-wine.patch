@@ -1,0 +1,304 @@
+single-game cases from Proton's Wine
+
+Proton's Wine has about forty places that do something different for one game, told by the
+Steam app id in SteamGameId or SteamAppId. These are the ones that do not depend on Linux's
+window system, on Proton's full-screen hack or on code this Wine does not have:
+
+  ntdll      438100 VRChat: send() on a UDP socket succeeds when the network is unreachable,
+             as on Windows; the game showed an internal error after the machine woke
+  xinput1_3  298110 Far Cry 4, 292030 The Witcher 3: no new search for controllers on every
+             call that asks about one that is not there
+  gdiplus    882710, 1031480 TouHou Makuka Sai: a lone line break measures as a space
+  d2d1       1416260: SetTextRenderingParams is ignored
+  user32     489830 Skyrim Special Edition: the game and its launcher start DPI aware
+  rsaenh     1364780: key containers are not kept between runs
+  ieframe    2767030: queued messages are dispatched before a navigation starts
+  ddraw      3600700: SetGammaRamp does nothing
+  d3d8       32350 STAR WARS Starfighter: multisampling is reported unavailable
+  win32u     348550 Guilty Gear XX Accent Core Plus R: WM_ACTIVATEAPP names the new thread
+             when there was no old one; 563560: fonts are not hinted
+  mshtml     39210: the newest document mode
+
+Each is a few lines beside the code it changes, with Proton's reason. Not taken over: the
+cases for gamescope, X11, Wayland and the full-screen hack; the OpenGL ones (extension
+strings and context attributes of Linux's drivers); the ones in Proton's own additions
+(amd_ags, gameinput, tabtip, winegstreamer); and a few that reach deeper than a line or two
+(xaudio2's buffer copies for Darksiders, mscoree's assembly search, the fake network
+adapter for Forza Horizon 4).
+
+Checked by tests/runtime/game-cases.c (the GDI+ one, with the id and without).
+
+diff --git a/dlls/ntdll/unix/socket.c b/dlls/ntdll/unix/socket.c
+--- a/dlls/ntdll/unix/socket.c
++++ b/dlls/ntdll/unix/socket.c
+@@ -1129,6 +1129,20 @@
+         return STATUS_DEVICE_NOT_READY;
+     }
+     return STATUS_SUCCESS;
++}
++
++/* FineWine, from Proton: VRChat (438100) relies on send() on a UDP socket succeeding when the
++ * network is gone but the adapters are still up, as it does on Windows. Without it the game
++ * shows an internal error when the Mac wakes from sleep. */
++static void hack_update_status( int fd, unsigned int *status )
++{
++    const char *appid;
++    int type = 0;
++    socklen_t len = sizeof(type);
++
++    if (*status == STATUS_NETWORK_UNREACHABLE && (appid = getenv( "SteamAppId" )) && !strcmp( appid, "438100" )
++        && !getsockopt( fd, SOL_SOCKET, SO_TYPE, &type, &len ) && type == SOCK_DGRAM)
++        *status = STATUS_SUCCESS;
+ }
+ 
+ static BOOL async_send_proc( void *user, ULONG_PTR *info, unsigned int *status )
+@@ -1146,6 +1160,7 @@
+ 
+         *status = try_send( fd, async );
+         TRACE( "got status %#x\n", *status );
++        hack_update_status( fd, status );
+ 
+         if (needs_close) close( fd );
+ 
+@@ -1211,6 +1226,7 @@
+     if (status == STATUS_ALERTED)
+     {
+         status = try_send( fd, async );
++        hack_update_status( fd, &status );
+         if (status == STATUS_DEVICE_NOT_READY && ((server_flags & SERVER_SOCKET_IO_FORCE_ASYNC) || !nonblocking))
+             status = STATUS_PENDING;
+ 
+diff --git a/dlls/xinput1_3/main.c b/dlls/xinput1_3/main.c
+--- a/dlls/xinput1_3/main.c
++++ b/dlls/xinput1_3/main.c
+@@ -896,6 +896,15 @@
+     if (index >= XUSER_MAX_COUNT) return ERROR_BAD_ARGUMENTS;
+     if (get_current_state(index, state)) return ERROR_SUCCESS;
+ 
++    {
++        /* FineWine, from Proton: Far Cry 4 (298110) and The Witcher 3 (292030) ask for the state of
++         * controllers that are not there so often that looking for them again each time stalls them. */
++        static int no_rescan = -1;
++        const char *sgi;
++        if (no_rescan == -1) no_rescan = (sgi = getenv("SteamGameId")) && (!strcmp(sgi, "298110") || !strcmp(sgi, "292030"));
++        if (no_rescan) return ERROR_DEVICE_NOT_CONNECTED;
++    }
++
+     EnterCriticalSection(&xinput_cs);
+     update_controller_list();
+     ret = get_current_state(index, state) ? ERROR_SUCCESS : ERROR_DEVICE_NOT_CONNECTED;
+diff --git a/dlls/gdiplus/graphics.c b/dlls/gdiplus/graphics.c
+--- a/dlls/gdiplus/graphics.c
++++ b/dlls/gdiplus/graphics.c
+@@ -6433,6 +6433,14 @@
+ 
+     if(!graphics || !string || !font || !rect || !bounds)
+         return InvalidParameter;
++
++    if (length == 1 && string[0] == '\n')
++    {
++        /* FineWine, from Proton: the SpriteFontX class used by TouHou Makuka Sai (882710, 1031480)
++         * makes a bitmap of the size returned here, and a lone line break measures as nothing. */
++        const char *sgi = getenv("SteamGameId");
++        if (sgi && (!strcmp(sgi, "882710") || !strcmp(sgi, "1031480"))) string = L" ";
++    }
+ 
+     if(!has_gdi_dc(graphics))
+     {
+diff --git a/dlls/d2d1/device.c b/dlls/d2d1/device.c
+--- a/dlls/d2d1/device.c
++++ b/dlls/d2d1/device.c
+@@ -1785,6 +1785,12 @@
+     struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
+ 
+     TRACE("iface %p, text_rendering_params %p.\n", iface, text_rendering_params);
++
++    {
++        /* FineWine, from Proton: 1416260 sets parameters its text then cannot be drawn with */
++        const char *sgi = getenv("SteamGameId");
++        if (sgi && !strcmp(sgi, "1416260")) return;
++    }
+ 
+     if (context->target.type == D2D_TARGET_COMMAND_LIST)
+         d2d_command_list_set_text_rendering_params(context->target.command_list, text_rendering_params);
+diff --git a/dlls/user32/sysparams.c b/dlls/user32/sysparams.c
+--- a/dlls/user32/sysparams.c
++++ b/dlls/user32/sysparams.c
+@@ -208,6 +208,18 @@
+             SetProcessDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE );
+         else
+             SetProcessDpiAwarenessContext( DPI_AWARENESS_CONTEXT_UNAWARE );
++    }
++
++    {
++        /* FineWine, from Proton: The Elder Scrolls V: Skyrim Special Edition (489830). Windows 11
++         * starts it DPI aware; started unaware, it sizes its window to the monitor, resizes it
++         * later and never resizes its swap chain, so parts of the picture are drawn shrunk. */
++        const char *sgi = getenv( "SteamGameId" );
++        const WCHAR *name;
++        if (sgi && !strcmp( sgi, "489830" ) && GetModuleFileNameW( NULL, buffer, ARRAY_SIZE(buffer) )
++            && (name = wcsrchr( buffer, '\\' ))
++            && (!wcsicmp( name + 1, L"SkyrimSE.exe" ) || !wcsicmp( name + 1, L"SkyrimSELauncher.exe" )))
++            SetProcessDpiAwarenessContext( DPI_AWARENESS_CONTEXT_SYSTEM_AWARE );
+     }
+ }
+ 
+diff --git a/dlls/rsaenh/rsaenh.c b/dlls/rsaenh/rsaenh.c
+--- a/dlls/rsaenh/rsaenh.c
++++ b/dlls/rsaenh/rsaenh.c
+@@ -1199,6 +1199,18 @@
+  *  sam           [I] Desired registry access
+  *  phKey         [O] Returned key
+  */
++/* FineWine, from Proton: 1364780 leaves key containers behind that stop it starting the next
++ * time; for it they are not kept between runs. */
++static DWORD finewine_key_options(void)
++{
++    static DWORD options = ~0u;
++    const char *sgi;
++
++    if (options == ~0u)
++        options = ((sgi = getenv("SteamGameId")) && !strcmp(sgi, "1364780")) ? REG_OPTION_VOLATILE : REG_OPTION_NON_VOLATILE;
++    return options;
++}
++
+ static BOOL create_container_key(KEYCONTAINER *pKeyContainer, REGSAM sam, HKEY *phKey)
+ {
+     CHAR szRSABase[sizeof(RSAENH_REGKEY) + MAX_PATH];
+@@ -1214,7 +1226,7 @@
+     /* @@ Wine registry key: HKLM\Software\Wine\Crypto\RSA */
+     /* @@ Wine registry key: HKCU\Software\Wine\Crypto\RSA */
+     return RegCreateKeyExA(hRootKey, szRSABase, 0, NULL,
+-                           REG_OPTION_NON_VOLATILE, sam, NULL, phKey, NULL)
++                           finewine_key_options(), sam, NULL, phKey, NULL)
+                            == ERROR_SUCCESS;
+ }
+ 
+diff --git a/dlls/ieframe/navigate.c b/dlls/ieframe/navigate.c
+--- a/dlls/ieframe/navigate.c
++++ b/dlls/ieframe/navigate.c
+@@ -851,7 +851,23 @@
+         WARN("Could not get IHTMLPrivateWindow iface: %08lx\n", hres);
+     }
+ }
++
++/* FineWine, from Proton: 2767030's launcher page waits for messages that are still queued when
++ * the next navigation starts. */
++static void hack_pump_messages(void)
++{
++    static int enabled = -1;
++    MSG msg;
+ 
++    if (enabled == -1)
++    {
++        const char *sgi = getenv("SteamGameId");
++        enabled = sgi && !strcmp(sgi, "2767030");
++    }
++    if (!enabled) return;
++    while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) DispatchMessageW(&msg);
++}
++
+ static HRESULT async_doc_navigate(DocHost *This, LPCWSTR url, LPCWSTR headers, PBYTE post_data, ULONG post_data_size,
+         BOOL async_notif)
+ {
+@@ -900,6 +916,7 @@
+ 
+     task->async_notif = async_notif;
+     abort_dochost_tasks(This, doc_navigate_proc);
++    hack_pump_messages();
+     push_dochost_task(This, &task->header, doc_navigate_proc, doc_navigate_task_destr, FALSE);
+     return S_OK;
+ }
+diff --git a/dlls/ddraw/surface.c b/dlls/ddraw/surface.c
+--- a/dlls/ddraw/surface.c
++++ b/dlls/ddraw/surface.c
+@@ -5467,6 +5467,12 @@
+     {
+         WARN("Invalid gamma_ramp passed.\n");
+         return DDERR_INVALIDPARAMS;
++    }
++
++    {
++        /* FineWine, from Proton: 3600700 sets a gamma ramp that leaves the screen dark */
++        const char *sgi = getenv("SteamGameId");
++        if (sgi && !strcmp(sgi, "3600700")) return DD_OK;
+     }
+ 
+     wined3d_mutex_lock();
+diff --git a/dlls/d3d8/directx.c b/dlls/d3d8/directx.c
+--- a/dlls/d3d8/directx.c
++++ b/dlls/d3d8/directx.c
+@@ -333,6 +333,13 @@
+     if (multisample_type > D3DMULTISAMPLE_16_SAMPLES)
+         return D3DERR_INVALIDCALL;
+ 
++    {
++        /* FineWine, from Proton: STAR WARS Starfighter (32350) asks about R8G8B8 and then uses
++         * R5G5B5 with a lockable back buffer, which cannot be multisampled. */
++        const char *sgi = getenv("SteamGameId");
++        if (sgi && !strcmp(sgi, "32350")) return D3DERR_NOTAVAILABLE;
++    }
++
+     wined3d_mutex_lock();
+     wined3d_adapter = wined3d_output_get_adapter(d3d8->wined3d_outputs[output_idx]);
+     hr = wined3d_check_device_multisample_type(wined3d_adapter, wined3d_device_type_from_d3d(device_type),
+diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+--- a/dlls/win32u/input.c
++++ b/dlls/win32u/input.c
+@@ -2112,6 +2112,17 @@
+         send_message( hwnd, WM_SETFOCUS, (WPARAM)previous, 0 );
+     }
+     return previous;
++}
++
++/* FineWine, from Proton: Guilty Gear XX Accent Core Plus R (348550) takes a WM_ACTIVATEAPP that
++ * names no other thread for a deactivation. */
++static int finewine_activateapp_lparam_hack(void)
++{
++    static int cached = -1;
++    const char *env;
++
++    if (cached == -1) cached = (env = getenv( "SteamGameId" )) && !strcmp( env, "348550" );
++    return cached;
+ }
+ 
+ /*******************************************************************
+@@ -2190,7 +2201,8 @@
+                 for (phwnd = list; *phwnd; phwnd++)
+                 {
+                     if (get_window_thread( *phwnd, NULL ) == new_thread)
+-                        send_message( *phwnd, WM_ACTIVATEAPP, 1, old_thread );
++                        send_message( *phwnd, WM_ACTIVATEAPP, 1,
++                                      (finewine_activateapp_lparam_hack() && !old_thread) ? new_thread : old_thread );
+                 }
+             }
+             free( list );
+diff --git a/dlls/win32u/freetype.c b/dlls/win32u/freetype.c
+--- a/dlls/win32u/freetype.c
++++ b/dlls/win32u/freetype.c
+@@ -285,7 +285,8 @@
+     if (enabled == -1)
+     {
+         FT_TrueTypeEngineType type = pFT_Get_TrueType_Engine_Type(library);
+-        enabled = (type == FT_TRUETYPE_ENGINE_TYPE_PATENTED);
++        const char *sgi = getenv( "SteamGameId" );   /* FineWine, from Proton: 563560's text needs unhinted glyphs */
++        enabled = (type == FT_TRUETYPE_ENGINE_TYPE_PATENTED) && !(sgi && !strcmp( sgi, "563560" ));
+         TRACE("hinting is %senabled\n", enabled ? "" : "NOT ");
+     }
+     return enabled;
+diff --git a/dlls/mshtml/mutation.c b/dlls/mshtml/mutation.c
+--- a/dlls/mshtml/mutation.c
++++ b/dlls/mshtml/mutation.c
+@@ -453,6 +453,12 @@
+         WARN("Tried to set compat mode %u higher than maximal configured %u\n",
+              document_mode, max_compat_mode);
+         document_mode = max_compat_mode;
++    }
++
++    {
++        /* FineWine, from Proton: 39210's launcher page needs the newest document mode */
++        const char *sgi = getenv("SteamGameId");
++        if (sgi && !strcmp(sgi, "39210")) document_mode = COMPAT_MODE_IE11;
+     }
+ 
+     doc->document_mode = document_mode;

@@ -1,0 +1,375 @@
+ntdll, ws2_32: Proton's compatibility switches
+
+Switches for programs that depend on a detail of Windows or of the machine, read from the
+environment under the names Proton gives them, so that what is known to help a game on Proton
+can be used as it is. The app sets them for the games in Proton's own table (GameFixes.swift,
+by Steam app id), and they can be set by hand in a prefix's or a program's variables.
+
+  WINE_HEAP_DELAY_FREE=1       freed heap blocks are kept for a while before they are reused
+  WINE_HEAP_ZERO_MEMORY=1      every heap hands out zeroed memory
+  WINE_HEAP_TOP_DOWN=1         heaps are placed from the top of the address space down
+  WINE_CPU_TOPOLOGY=n[:...]    no more than n processors are reported (Proton also pins the
+                               program to the processors after the colon; macOS cannot)
+  WINE_RAM_REPORTING_BIAS=n    n megabytes less memory is reported than there is
+  WINE_DISABLE_SFN=1           files have no 8.3 short names
+  WINE_BLOCK_HOSTS=a;b         host names under a or b are not found (up to 16)
+  FINEWINE_HIDE_WINE_EXPORTS=1 wine_get_version, wine_get_build_id and wine_get_host_version
+                               are not found by name in ntdll, for programs that refuse to run
+                               on Wine. The runtime's own parts ask for the first and the last
+                               as __finewine_get_version and __finewine_get_host_version, two
+                               new names for the same functions that stay (FEX patch 0015).
+
+Left out of what Proton has: WINE_SIMULATE_WRITECOPY (it builds on Proton's tracking of
+write-copy pages, which this Wine does not have), WINE_LARGE_ADDRESS_AWARE (32-bit programs
+here have the whole 4 GB window already), and the switches for Linux's synchronisation and
+window system.
+
+Tested by tests/runtime/compat-switches.c on ARM64, x64 and 32-bit, with the switches and
+without.
+
+diff --git a/dlls/ntdll/heap.c b/dlls/ntdll/heap.c
+--- a/dlls/ntdll/heap.c
++++ b/dlls/ntdll/heap.c
+@@ -968,6 +968,17 @@
+ }
+ 
+ 
++/* FineWine: for programs that depend on how Windows' heap happens to behave; the names and
++ * meanings are Proton's.
++ *  WINE_HEAP_DELAY_FREE=1   freed blocks are kept for a while before they are reused, for
++ *                           programs that read memory they have just freed
++ *  WINE_HEAP_ZERO_MEMORY=1  every heap hands out zeroed memory, for programs that read memory
++ *                           they never wrote
++ *  WINE_HEAP_TOP_DOWN=1     heaps are placed from the top of the address space down */
++BOOL delay_heap_free = FALSE;
++BOOL heap_zero_hack = FALSE;
++BOOL heap_top_down_hack = FALSE;
++
+ static void *allocate_region( struct heap *heap, ULONG flags, SIZE_T *region_size, SIZE_T *commit_size )
+ {
+     const SIZE_T align = 0x400 * sizeof(void*);  /* minimum alignment for virtual allocations */
+@@ -984,7 +995,8 @@
+     *commit_size = ROUND_SIZE( *commit_size, align - 1 );
+ 
+     /* allocate the memory block */
+-    if ((status = NtAllocateVirtualMemory( NtCurrentProcess(), &addr, 0, region_size, MEM_RESERVE,
++    if ((status = NtAllocateVirtualMemory( NtCurrentProcess(), &addr, 0, region_size,
++                                           heap_top_down_hack ? MEM_RESERVE | MEM_TOP_DOWN : MEM_RESERVE,
+                                            get_protection_type( flags ) )))
+     {
+         WARN( "Could not allocate %#Ix bytes, status %#lx\n", *region_size, status );
+@@ -1483,8 +1495,8 @@
+         }
+     }
+ 
+-    if ((heap->flags & HEAP_GROWABLE) && !heap->pending_free &&
+-        ((flags & HEAP_FREE_CHECKING_ENABLED) || RUNNING_ON_VALGRIND))
++    if (delay_heap_free || ((heap->flags & HEAP_GROWABLE) && !heap->pending_free &&
++        ((flags & HEAP_FREE_CHECKING_ENABLED) || RUNNING_ON_VALGRIND)))
+     {
+         heap->pending_free = RtlAllocateHeap( handle, HEAP_ZERO_MEMORY,
+                                               MAX_FREE_PENDING * sizeof(*heap->pending_free) );
+@@ -1508,6 +1520,8 @@
+     TRACE( "flags %#lx, addr %p, total_size %#Ix, commit_size %#Ix, lock %p, params %p\n",
+            flags, addr, total_size, commit_size, lock, params );
+ 
++    if (heap_zero_hack) flags |= HEAP_ZERO_MEMORY;
++
+     flags &= ~(HEAP_TAIL_CHECKING_ENABLED|HEAP_FREE_CHECKING_ENABLED);
+     if (process_heap) flags |= HEAP_PRIVATE;
+     if (!process_heap || !total_size || (flags & HEAP_SHARED)) flags |= HEAP_GROWABLE;
+@@ -2614,7 +2628,8 @@
+             FIXME( "HeapCompatibilityInformation %lu not implemented!\n", compat_info );
+             return STATUS_UNSUCCESSFUL;
+         }
+-        if (InterlockedCompareExchange( &heap->compat_info, compat_info, HEAP_STD ) != HEAP_STD)
++        /* FineWine: the low-fragmentation front end has no delay; with the switch it stays off */
++        if (!delay_heap_free && InterlockedCompareExchange( &heap->compat_info, compat_info, HEAP_STD ) != HEAP_STD)
+             return STATUS_UNSUCCESSFUL;
+         return STATUS_SUCCESS;
+     }
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -2057,9 +2057,47 @@
+         RtlLeaveCriticalSection( &loader_section );
+     }
+     return STATUS_SUCCESS;
++}
++
++
++/* FineWine: switches that are read once, before the process heap exists. */
++static BOOL hide_wine_exports;
++
++static BOOL finewine_env_is_one( const WCHAR *var )
++{
++    WCHAR buffer[8];
++    UNICODE_STRING name, value;
++
++    RtlInitUnicodeString( &name, var );
++    value.Length = 0;
++    value.MaximumLength = sizeof(buffer);
++    value.Buffer = buffer;
++    return !RtlQueryEnvironmentVariable_U( NULL, &name, &value ) && value.Length == sizeof(WCHAR) && buffer[0] == '1';
++}
++
++static void finewine_compat_init(void)
++{
++    delay_heap_free = finewine_env_is_one( L"WINE_HEAP_DELAY_FREE" );
++    heap_zero_hack = finewine_env_is_one( L"WINE_HEAP_ZERO_MEMORY" );
++    heap_top_down_hack = finewine_env_is_one( L"WINE_HEAP_TOP_DOWN" );
++    /* Some programs refuse to run when ntdll has Wine's own exports. With this they are not
++     * found by name. The runtime's own parts (the x64 emulator) ask for them under the names
++     * __finewine_get_version and __finewine_get_host_version, which stay. */
++    hide_wine_exports = finewine_env_is_one( L"FINEWINE_HIDE_WINE_EXPORTS" );
+ }
+ 
++static BOOL is_hidden_export( const ANSI_STRING *name )
++{
++    static const char * const hidden[] = { "wine_get_version", "wine_get_build_id", "wine_get_host_version" };
++    unsigned int i;
+ 
++    if (!hide_wine_exports || !name || !name->Buffer) return FALSE;
++    for (i = 0; i < ARRAY_SIZE(hidden); i++)
++        if (name->Length == strlen( hidden[i] ) && !memcmp( name->Buffer, hidden[i], name->Length )) return TRUE;
++    return FALSE;
++}
++
++
+ /******************************************************************
+  *		LdrGetProcedureAddress  (NTDLL.@)
+  */
+@@ -2080,6 +2118,7 @@
+     {
+         void *proc = name ? find_named_export( module, exports, exp_size, name->Buffer, -1, NULL, wm, TRUE )
+                           : find_ordinal_export( module, exports, exp_size, ord - exports->Base, NULL, wm, TRUE );
++        if (proc && is_hidden_export( name ) && !wcsicmp( wm->ldr.BaseDllName.Buffer, L"ntdll.dll" )) proc = NULL;
+         if (proc)
+         {
+             *address = proc;
+@@ -4609,6 +4648,7 @@
+         peb->TlsBitmap          = &tls_bitmap;
+         peb->TlsExpansionBitmap = &tls_expansion_bitmap;
+         peb->LoaderLock         = &loader_section;
++        finewine_compat_init();
+         peb->ProcessHeap        = RtlCreateHeap( HEAP_GROWABLE, NULL, 0, 0, NULL, NULL );
+ 
+         RtlInitializeBitMap( &tls_bitmap, peb->TlsBitmapBits, sizeof(peb->TlsBitmapBits) * 8 );
+diff --git a/dlls/ntdll/ntdll.spec b/dlls/ntdll/ntdll.spec
+--- a/dlls/ntdll/ntdll.spec
++++ b/dlls/ntdll/ntdll.spec
+@@ -1789,3 +1789,6 @@
+ @ cdecl wine_get_version()
+ @ cdecl wine_get_build_id()
+ @ cdecl wine_get_host_version(ptr ptr)
++# FineWine: the same two under names that FINEWINE_HIDE_WINE_EXPORTS does not hide
++@ cdecl __finewine_get_version() wine_get_version
++@ cdecl __finewine_get_host_version(ptr ptr) wine_get_host_version
+diff --git a/dlls/ntdll/ntdll_misc.h b/dlls/ntdll/ntdll_misc.h
+--- a/dlls/ntdll/ntdll_misc.h
++++ b/dlls/ntdll/ntdll_misc.h
+@@ -52,6 +52,12 @@
+ static const UINT_PTR page_size = 0x1000;
+ 
+ /* exceptions */
++/* FineWine: Proton's heap switches (WINE_HEAP_DELAY_FREE, WINE_HEAP_ZERO_MEMORY,
++ * WINE_HEAP_TOP_DOWN), read in loader.c before the process heap is created. */
++extern BOOL delay_heap_free;
++extern BOOL heap_zero_hack;
++extern BOOL heap_top_down_hack;
++
+ extern NTSTATUS call_seh_handlers( EXCEPTION_RECORD *rec, CONTEXT *context );
+ extern NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context );
+ extern NTSTATUS WINAPI dispatch_user_callback( void *args, ULONG len, ULONG id );
+diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -1287,7 +1287,8 @@
+     if (long_nameW[long_len - 1] == '?') --long_len;
+     long_nameW[long_len] = 0;
+ 
+-    if (short_name)
++    if (disable_sfn) short_len = 0;   /* FineWine: WINE_DISABLE_SFN */
++    else if (short_name)
+     {
+         short_len = ntdll_umbstowcs( short_name, strlen(short_name),
+                                      short_nameW, ARRAY_SIZE( short_nameW ) - 1 );
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -2138,9 +2138,37 @@
+ /***********************************************************************
+  *           start_main_thread
+  */
++/* FineWine: compatibility switches for programs that depend on a detail of Windows or of the
++ * machine. The names and meanings are Proton's, so that what is known to help a game there
++ * can be used as it is; the app sets them for games it knows (GameFixes.swift).
++ *  WINE_DISABLE_SFN=1          files have no 8.3 short names
++ *  WINE_RAM_REPORTING_BIAS=n   n megabytes less memory is reported than there is
++ *  WINE_CPU_TOPOLOGY=n[:...]   no more than n processors are reported. Proton also pins the
++ *                              program to the processors listed after the colon; macOS has no
++ *                              way to do that, so only the count is used. */
++BOOL disable_sfn;
++long long ram_reporting_bias;
++unsigned int cpu_count_limit;
++
++static void finewine_compat_init(void)
++{
++    const char *env;
++
++    if ((env = getenv( "WINE_DISABLE_SFN" ))) disable_sfn = !!atoi( env );
++    if ((env = getenv( "WINE_RAM_REPORTING_BIAS" ))) ram_reporting_bias = atoll( env ) * 1024 * 1024;
++    if (ram_reporting_bias < 0) ram_reporting_bias = 0;
++    if ((env = getenv( "WINE_CPU_TOPOLOGY" )))
++    {
++        int count = atoi( env );
++        if (count > 0) cpu_count_limit = count;
++    }
++}
++
+ static void start_main_thread(void)
+ {
+     struct thread_data *data = virtual_alloc_first_thread_data();
++
++    finewine_compat_init();
+ 
+     server_init_process( data );
+     msync_init();
+diff --git a/dlls/ntdll/unix/system.c b/dlls/ntdll/unix/system.c
+--- a/dlls/ntdll/unix/system.c
++++ b/dlls/ntdll/unix/system.c
+@@ -1368,6 +1368,7 @@
+     size = sizeof(cores_no);
+     if (sysctlbyname("hw.physicalcpu", &cores_no, &size, NULL, 0))
+         cores_no = lcpu_no;
++    if (cores_no > lcpu_no) cores_no = lcpu_no;   /* FineWine: with WINE_CPU_TOPOLOGY fewer are reported than there are */
+ 
+     TRACE("%u logical CPUs from %u physical cores across %u packages\n",
+             lcpu_no, cores_no, pkgs_no);
+@@ -1755,6 +1756,8 @@
+ #else
+     FIXME("Detecting the number of processors is not supported.\n");
+ #endif
++    /* FineWine: WINE_CPU_TOPOLOGY, for programs that fail with many processors */
++    if (cpu_count_limit && cpu_count > cpu_count_limit) cpu_count = cpu_count_limit;
+     init_cpu_model();
+     get_random( &process_cookie, sizeof(process_cookie) );
+ }
+@@ -2708,6 +2711,12 @@
+             }
+         }
+ #endif
++        /* FineWine: WINE_RAM_REPORTING_BIAS */
++        if (ram_reporting_bias)
++        {
++            totalram -= min( totalram, (unsigned long long)ram_reporting_bias );
++            freeram -= min( freeram, (unsigned long long)ram_reporting_bias );
++        }
+     }
+ #endif
+ 
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -230,6 +230,10 @@
+ extern SIZE_T startup_info_size;
+ extern BOOL is_prefix_bootstrap;
+ extern ULONG session_id;
++/* FineWine: Proton's compatibility switches, read once in loader.c (finewine_compat_init) */
++extern BOOL disable_sfn;                /* WINE_DISABLE_SFN: no 8.3 short file names */
++extern long long ram_reporting_bias;    /* WINE_RAM_REPORTING_BIAS: megabytes of memory not reported, in bytes */
++extern unsigned int cpu_count_limit;    /* WINE_CPU_TOPOLOGY: the most processors to report, 0 for all */
+ extern int main_argc;
+ extern char **main_argv;
+ extern WCHAR **main_wargv;
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -3776,6 +3776,7 @@
+     /* FineWine: the system counts in its own pages (16K on Apple silicon), Windows programs
+      * in the 4K pages reported below. Unscaled, a 24 GB Mac was 6 GB with more free than that. */
+     phys_pages = phys_pages * (LONG64)(sysconf( _SC_PAGESIZE ) / page_size);
++    phys_pages -= min( phys_pages, ram_reporting_bias / (LONG64)page_size );   /* FineWine: WINE_RAM_REPORTING_BIAS */
+     info->MmHighestPhysicalPage = max(1, phys_pages);
+ #else
+     info->MmHighestPhysicalPage = 0x7fffffff / page_size;
+diff --git a/dlls/ws2_32/protocol.c b/dlls/ws2_32/protocol.c
+--- a/dlls/ws2_32/protocol.c
++++ b/dlls/ws2_32/protocol.c
+@@ -184,6 +184,37 @@
+     return 0;
+ }
+ 
++/* FineWine: WINE_BLOCK_HOSTS, Proton's list of host names that are not to be found: names
++ * separated by commas or semicolons, each matching itself and its subdomains. Up to 16. */
++static BOOL should_block_host( const char *name )
++{
++    static char list[16][256];
++    static LONG loaded;
++    unsigned int i;
++
++    if (!name || !*name) return FALSE;
++    if (!InterlockedExchange( &loaded, 1 ))
++    {
++        char value[16 * 256], *host, *next = NULL;
++        unsigned int count = 0;
++
++        if (GetEnvironmentVariableA( "WINE_BLOCK_HOSTS", value, sizeof(value) ) - 1 < sizeof(value) - 1)
++            for (host = strtok_s( value, ",;", &next ); host && count < ARRAY_SIZE(list); host = strtok_s( NULL, ",;", &next ))
++                if (*host && strlen( host ) < sizeof(list[0])) strcpy( list[count++], host );
++    }
++    for (i = 0; i < ARRAY_SIZE(list) && list[i][0]; i++)
++    {
++        size_t len = strlen( name ), host_len = strlen( list[i] );
++        if (len < host_len || _stricmp( name + len - host_len, list[i] )) continue;
++        if (len == host_len || name[len - host_len - 1] == '.')
++        {
++            WARN( "blocking host %s, listed as %s\n", debugstr_a(name), debugstr_a(list[i]) );
++            return TRUE;
++        }
++    }
++    return FALSE;
++}
++
+ /***********************************************************************
+  *      getaddrinfo   (ws2_32.@)
+  */
+@@ -198,6 +229,12 @@
+     *info = NULL;
+ 
+     if (!node && !service)
++    {
++        SetLastError( WSAHOST_NOT_FOUND );
++        return WSAHOST_NOT_FOUND;
++    }
++
++    if (node && should_block_host( node ))
+     {
+         SetLastError( WSAHOST_NOT_FOUND );
+         return WSAHOST_NOT_FOUND;
+@@ -453,6 +490,12 @@
+         len = WideCharToMultiByte( CP_ACP, 0, local_nodenameW, -1, NULL, 0, NULL, NULL );
+         if (!(nodenameA = malloc( len ))) goto end;
+         WideCharToMultiByte( CP_ACP, 0, local_nodenameW, -1, nodenameA, len, NULL, NULL );
++    }
++    if (nodenameA && should_block_host( nodenameA ))   /* FineWine: WINE_BLOCK_HOSTS */
++    {
++        ret = WSAHOST_NOT_FOUND;
++        SetLastError( ret );
++        goto end;
+     }
+     if (servname)
+     {
+@@ -977,6 +1020,12 @@
+     if (!num_startup)
+     {
+         SetLastError( WSANOTINITIALISED );
++        return NULL;
++    }
++
++    if (should_block_host( name ))
++    {
++        SetLastError( WSAHOST_NOT_FOUND );
+         return NULL;
+     }
+ 

@@ -317,6 +317,12 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
     /// Honkai: Star Rail's first connection is refused and its first signature-catalogue
     /// lookup answered with success, without which it does not start (runtime patch 0057).
     public var starRailWorkarounds: Bool = true
+    /// Games known to need one of Proton's compatibility switches get it by themselves
+    /// (`GameFixes`, by Steam app id).
+    public var gameFixes: Bool = true
+    /// Programs do not find Wine's own functions in ntdll, for the ones that refuse to run
+    /// on Wine. Off by default: a program that works does not need it.
+    public var hideWineExports: Bool = false
     /// Windows' "Language for non-Unicode programs". See `NonUnicodeLanguage`.
     public var nonUnicodeLanguage: NonUnicodeLanguage = .automatic
 
@@ -377,6 +383,8 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         macStyleIcons = try c.decodeIfPresent(Bool.self, forKey: .macStyleIcons) ?? d.macStyleIcons
         macFileDialogs = try c.decodeIfPresent(Bool.self, forKey: .macFileDialogs) ?? d.macFileDialogs
         starRailWorkarounds = try c.decodeIfPresent(Bool.self, forKey: .starRailWorkarounds) ?? d.starRailWorkarounds
+        gameFixes = try c.decodeIfPresent(Bool.self, forKey: .gameFixes) ?? d.gameFixes
+        hideWineExports = try c.decodeIfPresent(Bool.self, forKey: .hideWineExports) ?? d.hideWineExports
         // An unknown value (from a newer FineWine) falls back to automatic.
         nonUnicodeLanguage = (try? c.decodeIfPresent(NonUnicodeLanguage.self, forKey: .nonUnicodeLanguage)) ?? d.nonUnicodeLanguage
     }
@@ -509,6 +517,7 @@ public struct PrefixSettings: Codable, Equatable, Sendable {
         if has(.macIcons), !macStyleIcons { out.append(("FINEWINE_MAC_ICONS", "0")) }
         if has(.macFileDialogs), !macFileDialogs { out.append(("FINEWINE_NATIVE_FILE_DIALOGS", "0")) }
         if has(.starRailWorkarounds), !starRailWorkarounds { out.append(("FINEWINE_STARRAIL_WORKAROUNDS", "0")) }
+        if has(.compatSwitches), hideWineExports { out.append(("FINEWINE_HIDE_WINE_EXPORTS", "1")) }
         if has(.emulator), hideHypervisor { out.append(("FEX_HIDEHYPERVISORBIT", "1")) }
         if has(.zeroPages), zeroPages { out.append(("FINEWINE_ZERO_PAGES", "1")) }
         if has(.emulator), compactBlockRecords { out.append(("FEX_COMPACTBLOCKRECORDS", "1")) }

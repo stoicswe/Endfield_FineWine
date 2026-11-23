@@ -259,6 +259,10 @@
 "config.hoyoverse_steam_desc" = "원신, 젠레스 존 제로, 붕괴3rd 및 HoYoPlay 런처를 Linux와 유사하게 Steam 클라이언트 스탠드인을 거쳐 구동합니다. 게임은 Steam 환경으로 인식하며, 계정 위험은 사용자가 감수해야 합니다.";
 "config.star_rail_title" = "「붕괴: 스타레일」 시작 우회";
 "config.star_rail_desc" = "이 게임은 첫 네트워크 연결이 거부되고 Windows 파일 서명의 첫 확인이 성공한 것으로 보이지 않으면 시작한 지 몇 초 만에 종료됩니다. FineWine은 StarRail.exe에 대해 이 두 가지를 수행합니다(게임을 실행하는 Linux 빌드와 같은 방식). 게임 자체의 확인을 통과시키는 것이므로 원하지 않으면 끄십시오.";
+"config.game_fixes_title" = "게임의 알려진 수정";
+"config.game_fixes_desc" = "특정 설정이 필요하다고 알려진 게임에는 그 설정이 자동으로 적용됩니다(메모리 할당 방식, 보고하는 프로세서 수, 사용할 시스템 라이브러리). 목록은 Proton의 것이며 게임은 Steam 앱 ID로 구분합니다.";
+"config.hide_wine_title" = "프로그램에서 Wine 숨기기";
+"config.hide_wine_desc" = "Wine임을 드러내는 함수를 프로그램이 찾지 못하게 합니다. Windows가 아니라는 이유로 실행을 거부하는 프로그램을 위한 설정입니다. 그 외에는 꺼 두십시오.";
 "config.metal_hud_title" = "시작 시 Metal 성능 오버레이(HUD) 표시";
 "config.metal_hud_desc" = "화면 상단에 실시간 프레임레이트와 GPU 통계를 표시합니다. 게임 실행 중 Option-F12 또는 메뉴 막대(보기 > Metal HUD)로 켜고 끌 수 있습니다.";
 "config.perf_card" = "성능 및 호환성";

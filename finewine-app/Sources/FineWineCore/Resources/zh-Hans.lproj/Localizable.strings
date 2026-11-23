@@ -259,6 +259,10 @@
 "config.hoyoverse_steam_desc" = "《原神》、《绝区零》、《崩坏3》及 HoYoPlay 启动器将通过 Steam 客户端替身启动（与 Linux 运行方式相同）。游戏将判定运行于 Steam 环境；请自行评估账号风险。";
 "config.star_rail_title" = "《崩坏：星穹铁道》启动变通方法";
 "config.star_rail_desc" = "除非游戏的第一次网络连接被拒绝，并且它对 Windows 文件签名的第一次检查看起来成功，否则游戏会在启动几秒后结束。FineWine 会对 StarRail.exe 做这两件事，与能运行该游戏的 Linux 版本做法相同。这会绕过游戏自身的一项检查；如果不希望这样，请将其关闭。";
+"config.game_fixes_title" = "游戏的已知修正";
+"config.game_fixes_desc" = "已知需要特定设置的游戏会自动获得该设置：内存的分配方式、报告的处理器数量、使用哪一份系统库。列表来自 Proton，游戏通过其 Steam 应用 ID 识别。";
+"config.hide_wine_title" = "对程序隐藏 Wine";
+"config.hide_wine_desc" = "程序找不到会暴露 Wine 的函数。用于因不在 Windows 上而拒绝运行的程序。其他情况请保持关闭。";
 "config.metal_hud_title" = "启动时默认开启 Metal 性能监测面板 (HUD)";
 "config.metal_hud_desc" = "在画面上方展示实时帧率与 GPU 负载。游戏运行中亦可随时通过快捷键 Option-F12 或菜单栏切换显示。";
 "config.perf_card" = "性能与兼容性";

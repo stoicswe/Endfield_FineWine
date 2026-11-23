@@ -1,0 +1,77 @@
+winegstreamer: the runtime's own GStreamer plugins
+
+The runtime now brings GStreamer (scripts/build-finewine-deps.sh builds it with GLib from
+CrossOver's source archive): its libraries in <runtime>/lib and its plugins in
+<runtime>/lib/gstreamer-1.0. Decoding is done by macOS itself, through GStreamer's applemedia
+plugin (VideoToolbox and AudioToolbox); there is no FFmpeg.
+
+GStreamer looks for plugins in the folder it was built for, which exists only on the Mac that
+built it, and would otherwise pick up another GStreamer the Mac happens to have. Before it is
+initialised, winegstreamer now points it at the runtime's folder, found from where
+winegstreamer.so itself is, turns off the separate plugin scanner (plugins are read in the
+process) and puts the list of plugins it keeps in the prefix, as the runtime may be somewhere
+that cannot be written to. Variables that are already set are left alone, and a runtime
+without the folder gets GStreamer's own defaults.
+
+Checked by tests/runtime/media.c.
+
+diff --git a/dlls/winegstreamer/unixlib.c b/dlls/winegstreamer/unixlib.c
+--- a/dlls/winegstreamer/unixlib.c
++++ b/dlls/winegstreamer/unixlib.c
+@@ -254,7 +254,46 @@
+     val = (val & 0x33333333) + (val >> 2 & 0x33333333);
+     return ((val + (val >> 4)) & 0x0f0f0f0f) * 0x01010101 >> 24;
+ #endif
++}
++
++#ifdef __APPLE__
++#include <dlfcn.h>
++#include <limits.h>
++#include <unistd.h>
++/* FineWine: the runtime brings its own GStreamer, in <runtime>/lib, with its plugins in
++ * <runtime>/lib/gstreamer-1.0 (this library is <runtime>/lib/wine/aarch64-unix/winegstreamer.so).
++ * GStreamer is told to look there and nowhere else: a GStreamer the Mac happens to have, from
++ * Homebrew say, is another build with other plugins. The list of plugins it keeps is put in the
++ * prefix, since the runtime may be in a place that cannot be written to. Variables that are
++ * already set are left alone. */
++static void finewine_gstreamer_paths(void)
++{
++    char path[PATH_MAX], *end;
++    const char *prefix = getenv("WINEPREFIX");
++    Dl_info info;
++
++    if (!dladdr((void *)finewine_gstreamer_paths, &info) || !info.dli_fname) return;
++    if (!realpath(info.dli_fname, path)) return;
++    /* <runtime>/lib/wine/aarch64-unix/winegstreamer.so -> <runtime>/lib */
++    for (int i = 0; i < 3; i++)
++    {
++        if (!(end = strrchr(path, '/'))) return;
++        *end = 0;
++    }
++    if (strlen(path) + sizeof("/gstreamer-1.0") > sizeof(path)) return;
++    strcat(path, "/gstreamer-1.0");
++    if (access(path, R_OK)) return;   /* a runtime without it: GStreamer's own defaults */
++
++    setenv("GST_PLUGIN_SYSTEM_PATH_1_0", path, FALSE);
++    setenv("GST_PLUGIN_PATH_1_0", "", FALSE);
++    setenv("GST_PLUGIN_SCANNER_1_0", "", FALSE);
++    if (prefix && prefix[0] == '/' && strlen(prefix) + 40 < sizeof(path))
++    {
++        snprintf(path, sizeof(path), "%s/.finewine-gstreamer-registry.bin", prefix);
++        setenv("GST_REGISTRY_1_0", path, FALSE);
++    }
+ }
++#endif
+ 
+ NTSTATUS wg_init_gstreamer(void *arg)
+ {
+@@ -274,6 +313,9 @@
+     if (params->err_on)
+         setenv("GST_DEBUG", "1", FALSE);
+     setenv("GST_DEBUG_NO_COLOR", "1", FALSE);
++#ifdef __APPLE__
++    finewine_gstreamer_paths();
++#endif
+ 
+     /* GStreamer installs a temporary SEGV handler when it loads plugins
+      * to initialize its registry calling exit(-1) when any fault is caught.

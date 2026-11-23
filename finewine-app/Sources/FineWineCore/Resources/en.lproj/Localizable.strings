@@ -259,6 +259,10 @@
 "config.hoyoverse_steam_desc" = "Genshin Impact, Zenless Zone Zero, Honkai Impact 3rd and the HoYoPlay launcher are started through a stand-in for the Steam client, the way they are run on Linux. The game is told it was started by Steam, which is not a platform HoYoverse supports on a Mac; use it at your own account's risk.";
 "config.star_rail_title" = "Start-up workarounds for Honkai: Star Rail";
 "config.star_rail_desc" = "The game ends a few seconds after it starts unless its first network connection is refused and its first check of Windows' file signatures appears to succeed. FineWine does both for StarRail.exe, as the Linux builds that run the game do. This gets past a check of the game's own; turn it off if you would rather not.";
+"config.game_fixes_title" = "Known fixes for games";
+"config.game_fixes_desc" = "Games that are known to need a particular setting get it by themselves: how memory is handed out, how many processors are reported, which copy of a system library is used. The list is Proton's, and a game is recognised by its Steam app id.";
+"config.hide_wine_title" = "Hide Wine from programs";
+"config.hide_wine_desc" = "Programs do not find the functions that give Wine away. For a program that refuses to run because it is not on Windows. Leave off otherwise.";
 "config.metal_hud_title" = "Start with the Metal performance overlay shown";
 "config.metal_hud_desc" = "Frame rate and GPU statistics over the game. Either way it can be shown and hidden while a game runs: View > Metal HUD in the menu bar, or Option-F12.";
 "config.perf_card" = "Performance and compatibility";

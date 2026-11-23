@@ -172,6 +172,24 @@ This directory does not contain Wine itself — only diffs to be applied to a Wi
 Applied by `scripts/build-finewine-runtime.sh` on top of `patches/ARM` (minus the two x86-only
 kernel32 patches, which cannot be built as ARM64EC), against upstream Wine 11.21.
 
+- `0060-winegstreamer-the-runtime-s-own-gstreamer-plugins.patch`: the runtime now brings
+  GStreamer (built by `scripts/build-finewine-deps.sh`, decoding through macOS's own decoders).
+  Before GStreamer is initialised, winegstreamer points it at `<runtime>/lib/gstreamer-1.0`,
+  found from its own location, turns off the separate plugin scanner and keeps the plugin
+  list in the prefix. Tested by `tests/runtime/media.c`.
+- `0059-single-game-cases-from-proton-s-wine.patch`: twelve places where Proton's Wine does
+  something different for one game by its Steam app id, for thirteen games (VRChat, Far Cry 4,
+  The Witcher 3, Skyrim Special Edition and others), in ntdll, xinput, gdiplus, d2d1, user32,
+  rsaenh, ieframe, ddraw, d3d8, win32u and mshtml. The list and what was left out are in
+  [`docs/project-information/34-proton-features.md`](../docs/project-information/34-proton-features.md).
+- `0058-ntdll-ws2_32-proton-s-compatibility-switches.patch`: Proton's switches for programs
+  that depend on a detail of Windows or the machine, under Proton's names: heap behaviour
+  (`WINE_HEAP_DELAY_FREE`, `_ZERO_MEMORY`, `_TOP_DOWN`), a processor limit (`WINE_CPU_TOPOLOGY`,
+  count only), `WINE_RAM_REPORTING_BIAS`, `WINE_DISABLE_SFN`, `WINE_BLOCK_HOSTS`, and
+  `FINEWINE_HIDE_WINE_EXPORTS` (ntdll's Wine functions are not found by name; the runtime's own
+  parts use two new names that stay). The app sets them for the games in Proton's table. Tested
+  by `tests/runtime/compat-switches.c`. Write-up:
+  [`docs/project-information/34-proton-features.md`](../docs/project-information/34-proton-features.md).
 - `0057-ws2_32-wintrust-what-honkai-star-rail-needs-to-start.patch`: for a program whose file
   is `StarRail.exe`, the first `connect` is refused and the first signature-catalogue lookup
   answers with success, the two special cases the Linux builds that run the game carry.
@@ -468,6 +486,11 @@ Applied by `scripts/build-fex.sh` to FEX at the commit pinned in `finewine-sourc
 FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`, and its WOW64 build
 (for 32-bit programs) as `xtajit.dll`.
 
+- `0015-windows-the-processor-count-wine-reports-and-finewine-s-names-for-wine-s-exports.patch`:
+  FEX replaced the processor count Wine reports with its own plus one, so x64 and 32-bit
+  programs saw one processor too many (9 on an 8-core Mac); Wine's count is kept, which also
+  makes it follow `WINE_CPU_TOPOLOGY`. And FEX asks ntdll for `__finewine_get_version` and
+  `__finewine_get_host_version` first, which a prefix that hides Wine's exports keeps.
 - `0014-windows-trap-writes-to-generated-code-a-host-page-at-a-time.patch`: a program that
   rewrites code it generated (a regular-expression or script compiler) tells nobody, so FEX
   traps the write by taking the write permission off the page. It did so 4K page by 4K page;

@@ -1,0 +1,85 @@
+windows: the processor count Wine reports, and FineWine's names for Wine's exports
+
+Two small things in the Windows front ends.
+
+The processor count. When Wine asks for the emulated processor's description, FEX replaced
+the count Wine had filled in with the count from its own CPUID leaf 1 plus one. That CPUID
+field already holds the count, so x64 and 32-bit programs were told of one processor more
+than there is: 9 on an 8-core Mac, 11 on a 10-core one (seen in a game launcher's own report).
+A program that pins a thread to the last processor it was told of asked for one that does not
+exist. The count Wine filled in is now kept, which also makes it follow WINE_CPU_TOPOLOGY
+(Wine runtime patch 0058).
+
+The names. FEX asks ntdll for wine_get_version to know it is on Wine, and (patch 0014) for
+wine_get_host_version to know the host's page size. A FineWine prefix can hide those names
+from programs (FINEWINE_HIDE_WINE_EXPORTS, runtime patch 0058); FEX would then take the host
+for Windows and its pages for 4K, which brings back the bug 0014 fixed. It now asks for
+__finewine_get_version and __finewine_get_host_version first, which are never hidden.
+
+Checked with tests/runtime/compat-switches.c (the count) and code-rewrite-silent.c with the
+names hidden.
+
+Local patch only: FEX does not take AI-written code.
+
+diff --git a/Source/Windows/Common/CPUFeatures.cpp b/Source/Windows/Common/CPUFeatures.cpp
+--- a/Source/Windows/Common/CPUFeatures.cpp
++++ b/Source/Windows/Common/CPUFeatures.cpp
+@@ -186,7 +186,13 @@
+ }
+ 
+ void CPUFeatures::UpdateInformation(SYSTEM_CPU_INFORMATION* Info) {
+-  Info->MaximumProcessors = CpuInfo.MaximumProcessors;
++  // FineWine: the count Wine filled in is kept. FEX replaced it with the count from its own CPUID
++  // leaf 1 plus one, but that field already holds the count, so x64 and 32-bit programs were told
++  // of one processor more than there is (9 on an 8-core Mac), and of every processor when Wine had
++  // been asked to report fewer (WINE_CPU_TOPOLOGY).
++  if (!Info->MaximumProcessors) {
++    Info->MaximumProcessors = CpuInfo.MaximumProcessors > 1 ? CpuInfo.MaximumProcessors - 1 : 1;
++  }
+   Info->ProcessorArchitecture = CpuInfo.ProcessorArchitecture;
+   Info->ProcessorLevel = CpuInfo.ProcessorLevel;
+   Info->ProcessorRevision = CpuInfo.ProcessorRevision;
+diff --git a/Source/Windows/Common/InvalidationTracker.cpp b/Source/Windows/Common/InvalidationTracker.cpp
+--- a/Source/Windows/Common/InvalidationTracker.cpp
++++ b/Source/Windows/Common/InvalidationTracker.cpp
+@@ -28,7 +28,13 @@
+   // sets it by hand (4096 is how it was before), to rule this in or out when something misbehaves.
+   TrapGranule = FEXCore::Utils::FEX_PAGE_SIZE;
+   using HostVersionFn = void(__cdecl*)(const char**, const char**);
+-  if (const auto HostVersion = reinterpret_cast<HostVersionFn>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_host_version"))) {
++  // The first name is one FineWine's Wine keeps when a prefix hides Wine's own exports from programs.
++  const auto NtDllModule = GetModuleHandleW(L"ntdll.dll");
++  auto HostVersion = reinterpret_cast<HostVersionFn>(GetProcAddress(NtDllModule, "__finewine_get_host_version"));
++  if (!HostVersion) {
++    HostVersion = reinterpret_cast<HostVersionFn>(GetProcAddress(NtDllModule, "wine_get_host_version"));
++  }
++  if (HostVersion) {
+     const char* SysName = nullptr;
+     const char* Release = nullptr;
+     HostVersion(&SysName, &Release);
+diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
+--- a/Source/Windows/WOW64/Module.cpp
++++ b/Source/Windows/WOW64/Module.cpp
+@@ -582,7 +582,8 @@
+   SignalDelegator = fextl::make_unique<FEX::DummyHandlers::DummySignalDelegator>();
+   SyscallHandler = fextl::make_unique<WowSyscallHandler>();
+   const auto NtDll = GetModuleHandleW(L"ntdll.dll");
+-  const bool IsWine = !!GetProcAddress(NtDll, "wine_get_version");
++  // FineWine: the first name stays when a prefix hides Wine's own exports from programs.
++  const bool IsWine = GetProcAddress(NtDll, "__finewine_get_version") || GetProcAddress(NtDll, "wine_get_version");
+   OvercommitTracker.emplace(IsWine);
+ 
+   FEX::Windows::Allocator::SetupHooks(NtDll);
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -774,7 +774,8 @@
+   SyscallHandler = fextl::make_unique<Exception::ECSyscallHandler>();
+ 
+   const auto NtDll = GetModuleHandleW(L"ntdll.dll");
+-  const bool IsWine = !!GetProcAddress(NtDll, "wine_get_version");
++  // FineWine: the first name stays when a prefix hides Wine's own exports from programs.
++  const bool IsWine = GetProcAddress(NtDll, "__finewine_get_version") || GetProcAddress(NtDll, "wine_get_version");
+   // FineWine: FEX_EAGERCOMMIT=1 turns off committing emulator memory a piece at a time (the
+   // lookup tables, the allocator's pages, call-return stacks and compile buffers), to rule it in
+   // or out when something misbehaves.

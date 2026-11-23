@@ -95,6 +95,7 @@ More:
 
 - [docs/performance.md](docs/performance.md) — FPS targets per chip, thermals, swap pressure and tuning for the patched CrossOver.
 - [docs/14-performance-on-16gb-macs.md](docs/14-performance-on-16gb-macs.md) — 16 GB machines.
+- [docs/project-information/34-proton-features.md](docs/project-information/34-proton-features.md) — what was taken over from Proton (compatibility switches, per-game fixes, the Steam helper), what cannot work on a Mac, and what is left.
 - [docs/project-information/33-rewritten-code-and-16k-pages.md](docs/project-information/33-rewritten-code-and-16k-pages.md) — programs that rewrite code they generated ran the old code on 16K pages (the HoYo launcher crash of issue 128), and the emulator fix.
 - [docs/project-information/32-mac-file-panels.md](docs/project-information/32-mac-file-panels.md) — the Mac's open and save panels in place of Wine's file dialogs.
 - [docs/project-information/31-direct3d-9-on-vulkan.md](docs/project-information/31-direct3d-9-on-vulkan.md) — Direct3D 9 on Vulkan (DXVK): what is built, what was fixed, and where it stopped.

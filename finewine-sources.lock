@@ -49,6 +49,11 @@ CROSSOVER_SOURCES_SHA256=ac99c8ca4b3848f3e81784135f023df266b61c2345726ea55a50b3e
 NETTLE_VERSION=3.10
 NETTLE_SHA256=b4c518adb174e484cb4acea54118f02380c7133771e7e9beb98a0787194ee47c
 
+# SDL2, for game controllers (Wine's winebus), from libsdl.org's release archive. Built by
+# scripts/build-finewine-deps.sh with only its controller parts.
+SDL2_VERSION=2.32.10
+SDL2_SHA256=5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165
+
 # Build tools from Homebrew. Homebrew offers only its newest version of each, so these cannot
 # be pinned the way the sources are; the build checks the major version instead and stops on
 # a different one. llvm and lld compile Wine's Windows side, so a new major version of them

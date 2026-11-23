@@ -259,6 +259,10 @@
 "config.hoyoverse_steam_desc" = "原神、ゼンレスゾーンゼロ、崩壊3rd、HoYoPlay ランチャーを Steam スタンドイン経由で起動します（Linux と同様）。アカウントのリスクはご自身で判断してください。";
 "config.star_rail_title" = "「崩壊：スターレイル」の起動回避策";
 "config.star_rail_desc" = "このゲームは、最初のネットワーク接続が拒否され、Windows のファイル署名の最初の確認が成功したように見えないかぎり、起動して数秒で終了します。FineWine は StarRail.exe に対してこの両方を行います（ゲームを動かす Linux 向けビルドと同じ方法）。ゲーム自身の確認を通過させるものなので、望まない場合はオフにしてください。";
+"config.game_fixes_title" = "ゲームの既知の修正";
+"config.game_fixes_desc" = "特定の設定が必要だとわかっているゲームには、その設定が自動で適用されます（メモリの渡し方、報告するプロセッサ数、どのシステムライブラリを使うか）。一覧は Proton のもので、ゲームは Steam のアプリ ID で見分けます。";
+"config.hide_wine_title" = "プログラムから Wine を隠す";
+"config.hide_wine_desc" = "Wine であることがわかる関数をプログラムが見つけられなくなります。Windows でないことを理由に動かないプログラムのための設定です。それ以外ではオフのままにしてください。";
 "config.metal_hud_title" = "Metal パフォーマンスオーバーレイ (HUD) を表示して起動";
 "config.metal_hud_desc" = "画面上部にリアルタイムのフレームレートと GPU 統計を表示します。Option-F12 やメニューバーでいつでも切り替え可能です。";
 "config.perf_card" = "パフォーマンスと互換性";

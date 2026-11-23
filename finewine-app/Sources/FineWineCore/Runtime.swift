@@ -44,6 +44,9 @@ public enum RuntimeCapability: String, CaseIterable, Codable, Sendable {
     case macFileDialogs
     /// The two start-up workarounds for Honkai: Star Rail (runtime patch 0057).
     case starRailWorkarounds
+    /// Proton's compatibility switches (heap behaviour, processor limit, hidden Wine exports…;
+    /// runtime patch 0058), which the per-game fixes and two prefix settings use.
+    case compatSwitches
 }
 
 /// `runtime.json`: the description of a Wine build FineWine can run programs with. In a
