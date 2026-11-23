@@ -1,0 +1,57 @@
+arm64ec: dropping a block from generated code counts as inside the emulator
+
+A block that is checked before it runs (SMCChecks=full, a Mono tail call, and with 0014 code
+whose writes cannot be trapped) compares the guest's bytes with the ones it was translated
+from, and when they differ it jumps to a handler in the dispatcher that calls
+ThreadRemoveCodeEntryFromJit. That drops translated code: it takes the code invalidation
+lock, and frees and resets memory (the lookup tables, the thread's call-return stack).
+
+Wine reports a thread's memory calls back to the emulator (NotifyMemoryAlloc, NotifyMemoryFree,
+NotifyMemoryProtect) unless the thread is marked as being inside it (InSyscallCallback in the
+CPU area). The dispatcher sets the mark around its calls to the compiler and the linker
+(EmitSignalGuardedRegion), but not around this one. So the report for the handler's own memory
+call arrived while the handler held the code invalidation lock, asked for the lock again, and
+the thread waited for itself forever. Any x64 program hung the first time checked code had
+changed. The 32-bit (WOW64) build has no such reports and was not affected.
+
+The mark is now set around the call. Found with tests/runtime/code-rewrite-silent.c, which
+hung in the case that 0014 answers with a check before each run; it and FEX_SMCCHECKS=full
+pass with this.
+
+Local patch only: FEX does not take AI-written code.
+
+diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
+--- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
++++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
+@@ -689,6 +689,19 @@
+     // All dynamic and static registers are spilled coming in to this handler.
+     // It's also the end of block and RIP might have changed, so we jump directly to the top of the loop.
+     ThreadDispatchRemoveCodeEntry = GetCursorAddress<uint64_t>();
++
++#ifdef ARCHITECTURE_arm64ec
++    // FineWine: the handler drops translated code, which takes the code invalidation lock and frees
++    // and resets memory. Wine reports a thread's memory calls back to the emulator unless the
++    // thread is marked as being inside it, as the calls to the compiler and the linker above are
++    // (EmitSignalGuardedRegion). Without the mark the report arrives while the lock is held and
++    // asks for it again, and the thread waits for itself forever: any block checked before it
++    // runs (SMCChecks=full, a Mono tail call, code whose writes cannot be trapped) hung as soon
++    // as its code changed. TMP3 and TMP4 are free here and are not the arguments.
++    LoadTEBField(TMP4, TEB_CPU_AREA_OFFSET);
++    LoadConstant(ARMEmitter::Size::i32Bit, TMP3, 1);
++    strb(TMP3.W(), TMP4, CPU_AREA_IN_SYSCALL_CALLBACK_OFFSET);
++#endif
+ 
+     // Arguments are already in x0, x1. Just jump to the handler.
+     ldr(ARMEmitter::XReg::x2, STATE, offsetof(FEXCore::Core::CpuStateFrame, Pointers.ThreadRemoveCodeEntryFromJIT));
+@@ -697,6 +710,11 @@
+     } else {
+       blr(ARMEmitter::Reg::r2);
+     }
++
++#ifdef ARCHITECTURE_arm64ec
++    LoadTEBField(TMP4, TEB_CPU_AREA_OFFSET);
++    strb(ARMEmitter::WReg::zr, TMP4, CPU_AREA_IN_SYSCALL_CALLBACK_OFFSET);
++#endif
+ 
+     FillStaticRegs({
+       .OptionalReg = ARMEmitter::Reg::r1,

@@ -461,6 +461,22 @@ Applied by `scripts/build-fex.sh` to FEX at the commit pinned in `finewine-sourc
 FEX's Windows ARM64EC build is installed in the runtime as `xtajit64.dll`, and its WOW64 build
 (for 32-bit programs) as `xtajit.dll`.
 
+- `0014-windows-trap-writes-to-generated-code-a-host-page-at-a-time.patch`: a program that
+  rewrites code it generated (a regular-expression or script compiler) tells nobody, so FEX
+  traps the write by taking the write permission off the page. It did so 4K page by 4K page;
+  the Mac's pages are 16K and Wine gives a host page every permission any of its four pages
+  has, so the trap did nothing while a neighbour was writable, and lifting it for one page
+  lifted it for four. Old translations kept running: HoYoPlay crashed in a Qt regular
+  expression when a second game was located (issue 128). Pages are now trapped, untrapped and
+  invalidated a host page at a time (16K under Wine on macOS); code that shares a host page
+  with ordinary writable data cannot be trapped and is checked before each run instead.
+  `FEX_SMCGRANULE=4096` puts the old unit back. Tested by `tests/runtime/code-rewrite-silent.c`.
+  Write-up: [`docs/project-information/33-rewritten-code-and-16k-pages.md`](../docs/project-information/33-rewritten-code-and-16k-pages.md).
+- `0013-arm64ec-dropping-a-block-from-generated-code-counts-as-inside-the-emulator.patch`: the
+  dispatcher's handler for a checked block whose code has changed was not marked as inside the
+  emulator, so Wine reported its memory calls back while it held the code invalidation lock and
+  the thread waited for itself. x64 programs hung with `FEX_SMCCHECKS=full` and would have with
+  0014's check; the 32-bit build was not affected.
 - `0012-32-bit-guests-fex-s-own-data-read-through-guest-memory-operations.patch`: two places
   in the 32-bit build read FEX's own data with a guest memory operation, which 0011 sends
   through the guest's window: the x87 stack's slow path (now through the state register) and

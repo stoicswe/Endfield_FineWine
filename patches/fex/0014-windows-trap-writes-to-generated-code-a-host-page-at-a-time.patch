@@ -1,0 +1,384 @@
+windows: trap writes to generated code a host page at a time
+
+A program that generates code at run time (a regular-expression or script engine's compiler)
+writes it into memory that is writable and executable, runs it, and later writes other code
+to the same place. On x86 it has nothing else to do, so the emulator has to notice the write
+by itself. FEX does that by taking the write permission off a page it has translated code
+from (InvalidationTracker, RWXIntervals): the write faults, the page's translations are
+dropped, and the page is made writable again.
+
+That is done 4K page by 4K page, which is what Windows programs see. The host can only change
+the permission of a page of its own, and on Apple silicon those are 16K, four 4K pages. Wine
+gives a host page every permission any of its four pages has (get_host_page_vprot). So:
+
+- taking the write permission off one 4K page did nothing while a neighbour in the same host
+  page was writable, which is the usual case inside a block of generated code: the write did
+  not fault and the old translation went on running;
+- making one 4K page writable again made all four writable, so the other three lost their trap
+  while their translations were kept.
+
+HoYoPlay crashed this way (issue 128): Qt compiles its regular expressions to machine code
+(PCRE2), a second expression's code was written where a first one's had been, the first one's
+translation ran, left the stack pointer 0x110 bytes off and returned to address 0. It happened
+when a start folder was passed to the folder dialog, which is why locating a second game
+crashed and the first did not.
+
+Now pages are trapped, untrapped and have their translations dropped a host page at a time
+(TrapGranule): 16K when Wine says the host is macOS, 4K as before otherwise.
+
+- ReprotectRWXIntervals and BeginUntrackedWriteLocked work on whole host pages.
+- A write fault drops the translations of the whole host page and gives all of its trapped
+  pages their write permission back.
+- When memory becomes writable, the translations from the rest of the host pages it starts
+  and ends in are dropped: those pages can be written without a fault from then on.
+- Writable code that shares a host page with ordinary writable data cannot be trapped at all.
+  QueryExecutableRange looks at the neighbours of the first and last host page of a writable
+  range (the pages in between are the range's own) and reports such a piece with
+  WritesUntrapped; the decoder then marks its blocks ForceFullSMCDetection, which checks the
+  bytes before each run (see 0013 for why that needed a fix on ARM64EC).
+
+FEX_SMCGRANULE=<bytes> sets the unit by hand; 4096 is the old behaviour, to rule the change in
+or out. Checked with tests/runtime/code-rewrite-silent.c, x64 and 32-bit: it fails with
+FEX_SMCGRANULE=4096 (thousands of calls run old code) and passes without.
+
+Local patch only: FEX does not take AI-written code.
+
+diff --git a/Source/Windows/Common/InvalidationTracker.h b/Source/Windows/Common/InvalidationTracker.h
+--- a/Source/Windows/Common/InvalidationTracker.h
++++ b/Source/Windows/Common/InvalidationTracker.h
+@@ -63,6 +63,20 @@
+   std::shared_mutex IntervalsLock;
+   FEXCore::Context::Context& CTX;
+   const std::unordered_map<DWORD, FEXCore::Core::InternalThreadState*>& Threads;
++  // FineWine: the unit in which writes to code can be trapped. A page is trapped by taking its
++  // write permission away, and the host can only do that for a whole page of its own: on Apple
++  // silicon that is 16K, four of the 4K pages Windows programs see, and Wine gives such a host
++  // page every permission any of its four pages has. Trapping one 4K page therefore does nothing
++  // while a neighbour in the same host page is writable, and making one writable again exposes the
++  // other three. So pages are trapped, untrapped and invalidated a whole host page at a time.
++  uint64_t TrapGranule {0x1000};
++  uint64_t TrapGranuleBase(uint64_t Address) const {
++    return Address & ~(TrapGranule - 1);
++  }
++  uint64_t TrapGranuleEnd(uint64_t End) const {
++    return End > ~0ULL - (TrapGranule - 1) ? ~0ULL & ~(TrapGranule - 1) : (End + TrapGranule - 1) & ~(TrapGranule - 1);
++  }
++
+   bool SMCDetectionDisabled {false};                    // Protected by IntervalsLock
+   bool DEPDisabled {false};                             // Protected by IntervalsLock
+   FEXCore::IntervalList<uint64_t> DEPPromotedIntervals; // Protected by IntervalsLock
+diff --git a/Source/Windows/Common/InvalidationTracker.cpp b/Source/Windows/Common/InvalidationTracker.cpp
+--- a/Source/Windows/Common/InvalidationTracker.cpp
++++ b/Source/Windows/Common/InvalidationTracker.cpp
+@@ -2,6 +2,9 @@
+ 
+ #include <FEXCore/Core/GuestBase.h>
+ #include <algorithm>
++#include <cstdlib>
++#include <cstring>
++#include <iterator>
+ #include <FEXCore/Utils/LogManager.h>
+ #include <FEXCore/Utils/TypeDefines.h>
+ #include <FEXCore/Utils/SignalScopeGuards.h>
+@@ -10,6 +13,7 @@
+ #include <FEXCore/Debug/InternalThreadState.h>
+ #include "InvalidationTracker.h"
+ #include <windef.h>
++#include <winbase.h>
+ #include <winternl.h>
+ 
+ namespace FEX::Windows {
+@@ -19,6 +23,26 @@
+   FEX_CONFIG_OPT(SMCChecks, SMCCHECKS);
+   SMCDetectionDisabled = (SMCChecks == FEXCore::Config::CONFIG_SMC_NONE);
+ 
++  // FineWine: see TrapGranule. Wine tells Windows code that pages are 4K whatever the host uses,
++  // so the host is asked by name: macOS on Apple silicon has 16K pages. FEX_SMCGRANULE=<bytes>
++  // sets it by hand (4096 is how it was before), to rule this in or out when something misbehaves.
++  TrapGranule = FEXCore::Utils::FEX_PAGE_SIZE;
++  using HostVersionFn = void(__cdecl*)(const char**, const char**);
++  if (const auto HostVersion = reinterpret_cast<HostVersionFn>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_host_version"))) {
++    const char* SysName = nullptr;
++    const char* Release = nullptr;
++    HostVersion(&SysName, &Release);
++    if (SysName && !strcmp(SysName, "Darwin")) {
++      TrapGranule = 0x4000;
++    }
++  }
++  if (const char* Env = getenv("FEX_SMCGRANULE")) {
++    const uint64_t Value = strtoull(Env, nullptr, 0);
++    if (Value >= FEXCore::Utils::FEX_PAGE_SIZE && Value <= 0x10000 && !(Value & (Value - 1))) {
++      TrapGranule = Value;
++    }
++  }
++
+   MEMORY_BASIC_INFORMATION Info;
+   uint64_t Address = 0;
+ 
+@@ -49,6 +73,32 @@
+   const auto AlignedBase = Address & FEXCore::Utils::FEX_PAGE_MASK;
+   const auto AlignedSize = (Address - AlignedBase + Size + FEXCore::Utils::FEX_PAGE_SIZE - 1) & FEXCore::Utils::FEX_PAGE_MASK;
+ 
++  // FineWine: memory that becomes writable makes the host pages it starts and ends in writable as
++  // a whole (see TrapGranule), so code in the rest of those two host pages can be written from now
++  // on without a fault. What was translated from there is dropped; it is translated again, and
++  // trapped again if it can be, when it next runs.
++  uint64_t ExposedHead = 0, ExposedHeadSize = 0, ExposedTail = 0, ExposedTailSize = 0;
++  if (TrapGranule > FEXCore::Utils::FEX_PAGE_SIZE && ProtIsWritable(Prot) && AlignedSize) {
++    std::shared_lock Lock(IntervalsLock);
++    const uint64_t End = AlignedBase + AlignedSize;
++    const uint64_t HeadStart = TrapGranuleBase(AlignedBase);
++    const uint64_t TailEnd = TrapGranuleEnd(End);
++    if (HeadStart < AlignedBase && XIntervals.Intersect({HeadStart, AlignedBase})) {
++      ExposedHead = HeadStart;
++      ExposedHeadSize = AlignedBase - HeadStart;
++    }
++    if (TailEnd > End && XIntervals.Intersect({End, TailEnd})) {
++      ExposedTail = End;
++      ExposedTailSize = TailEnd - End;
++    }
++  }
++  if (ExposedHeadSize) {
++    InvalidateIntervalInternal(ExposedHead, ExposedHeadSize);
++  }
++  if (ExposedTailSize) {
++    InvalidateIntervalInternal(ExposedTail, ExposedTailSize);
++  }
++
+   const bool NeedsInvalidate = [&]() {
+     std::unique_lock Lock(IntervalsLock);
+ 
+@@ -215,7 +265,9 @@
+ }
+ 
+ void InvalidationTracker::ReprotectRWXIntervals(uint64_t Address, uint64_t Size) {
+-  ProtectRWXIntervalsInternal(Address, Size, false);
++  // FineWine: whole host pages, or the trap does not hold (see TrapGranule).
++  const uint64_t Base = TrapGranuleBase(Address);
++  ProtectRWXIntervalsInternal(Base, TrapGranuleEnd(Address + Size) - Base, false);
+ }
+ 
+ bool InvalidationTracker::HandleRWXAccessViolation(FEXCore::Core::InternalThreadState* Thread, uint64_t HostPc, uint64_t FaultAddress) {
+@@ -232,13 +284,52 @@
+     {
+       std::scoped_lock Lock(CTX.GetCodeInvalidationMutex());
+ 
+-      InvalidateIntervalInternalLocked(FaultAddress & FEXCore::Utils::FEX_PAGE_MASK, FEXCore::Utils::FEX_PAGE_SIZE);
++      if (TrapGranule > FEXCore::Utils::FEX_PAGE_SIZE) {
++        // FineWine: letting this page be written lets its whole host page be written (see
++        // TrapGranule), so all of that host page's code is dropped and all of its trapped pages are
++        // given back their write permission; a write to one of the others would not fault again.
++        const uint64_t Base = TrapGranuleBase(FaultAddress);
++        const uint64_t End = Base + TrapGranule;
++        InvalidateIntervalInternalLocked(Base, TrapGranule);
+ 
+-      // Invalidate, then unprotect the faulting page with the compilation lock held to ensure that any racing invalidations are not dropped.
+-      ULONG TmpProt;
+-      void* TmpAddress = reinterpret_cast<void*>(FaultAddress);
+-      SIZE_T TmpSize = 1;
+-      NtProtectVirtualMemory(NtCurrentProcess(), &TmpAddress, &TmpSize, UntrapProt, &TmpProt);
++        // At most one piece per 4K page; found under the lock, changed after it is released.
++        struct Piece {
++          uint64_t Address;
++          uint64_t Size;
++          ULONG Prot;
++        };
++        Piece Pieces[16];
++        size_t NumPieces = 0;
++        {
++          std::shared_lock Lock(IntervalsLock);
++          uint64_t Address = Base;
++          do {
++            const auto Query = RWXIntervals.Query(Address);
++            if (Query.Enclosed) {
++              if (NumPieces < std::size(Pieces)) {
++                Pieces[NumPieces++] = {Address, std::min(End, Address + Query.Size) - Address, GetUntrapProt(Address)};
++              }
++            } else if (!Query.Size) {
++              break;
++            }
++            Address += Query.Size;
++          } while (Address < End);
++        }
++        for (size_t i = 0; i < NumPieces; i++) {
++          void* TmpAddress = reinterpret_cast<void*>(Pieces[i].Address);
++          SIZE_T TmpSize = static_cast<SIZE_T>(Pieces[i].Size);
++          ULONG TmpProt;
++          NtProtectVirtualMemory(NtCurrentProcess(), &TmpAddress, &TmpSize, Pieces[i].Prot, &TmpProt);
++        }
++      } else {
++        InvalidateIntervalInternalLocked(FaultAddress & FEXCore::Utils::FEX_PAGE_MASK, FEXCore::Utils::FEX_PAGE_SIZE);
++
++        // Invalidate, then unprotect the faulting page with the compilation lock held to ensure that any racing invalidations are not dropped.
++        ULONG TmpProt;
++        void* TmpAddress = reinterpret_cast<void*>(FaultAddress);
++        SIZE_T TmpSize = 1;
++        NtProtectVirtualMemory(NtCurrentProcess(), &TmpAddress, &TmpSize, UntrapProt, &TmpProt);
++      }
+     }
+     DetectMonoBackpatcherBlock(Thread, HostPc);
+     return true;
+@@ -247,22 +338,73 @@
+ }
+ 
+ bool InvalidationTracker::BeginUntrackedWriteLocked(uint64_t Address, uint64_t Size) {
+-  return ProtectRWXIntervalsInternal(Address, Size, true);
++  // FineWine: whole host pages (see TrapGranule): the pages around the write lose their trap with it.
++  const uint64_t Base = TrapGranuleBase(Address);
++  return ProtectRWXIntervalsInternal(Base, TrapGranuleEnd(Address + Size) - Base, true);
+ }
+ 
+ FEXCore::HLE::ExecutableRangeInfo InvalidationTracker::QueryExecutableRange(uint64_t Address) {
+-  std::shared_lock Lock(IntervalsLock);
+-  const auto XResult = XIntervals.Query(Address);
+-  if (!XResult.Enclosed) {
+-    return {};
++  FEXCore::HLE::ExecutableRangeInfo Result {};
++  // The 4K pages that share a host page with the queried address, are outside its writable range and
++  // are not in a writable range of their own: if one of them is ordinary writable memory, the host
++  // page stays writable whatever is done to the code's own pages.
++  uint64_t Neighbours[16];
++  size_t NumNeighbours = 0;
++  {
++    std::shared_lock Lock(IntervalsLock);
++    const auto XResult = XIntervals.Query(Address);
++    if (!XResult.Enclosed) {
++      return {};
++    }
++    const auto RWXResult = RWXIntervals.Query(Address);
++    if (!RWXResult.Enclosed) {
++      if (RWXResult.Size && RWXResult.Size < XResult.Size) {
++        return {XResult.Interval.Offset, RWXResult.Interval.Offset - XResult.Interval.Offset, false};
++      }
++      return {XResult.Interval.Offset, XResult.Interval.End - XResult.Interval.Offset, false};
++    }
++
++    const uint64_t Start = RWXResult.Interval.Offset;
++    const uint64_t End = RWXResult.Interval.End;
++    Result = {Start, End - Start, true};
++    if (TrapGranule <= FEXCore::Utils::FEX_PAGE_SIZE || SMCDetectionDisabled) {
++      return Result;
++    }
++
++    // FineWine: a writable range is trapped a host page at a time (see TrapGranule). The host pages
++    // wholly inside it can always be trapped. The one it starts in the middle of and the one it
++    // ends in the middle of can only be if the rest of that host page is not writable, so each of
++    // those two is answered as a range of its own, with the neighbours to look at.
++    const uint64_t InnerStart = TrapGranuleEnd(Start);
++    const uint64_t InnerEnd = TrapGranuleBase(End);
++    uint64_t HostPage;
++    if (InnerStart < InnerEnd && Address >= InnerStart && Address < InnerEnd) {
++      return {InnerStart, InnerEnd - InnerStart, true};
++    } else if (Address < InnerStart) {
++      HostPage = TrapGranuleBase(Start);
++    } else {
++      HostPage = InnerEnd;
++    }
++    const uint64_t HostPageEnd = HostPage + TrapGranule;
++    Result = {std::max(Start, HostPage), std::min(End, HostPageEnd) - std::max(Start, HostPage), true};
++
++    for (uint64_t Page = HostPage; Page < HostPageEnd && NumNeighbours < std::size(Neighbours); Page += FEXCore::Utils::FEX_PAGE_SIZE) {
++      if ((Page < Start || Page >= End) && !RWXIntervals.Query(Page).Enclosed) {
++        Neighbours[NumNeighbours++] = Page;
++      }
++    }
+   }
+-  const auto RWXResult = RWXIntervals.Query(Address);
+-  if (RWXResult.Enclosed) {
+-    return {RWXResult.Interval.Offset, RWXResult.Interval.End - RWXResult.Interval.Offset, true};
+-  } else if (RWXResult.Size && RWXResult.Size < XResult.Size) {
+-    return {XResult.Interval.Offset, RWXResult.Interval.Offset - XResult.Interval.Offset, false};
++
++  for (size_t i = 0; i < NumNeighbours; i++) {
++    MEMORY_BASIC_INFORMATION Info;
++    if (!NtQueryVirtualMemory(NtCurrentProcess(), reinterpret_cast<void*>(Neighbours[i]), MemoryBasicInformation, &Info, sizeof(Info), nullptr) &&
++        Info.State == MEM_COMMIT && ProtIsWritable(Info.Protect)) {
++      LogMan::Msg::DFmt("SMC interval {:X} - {:X} cannot be trapped: {:X} is writable", Result.Base, Result.Base + Result.Size, Neighbours[i]);
++      Result.WritesUntrapped = true;
++      break;
++    }
+   }
+-  return {XResult.Interval.Offset, XResult.Interval.End - XResult.Interval.Offset, false};
++  return Result;
+ }
+ 
+ void InvalidationTracker::DetectMonoBackpatcherBlock(FEXCore::Core::InternalThreadState* Thread, uint64_t HostPc) {
+diff --git a/FEXCore/include/FEXCore/HLE/SyscallHandler.h b/FEXCore/include/FEXCore/HLE/SyscallHandler.h
+--- a/FEXCore/include/FEXCore/HLE/SyscallHandler.h
++++ b/FEXCore/include/FEXCore/HLE/SyscallHandler.h
+@@ -21,6 +21,10 @@
+   uint64_t Base;
+   uint64_t Size;
+   bool Writable;
++  // FineWine: the range is writable and the frontend cannot be told when it is written (see
++  // TrapGranule in Source/Windows/Common/InvalidationTracker.h). Code from such a range is
++  // checked against the guest's bytes each time it runs.
++  bool WritesUntrapped {};
+ };
+ 
+ class SyscallHandler;
+diff --git a/FEXCore/Source/Interface/Core/Frontend.h b/FEXCore/Source/Interface/Core/Frontend.h
+--- a/FEXCore/Source/Interface/Core/Frontend.h
++++ b/FEXCore/Source/Interface/Core/Frontend.h
+@@ -91,6 +91,7 @@
+ 
+   void ResetExecutableRangeCache() {
+     ExecutableRangeBase = ExecutableRangeEnd = 0;
++    ExecutableRangeUntrapped = false;
+   }
+ 
+ private:
+@@ -158,6 +159,10 @@
+   uint64_t ExecutableRangeBase {};
+   uint64_t ExecutableRangeEnd {};
+   bool ExecutableRangeWritable {};
++  // FineWine: the range's writes cannot be trapped, and an instruction was read from such a range
++  // since the flag was last cleared (see ExecutableRangeInfo::WritesUntrapped).
++  bool ExecutableRangeUntrapped {};
++  bool ReadFromUntrappedRange {};
+   bool HitNonExecutableRange {};
+   bool HitBadRelocation {};
+   uint32_t HitBreakpoint {~0U};
+diff --git a/FEXCore/Source/Interface/Core/Frontend.cpp b/FEXCore/Source/Interface/Core/Frontend.cpp
+--- a/FEXCore/Source/Interface/Core/Frontend.cpp
++++ b/FEXCore/Source/Interface/Core/Frontend.cpp
+@@ -114,6 +114,8 @@
+     ExecutableRangeBase = RangeInfo.Base;
+     ExecutableRangeEnd = RangeInfo.Base + RangeInfo.Size;
+     ExecutableRangeWritable = RangeInfo.Writable;
++    ExecutableRangeUntrapped = RangeInfo.WritesUntrapped;
++    ReadFromUntrappedRange |= ExecutableRangeUntrapped;
+ 
+     if (RangeInfo.Size == 0) {
+       // Return the number of bytes that couldn't be decoded.
+@@ -126,6 +128,9 @@
+       Address += RangeRemainingSize;
+     }
+   }
++
++  // FineWine: bytes read from the range found by an earlier call count as well.
++  ReadFromUntrappedRange |= ExecutableRangeUntrapped;
+ 
+   // Say all bytes are readable.
+   return Size;
+@@ -1356,6 +1361,7 @@
+           .NumInstructions = BlockIt->NumInstructions - SplitIdx,
+           .DecodedInstructions = BlockIt->DecodedInstructions + SplitIdx,
+           .BlockStatus = BlockIt->BlockStatus,
++          .ForceFullSMCDetection = BlockIt->ForceFullSMCDetection, // FineWine: both halves keep it
+         };
+ 
+         if (BlockIt->DataMasks.size()) {
+@@ -1643,7 +1649,12 @@
+       }
+ 
+       LastFieldReadSize = 0;
++      ReadFromUntrappedRange = false;
+       BlockIt->BlockStatus = DecodeInstruction(OpAddress);
++      if (ReadFromUntrappedRange) {
++        // FineWine: nothing will say when this code is rewritten, so it is checked before each run.
++        BlockIt->ForceFullSMCDetection = true;
++      }
+       if (HitBadRelocation) {
+         BlockInfo.TotalInstructionCount = 0;
+         BlockInfo.Blocks = {*BlockIt};

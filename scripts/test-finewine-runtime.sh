@@ -11,6 +11,8 @@
 #      (tests/runtime/suspend-spin.c)
 #   4c. writes a memory log when asked: large allocations with their caller, and totals
 #      (tests/runtime/memtrace.c)
+#   4d. never runs x86 code in its old form after a program rewrote it without notice
+#      (tests/runtime/code-rewrite-silent.c)
 #   5. creates a Vulkan device and renders with Direct3D 12, both through MoltenVK, from ARM64 and
 #      x64, with and without DXMT selected (tests/runtime/vulkan-device.c, d3d12-clear.c)
 #   5a. builds acceleration structures (in command buffers and on the host), compacts, serializes
@@ -186,6 +188,25 @@ else
       *) fail "x64 code rewriting: usual records: $out; compact records: $out2" ;; esac
   else
     fail "could not build tests/runtime/code-rewrite.c"; tail -n 3 "$WORK/code-rewrite-build.log"
+  fi
+  # Code rewritten without a word to anyone, as a regular-expression or script compiler does,
+  # must not run in its old form either: the emulator has to notice the write. It traps writes
+  # a host page (16K) at a time (patches/fex/0014), and checks code it cannot trap before each
+  # run (0013). x64 and, where the toolchain has it, 32-bit; also with every block checked.
+  MINGW32_CRS="$REPO/build/llvm-mingw/bin/i686-w64-mingw32-clang"
+  if "$MINGW" -O1 -o "$WORK/code-rewrite-silent.exe" "$REPO/tests/runtime/code-rewrite-silent.c" >"$WORK/code-rewrite-silent-build.log" 2>&1; then
+    out="$("$RT/bin/wine" "$WORK/code-rewrite-silent.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    out2="$(FEX_SMCCHECKS=full "$RT/bin/wine" "$WORK/code-rewrite-silent.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    out3="code-rewrite-silent: ok (no 32-bit)"
+    if [ -x "$MINGW32_CRS" ] && [ -f "$RT/lib/wine/aarch64-windows/xtajit.dll" ] \
+       && "$MINGW32_CRS" -O1 -o "$WORK/code-rewrite-silent-32.exe" "$REPO/tests/runtime/code-rewrite-silent.c" >>"$WORK/code-rewrite-silent-build.log" 2>&1; then
+      out3="$("$RT/bin/wine" "$WORK/code-rewrite-silent-32.exe" </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    fi
+    case "$out|$out2|$out3" in "code-rewrite-silent: ok "*"|code-rewrite-silent: ok "*"|code-rewrite-silent: ok "*)
+        pass "x64 and 32-bit: code rewritten in place without notice never runs in its old form (trapped by host page, checked where it cannot be trapped)" ;;
+      *) fail "silent code rewriting: x64: '$out'; x64 with every block checked: '$out2'; 32-bit: '$out3'" ;; esac
+  else
+    fail "could not build tests/runtime/code-rewrite-silent.c"; tail -n 3 "$WORK/code-rewrite-silent-build.log"
   fi
   # The emulator commits its own memory in the fault handler, also while translated code runs.
   # Registers, vector registers, flags, the x87 stack and MXCSR must come back unchanged from
