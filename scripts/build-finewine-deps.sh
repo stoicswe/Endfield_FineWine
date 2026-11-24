@@ -171,8 +171,18 @@ if [ ! -f "$PREFIX/.built-gst-plugins-bad" ]; then
     # An empty folder where a subproject belongs stops meson fetching it.
     rmdir "$SRC/sources/glib/subprojects/gvdb" 2>/dev/null || true
   fi
+  # GStreamer's parser needs bison 2.4 or newer; macOS's own /usr/bin/bison is 2.3. Homebrew's
+  # bison (installed by build-finewine-runtime.sh deps) is keg-only, so not on PATH by itself.
+  BISON_BIN=""
+  if command -v brew >/dev/null 2>&1 && [ -x "$(brew --prefix bison 2>/dev/null)/bin/bison" ]; then
+    BISON_BIN="$(brew --prefix bison)/bin"
+  fi
+  bison_version="$(PATH="${BISON_BIN:+$BISON_BIN:}$PATH" bison --version 2>/dev/null | head -n 1 | sed -E 's/.* ([0-9]+\.[0-9]+).*/\1/')"
+  case "$bison_version" in
+    ""|1.*|2.[0-3]|2.[0-3].*) die "GStreamer needs bison 2.4 or newer, found '${bison_version:-none}' (brew install bison)" ;;
+  esac
   (
-    export PYTHONPATH="$REPO/scripts/lib/glib-pyshim" PATH="$PREFIX/bin:$PATH"
+    export PYTHONPATH="$REPO/scripts/lib/glib-pyshim" PATH="$PREFIX/bin${BISON_BIN:+:$BISON_BIN}:$PATH"
     export OBJC="/usr/bin/clang -arch arm64" OBJCXX="/usr/bin/clang++ -arch arm64"
     build_meson glib "$SRC/sources/glib" -Dtests=false -Dnls=disabled -Dman=false -Dgtk_doc=false -Ddtrace=false \
         -Dsystemtap=false -Dglib_debug=disabled -Dselinux=disabled -Dxattr=false -Dlibmount=disabled -Dlibelf=disabled \
